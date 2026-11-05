@@ -1,25 +1,24 @@
-// Ties everything together: input, aiming, the playbook menu, and drawing.
+// Ties everything together: input, aiming, the playbook menu, the drive, and drawing.
 import {
-  C, ENDZONE_BOTTOM, FIELD_LEFT, FIELD_RIGHT, H, LOS_Y, MAX_THROW, PULL_POWER, RESULT_TIME, W, YD,
+  C, CAM_ANCHOR, FIELD_LEFT, FIELD_RIGHT, H, LOS_Y, MAX_THROW, PULL_POWER, RESULT_TIME, W, YD,
 } from './config';
 import { rushLabel } from './defense/calls';
-import { drawText } from './font';
+import { Drive, type PlaySummary } from './drive';
+import { drawText, textWidth } from './font';
 import { Menu } from './menu';
 import { PLAYS, type Play } from './playbook/plays';
-import { type Actor, Sim, arcHeight, flightFor } from './sim';
+import { type Actor, Sim, arcHeight, flightFor, throwError } from './sim';
 import { drawCentered, sprites } from './sprites';
-import { type Vec, clamp, dist } from './util';
+import { type Vec, clamp, dist, lerp } from './util';
 
 export type AimMode = 'pull' | 'aim';
+const SNAP_CATCH = 0.3; // sim seconds for the QB to catch the shotgun snap
 type Rect = { x: number; y: number; w: number; h: number };
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
-const RESULT_TEXT = {
-  catch: ['CATCH!', C.green], int: ['INTERCEPTED!', C.red], inc: ['INCOMPLETE', C.grey], sack: ['SACK!', C.orange],
-} as const;
-
 export class Game {
   sim = new Sim();
+  drive = new Drive();
   play: Play = PLAYS[0];
   menu = new Menu(this.play.id);
   menuOpen = true; // start on the playbook
@@ -28,18 +27,34 @@ export class Game {
   doneAt = 0;
   paused = false; // tests step the sim by hand
   drag: { start: Vec; cur: Vec } | null = null;
+  private queuedThrow: Vec | null = null; // released before the QB had the snap
+  summary: PlaySummary | null = null;
+  camY = 0; // how far the view has scrolled upfield to follow a runner
+
+  // Field state captured at the snap, so the field doesn't jump while the
+  // result banner is up.
+  private fieldBallOn = this.drive.ballOn;
+  private lineToGain = this.drive.ballOn + this.drive.toGo;
 
   readonly playsButton: Rect = { x: 4, y: H - 16, w: 40, h: 12 };
   readonly modeButton: Rect = { x: W - 62, y: H - 16, w: 58, h: 12 };
-  private field = drawField();
 
-  constructor() { this.sim.reset(this.play); }
+  constructor() { this.nextPlay(); }
+
+  nextPlay(): void {
+    this.summary = null;
+    this.queuedThrow = null;
+    this.camY = 0;
+    this.fieldBallOn = this.drive.ballOn;
+    this.lineToGain = this.drive.ballOn + this.drive.toGo;
+    this.sim.reset(this.play, this.drive.goalY);
+  }
 
   pickPlay(play: Play): void {
     this.play = play;
     this.menu.selectedId = play.id;
     this.menuOpen = false;
-    this.sim.reset(play);
+    if (this.sim.phase === 'presnap' || this.sim.phase === 'done') this.nextPlay();
   }
 
   // ---------- input ----------
@@ -55,7 +70,7 @@ export class Game {
       if (Math.hypot(dx, dy) < 5) return null;
       t = { x: qb.x + dx * PULL_POWER, y: qb.y + dy * PULL_POWER };
     } else {
-      t = { ...cur };
+      t = { x: cur.x, y: cur.y - this.camY };
       if (dist(t, qb) < 12) return null;
     }
     const d = dist(t, qb);
@@ -64,7 +79,6 @@ export class Game {
       t.y = qb.y + ((t.y - qb.y) / d) * MAX_THROW;
     }
     t.x = clamp(t.x, FIELD_LEFT, FIELD_RIGHT);
-    t.y = clamp(t.y, 4, H - 4);
     return t;
   }
 
@@ -78,12 +92,13 @@ export class Game {
     const phase = this.sim.phase;
     if (hit(this.modeButton, p)) { this.mode = this.mode === 'pull' ? 'aim' : 'pull'; return; }
     if (hit(this.playsButton, p)) {
-      if (phase !== 'live' && phase !== 'air') { this.menuOpen = true; this.menu = new Menu(this.play.id); }
+      if (phase === 'presnap' || phase === 'done') { this.menuOpen = true; this.menu = new Menu(this.play.id); }
       return;
     }
+    if (phase === 'done') { this.nextPlay(); return; }
+    // One touch does it all: the touch snaps the ball and starts the aim.
     if (phase === 'presnap') this.sim.snap();
-    else if (phase === 'done') this.sim.reset(this.play);
-    else if (phase === 'live') this.drag = { start: p, cur: p };
+    if (this.sim.phase === 'live') this.drag = { start: p, cur: p };
   }
 
   pointerMove(p: Vec): void {
@@ -95,7 +110,9 @@ export class Game {
     this.drag.cur = p;
     const to = this.target();
     this.drag = null;
-    if (to) this.sim.throwTo(to);
+    if (!to) return;
+    if (this.sim.t < SNAP_CATCH) this.queuedThrow = to; // goes out as soon as he has the ball
+    else this.sim.throwTo(to);
   }
 
   // ---------- loop ----------
@@ -105,50 +122,55 @@ export class Game {
     if (this.menuOpen || this.paused) return;
     const wasDone = this.sim.phase === 'done';
     this.sim.update(dt);
-    if (this.sim.phase !== 'live') this.drag = null; // sacked mid-drag
-    if (!wasDone && this.sim.phase === 'done') this.doneAt = this.clock;
-    if (this.sim.phase === 'done' && this.clock - this.doneAt > RESULT_TIME) this.sim.reset(this.play);
+    if (this.queuedThrow && this.sim.t >= SNAP_CATCH) { this.sim.throwTo(this.queuedThrow); this.queuedThrow = null; }
+    if (this.sim.phase !== 'live') { this.drag = null; this.queuedThrow = null; } // sacked mid-drag
+    if (!wasDone && this.sim.phase === 'done') {
+      this.doneAt = this.clock;
+      this.summary = this.drive.apply(this.sim);
+    }
+    if (this.sim.phase === 'done' && this.clock - this.doneAt > RESULT_TIME) this.nextPlay();
+
+    // camera follows the runner upfield
+    const c = this.sim.carrier;
+    if (c) this.camY = lerp(this.camY, Math.max(0, CAM_ANCHOR - c.y), Math.min(1, dt * 6));
   }
 
   render(ctx: CanvasRenderingContext2D): void {
     const sim = this.sim;
-    ctx.drawImage(this.field, 0, 0);
-    this.renderRoutes(ctx);
+    const cam = Math.round(this.camY);
+    drawField(ctx, this.fieldBallOn, this.lineToGain, cam);
 
+    ctx.save();
+    ctx.translate(0, cam);
+    this.renderRoutes(ctx);
     const spr = sprites();
     for (const p of [...sim.actors].sort((a, b) => a.y - b.y)) {
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.fillRect(Math.round(p.x - 3), Math.round(p.y + 3), 7, 1);
       drawCentered(ctx, spriteFor(p, spr), p.x, p.y);
     }
-
     this.renderAim(ctx);
     this.renderBall(ctx);
+    ctx.restore();
+
     this.renderHud(ctx);
-    if (this.menuOpen) this.menu.render(ctx, this.clock);
+    if (this.menuOpen) this.menu.render(ctx);
   }
 
   /** Faint route lines: strong before the snap, a light reminder after. */
   private renderRoutes(ctx: CanvasRenderingContext2D): void {
     const sim = this.sim;
-    if (sim.phase === 'done') return;
+    if (sim.phase === 'done' || sim.phase === 'run') return;
     ctx.globalAlpha = sim.phase === 'presnap' ? 0.55 : 0.18;
     for (const r of sim.receivers) {
       ctx.fillStyle = r.color;
-      let prev: Vec = r; // draw from where he is now to the rest of the route
-      const pts = r.path.slice(r.leg);
-      for (const q of pts) {
+      let prev: Vec = r; // from where he is now through the rest of the route
+      for (const q of r.path.slice(r.leg)) {
         const n = Math.max(1, Math.floor(dist(prev, q) / 3));
         for (let i = 0; i <= n; i++) {
           ctx.fillRect(Math.round(prev.x + ((q.x - prev.x) * i) / n), Math.round(prev.y + ((q.y - prev.y) * i) / n), 1, 1);
         }
         prev = q;
-      }
-      if (r.end === 'continue' && r.path.length) {
-        const a = r.path.length > 1 ? r.path[r.path.length - 2] : r;
-        const b = r.path[r.path.length - 1];
-        const d = dist(a, b) || 1;
-        ctx.fillRect(Math.round(b.x + ((b.x - a.x) / d) * 4), Math.round(b.y + ((b.y - a.y) / d) * 4), 1, 1);
       }
     }
     ctx.globalAlpha = 1;
@@ -178,10 +200,12 @@ export class Game {
       ctx.fillStyle = C.white;
       ctx.fillRect(Math.round(gx), Math.round(gy - arcHeight(peak, s)), 2, 2);
     }
+    // reticle; it opens up on long throws and under pressure (less accurate)
+    const spread = 2 + Math.round(throwError(dist(from, to)) * (this.sim.pressured ? 2 : 1));
     const x = Math.round(to.x), y = Math.round(to.y);
-    ctx.fillStyle = C.yellow;
-    ctx.fillRect(x - 4, y, 3, 1); ctx.fillRect(x + 2, y, 3, 1);
-    ctx.fillRect(x, y - 4, 1, 3); ctx.fillRect(x, y + 2, 1, 3);
+    ctx.fillStyle = this.sim.pressured ? C.orange : C.yellow;
+    ctx.fillRect(x - spread - 2, y, 3, 1); ctx.fillRect(x + spread, y, 3, 1);
+    ctx.fillRect(x, y - spread - 2, 1, 3); ctx.fillRect(x, y + spread, 1, 3);
   }
 
   private renderBall(ctx: CanvasRenderingContext2D): void {
@@ -193,32 +217,44 @@ export class Game {
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(Math.round(g.x - 1), Math.round(g.y), 3, 1);
     }
-    drawCentered(ctx, sprites().ball, g.x, g.y - h - (sim.ball.carrier ? 1 : 0));
+    drawCentered(ctx, sprites().ball, g.x + (sim.ball.carrier ? 3 : 0), g.y - h - (sim.ball.carrier ? 1 : 0));
   }
 
   private renderHud(ctx: CanvasRenderingContext2D): void {
     const sim = this.sim;
-    const { cmp, int, inc, sack } = sim.stats;
-    drawText(ctx, `CMP ${cmp} INT ${int} INC ${inc} SCK ${sack}`, W / 2, 3, { align: 'center', shadow: '#000' });
+    const dr = this.drive;
+    const st = dr.stats;
 
-    const live = sim.phase === 'live' || sim.phase === 'air';
+    // scoreboard strip
+    ctx.fillStyle = 'rgba(17,29,43,0.88)';
+    ctx.fillRect(0, 0, W, 19);
+    const showDown = sim.phase !== 'done'; // during the banner the drive has already moved on
+    if (showDown) {
+      drawText(ctx, dr.downText, 5, 3, { color: C.yellow });
+      drawText(ctx, dr.spotText, W - 5, 3, { align: 'right' });
+    }
+    const ypp = dr.yardsPerPlay.toFixed(1);
+    const ppt = st.tds ? dr.playsPerTd.toFixed(1) : '-';
+    drawText(ctx, `TD ${st.tds}  YDS/PLAY ${ypp}  PLAYS/TD ${ppt}`, W / 2, 11, { align: 'center', color: C.grey });
+
+    const live = sim.phase === 'live' || sim.phase === 'air' || sim.phase === 'run';
     button(ctx, this.playsButton, 'PLAYS', live ? C.darkGrey : C.white);
     button(ctx, this.modeButton, `MODE ${this.mode.toUpperCase()}`, C.white);
     drawText(ctx, this.play.name, (this.playsButton.x + this.playsButton.w + this.modeButton.x) / 2, H - 12,
       { align: 'center', color: C.yellow, shadow: '#000' });
 
     if (sim.phase === 'presnap' && !this.menuOpen && Math.floor(this.clock * 2.5) % 2 === 0) {
-      drawText(ctx, 'TAP TO SNAP', W / 2, LOS_Y + 34, { scale: 1, align: 'center', color: C.white, shadow: '#000' });
+      drawText(ctx, 'TOUCH TO SNAP + THROW', W / 2, LOS_Y + 40, { align: 'center', color: C.white, shadow: '#000' });
     }
 
-    if (sim.phase === 'done' && sim.result) {
-      const [text, color] = RESULT_TEXT[sim.result];
-      const y = 120;
-      ctx.fillStyle = 'rgba(17,29,43,0.85)';
-      ctx.fillRect(14, y - 6, W - 28, 40);
-      drawText(ctx, text, W / 2, y, { scale: 2, color, shadow: '#000', align: 'center' });
-      drawText(ctx, sim.call.coverage, W / 2, y + 16, { align: 'center', color: C.white });
-      drawText(ctx, rushLabel(sim.call), W / 2, y + 24, { align: 'center', color: C.grey });
+    const s = this.summary;
+    if (sim.phase === 'done' && s) {
+      const y = 96;
+      ctx.fillStyle = 'rgba(17,29,43,0.88)';
+      ctx.fillRect(10, y - 6, W - 20, 48);
+      drawText(ctx, s.headline, W / 2, y, { scale: 2, color: s.color, shadow: '#000', align: 'center' });
+      drawText(ctx, s.detail, W / 2, y + 16, { align: 'center', color: C.white });
+      drawText(ctx, `${sim.call.coverage} - ${rushLabel(sim.call)}`, W / 2, y + 28, { align: 'center', color: C.grey });
     }
   }
 }
@@ -238,37 +274,63 @@ function button(ctx: CanvasRenderingContext2D, b: Rect, label: string, color: st
   drawText(ctx, label, b.x + b.w / 2, b.y + 4, { align: 'center', color });
 }
 
-function drawField(): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  const ctx = c.getContext('2d')!;
+/**
+ * Draws the visible part of a real 100-yard field. ballOn is the line of
+ * scrimmage (yards from our goal line), which always sits at LOS_Y on screen
+ * before the camera scrolls.
+ */
+function drawField(ctx: CanvasRenderingContext2D, ballOn: number, lineToGain: number, cam: number): void {
+  const yOf = (yard: number) => Math.round(LOS_Y - (yard - ballOn) * YD + cam);
+  const fw = FIELD_RIGHT - FIELD_LEFT;
   ctx.fillStyle = '#0a5c36';
   ctx.fillRect(0, 0, W, H);
 
-  // 5-yard stripes measured from the line of scrimmage
-  const five = 5 * YD;
-  for (let i = -3; i * five + ENDZONE_BOTTOM < H; i++) {
-    const y0 = Math.round(LOS_Y - Math.round((LOS_Y - ENDZONE_BOTTOM) / five) * five + i * five);
-    const y1 = Math.round(y0 + five);
-    if (y1 <= ENDZONE_BOTTOM) continue;
-    ctx.fillStyle = i % 2 ? '#00873f' : '#00954a';
-    ctx.fillRect(FIELD_LEFT, Math.max(y0, ENDZONE_BOTTOM), FIELD_RIGHT - FIELD_LEFT, y1 - Math.max(y0, ENDZONE_BOTTOM));
-    ctx.fillStyle = C.white;
-    if (y0 >= ENDZONE_BOTTOM) ctx.fillRect(FIELD_LEFT, y0, FIELD_RIGHT - FIELD_LEFT, 1);
+  // 5-yard mowing stripes and end zones
+  for (let yard = -10; yard < 110; yard += 5) {
+    const top = yOf(yard + 5), bottom = yOf(yard);
+    if (bottom < 0 || top > H) continue;
+    if (yard < 0) ctx.fillStyle = '#7e2553';
+    else if (yard >= 100) ctx.fillStyle = C.navy;
+    else ctx.fillStyle = Math.floor(yard / 5) % 2 ? '#00873f' : '#00954a';
+    ctx.fillRect(FIELD_LEFT, top, fw, bottom - top);
   }
-  ctx.fillStyle = C.navy;
-  ctx.fillRect(FIELD_LEFT, 0, FIELD_RIGHT - FIELD_LEFT, ENDZONE_BOTTOM);
-  drawText(ctx, 'END ZONE', W / 2, 11, { scale: 2, color: C.blue, align: 'center' });
+  const ez = yOf(105);
+  if (ez > -10 && ez < H + 10) drawText(ctx, 'END ZONE', W / 2, ez - 5, { scale: 2, color: C.blue, align: 'center' });
 
+  // yard lines, numbers, hash marks
   ctx.fillStyle = C.white;
+  for (let yard = 0; yard <= 100; yard += 5) {
+    const y = yOf(yard);
+    if (y < -8 || y > H + 8) continue;
+    ctx.fillRect(FIELD_LEFT, y, fw, yard % 50 === 0 ? 2 : 1); // goal lines and midfield are thicker
+    if (yard % 10 === 0 && yard > 0 && yard < 100) {
+      const label = String(yard <= 50 ? yard : 100 - yard);
+      const tw = textWidth(label);
+      for (const x of [FIELD_LEFT + 12, FIELD_RIGHT - 12 - tw]) {
+        ctx.fillStyle = Math.floor(yard / 5) % 2 ? '#00873f' : '#00954a';
+        ctx.fillRect(x - 1, y - 3, tw + 2, 7); // gap in the line behind the number
+        drawText(ctx, label, x, y - 2, { color: C.white });
+      }
+      ctx.fillStyle = C.white;
+    }
+  }
+  for (let yard = 1; yard < 100; yard++) {
+    if (yard % 5 === 0) continue;
+    const y = yOf(yard);
+    if (y < 0 || y > H) continue;
+    ctx.fillRect(66, y, 2, 1);
+    ctx.fillRect(112, y, 2, 1);
+    ctx.fillRect(FIELD_LEFT, y, 1, 1);
+    ctx.fillRect(FIELD_RIGHT - 1, y, 1, 1);
+  }
   ctx.fillRect(FIELD_LEFT - 1, 0, 1, H);
   ctx.fillRect(FIELD_RIGHT, 0, 1, H);
-  ctx.fillRect(FIELD_LEFT, ENDZONE_BOTTOM, FIELD_RIGHT - FIELD_LEFT, 1);
-  for (let y = ENDZONE_BOTTOM + YD; y < H; y += YD) {
-    ctx.fillRect(66, Math.round(y), 2, 1);
-    ctx.fillRect(112, Math.round(y), 2, 1);
-  }
+
+  // line of scrimmage (blue) and line to gain (yellow)
   ctx.fillStyle = C.blue;
-  ctx.fillRect(FIELD_LEFT, LOS_Y, FIELD_RIGHT - FIELD_LEFT, 1);
-  return c;
+  ctx.fillRect(FIELD_LEFT, yOf(ballOn), fw, 1);
+  if (lineToGain < 100) {
+    ctx.fillStyle = C.yellow;
+    ctx.fillRect(FIELD_LEFT, yOf(lineToGain), fw, 1);
+  }
 }

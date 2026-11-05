@@ -28,11 +28,12 @@ export class Menu {
     const gap = 3;
     const tw = Math.floor((W - 8 - gap * (CATEGORIES.length - 1)) / CATEGORIES.length);
     const tabs = CATEGORIES.map((c, i) => ({ cat: c, r: { x: 4 + i * (tw + gap), y: 28, w: tw, h: 13 } }));
-    const plays = PLAYS.filter((p) => p.category === this.tab).slice(0, 4);
+    // 2 columns x 3 rows of cards per category
+    const plays = PLAYS.filter((p) => p.category === this.tab).slice(0, 6);
     const cards = plays.map((play, i) => ({
-      play, r: { x: i % 2 ? 92 : 6, y: 48 + Math.floor(i / 2) * 110, w: 82, h: 104 },
+      play, r: { x: i % 2 ? 92 : 6, y: 46 + Math.floor(i / 2) * 82, w: 82, h: 78 },
     }));
-    const back = { x: W / 2 - 30, y: H - 22, w: 60, h: 14 };
+    const back = { x: W / 2 - 30, y: H - 18, w: 60, h: 14 };
     return { tabs, cards, back };
   }
 
@@ -44,7 +45,7 @@ export class Menu {
     return null;
   }
 
-  render(ctx: CanvasRenderingContext2D, clock: number): void {
+  render(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = 'rgba(17,29,43,0.94)';
     ctx.fillRect(0, 0, W, H);
     drawText(ctx, 'PLAYBOOK', W / 2, 8, { scale: 2, color: C.yellow, shadow: C.navy, align: 'center' });
@@ -64,13 +65,12 @@ export class Menu {
         ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, 1);
         ctx.fillRect(r.x + 1, r.y + r.h - 2, r.w - 2, 1);
       }
-      drawPlayArt(ctx, play, r.x + 3, r.y + 3, r.w - 6, 60);
-      drawText(ctx, play.name, r.x + r.w / 2, r.y + 68, { align: 'center' });
-      drawText(ctx, play.vs, r.x + r.w / 2, r.y + 78, { align: 'center', color: C.yellow });
-      drawText(ctx, FORMATIONS[play.formation].name, r.x + r.w / 2, r.y + 90, { align: 'center', color: C.grey });
+      drawPlayArt(ctx, play, r.x + 3, r.y + 3, r.w - 6, 48);
+      drawText(ctx, play.name, r.x + r.w / 2, r.y + 54, { align: 'center' });
+      drawText(ctx, play.vs, r.x + 4, r.y + 66, { color: C.yellow });
+      drawText(ctx, FORMATIONS[play.formation].name, r.x + r.w - 4, r.y + 66, { align: 'right', color: C.grey });
     }
 
-    if (Math.floor(clock * 2) % 2 === 0) drawText(ctx, 'TAP A PLAY', W / 2, H - 38, { align: 'center', color: C.grey });
     box(ctx, back, C.ink, C.white);
     drawText(ctx, 'BACK', back.x + back.w / 2, back.y + 5, { align: 'center' });
   }

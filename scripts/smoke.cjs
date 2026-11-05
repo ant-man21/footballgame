@@ -1,7 +1,7 @@
 // Smoke test: loads the built game on an emulated phone and drives it with
-// real touch events (Chrome DevTools): pick a play from the playbook, snap,
-// throw in both aim modes, get sacked, and check every defensive call fields
-// all 11 players.
+// real touch events (Chrome DevTools): pick a play from the playbook, snap and
+// throw in one touch (both aim modes), get sacked, run after the catch, and
+// check every defensive call fields all 11 players.
 // Usage: npm run build && npx vite preview --port 4173 &  then  npm run test:smoke
 const { chromium, devices } = require('playwright');
 
@@ -24,7 +24,8 @@ const OUT = process.env.SHOT_DIR || '.';
   }, p);
   const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
   const tap = async (p) => { await touch('touchStart', [await toScreen(p)]); await touch('touchEnd', []); };
-  const waitPhase = (ph, timeout = 8000) =>
+  const phase = () => G(() => window.__game.sim.phase);
+  const waitPhase = (ph, timeout = 10000) =>
     page.waitForFunction((ph) => window.__game.sim.phase === ph, ph, { timeout });
   const check = (cond, msg) => { if (!cond) throw new Error(msg); console.log('ok  ' + msg); };
 
@@ -39,51 +40,74 @@ const OUT = process.env.SHOT_DIR || '.';
         if (d.length !== 11 || n !== 11 || g.sim.offense.length !== 11) out.push(`${call}/${play.id}`);
       }
     }
-    g.sim.forceCall = null; g.sim.reset(g.play);
+    g.sim.forceCall = null; g.nextPlay();
     return out;
   });
-  check(bad.length === 0, `all calls field 11 v 11 ${bad.join(' ')}`);
+  check(bad.length === 0, `all calls field 11 v 11 for all ${await G(() => window.__plays.length)} plays ${bad.join(' ')}`);
 
-  // 2. Playbook menu: opens on launch; switch tab and pick a play by touch.
+  // 2. Drive starts at our own 25, 1st & 10.
+  check(await G(() => window.__game.drive.spotText === 'OWN 25' && window.__game.drive.downText === '1ST & 10'), 'drive starts 1ST & 10 at OWN 25');
+
+  // 3. Playbook menu: opens on launch; switch tab and pick a play by touch.
   check(await G(() => window.__game.menuOpen), 'playbook menu opens on launch');
   await page.screenshot({ path: `${OUT}/smoke-menu.png` });
   await tap({ x: 90, y: 34 }); // CORE tab
-  await tap({ x: 47, y: 100 }); // first card
+  await tap({ x: 47, y: 80 }); // first card
   check(await G(() => !window.__game.menuOpen && window.__game.play.id === 'mesh'), 'picked MESH from the CORE tab');
 
-  // 3. Tap to snap, then throw (pull mode).
+  // 4. One touch snaps and starts the aim; release throws.
   async function throwPlay(mode, fromL, toL, shot) {
-    await G((m) => { window.__game.mode = m; window.__game.sim.forceCall = 'c3'; window.__game.sim.reset(window.__game.play); }, mode);
-    await tap({ x: 90, y: 150 });
-    await waitPhase('live');
+    await G((m) => { window.__game.mode = m; window.__game.sim.forceCall = 'c3'; window.__game.nextPlay(); }, mode);
     const a = await toScreen(fromL), b = await toScreen(toL);
     await touch('touchStart', [a]);
+    check((await phase()) === 'live', `${mode}: the first touch snaps the ball`);
     for (let i = 1; i <= 8; i++) await touch('touchMove', [{ x: a.x + ((b.x - a.x) * i) / 8, y: a.y + ((b.y - a.y) * i) / 8 }]);
     if (shot) await page.screenshot({ path: `${OUT}/${shot}` });
-    check(!!(await G(() => window.__game.target())), `${mode}: aim arc while dragging`);
+    check(!!(await G(() => window.__game.target())), `${mode}: same touch draws the aim arc`);
     await touch('touchEnd', []);
-    check((await G(() => window.__game.sim.phase)) === 'air', `${mode}: ball flies on release`);
+    await waitPhase('air', 2000);
+    check(true, `${mode}: ball flies on release`);
     await waitPhase('done');
-    const r = await G(() => ({ result: window.__game.sim.result, cov: window.__game.sim.call.coverage }));
-    check(r.cov === 'COVER 3', `${mode}: throw resolved as ${r.result} vs ${r.cov}`);
+    const r = await G(() => ({ result: window.__game.sim.result, cov: window.__game.sim.call.coverage, s: window.__game.summary }));
+    check(r.cov === 'COVER 3' && r.s, `${mode}: ${r.result} vs ${r.cov} -> "${r.s.headline} ${r.s.detail}"`);
   }
-  await throwPlay('pull', { x: 90, y: 200 }, { x: 96, y: 240 }, 'smoke-pull.png');
+  await throwPlay('pull', { x: 90, y: 200 }, { x: 96, y: 230 }, 'smoke-pull.png');
   await page.screenshot({ path: `${OUT}/smoke-result.png` });
-  await tap({ x: 90, y: 150 }); // tap past the result
-  check((await G(() => window.__game.sim.phase)) === 'presnap', 'tap after result goes to next snap');
-  await throwPlay('aim', { x: 90, y: 250 }, { x: 60, y: 170 }, 'smoke-aim.png');
-
-  // 4. Hold the ball against an all-out blitz: should get sacked.
-  await G(() => { window.__game.sim.forceCall = 'c0'; window.__game.sim.reset(window.__game.play); });
   await tap({ x: 90, y: 150 });
-  await waitPhase('done', 10000);
-  check((await G(() => window.__game.sim.result)) === 'sack', 'holding the ball vs COVER 0 ends in a sack');
+  check((await phase()) === 'presnap', 'tap after the result goes to the next snap');
+  await throwPlay('aim', { x: 90, y: 230 }, { x: 60, y: 160 }, 'smoke-aim.png');
 
-  // 5. Buttons: MODE toggles; PLAYS reopens the playbook between snaps.
+  // 5. Run after the catch: the receiver keeps going until tackled, out, or in.
+  const yac = await G(() => {
+    const g = window.__game; g.paused = true; const sim = g.sim;
+    sim.forceCall = 'c3'; g.nextPlay(); sim.snap();
+    for (let i = 0; i < 60; i++) sim.update(1 / 60);
+    const r = sim.receivers.find((x) => x.id === 'X');
+    sim.throwTo({ x: r.x, y: r.y }, true);
+    sim.ball.t = sim.ball.dur; // land it on him now
+    const caughtAt = r.y;
+    sim.ball.to = { x: r.x, y: r.y };
+    const seenRun = [];
+    for (let i = 0; i < 1200 && sim.phase !== 'done'; i++) { sim.update(1 / 60); seenRun.push(sim.phase); }
+    g.paused = false;
+    return { ran: seenRun.includes('run'), result: sim.result, yac: (caughtAt - sim.spotY) / 3.15, phase: sim.phase };
+  });
+  check(yac.ran && yac.phase === 'done', `run after catch: ${yac.result}, ${yac.yac.toFixed(1)} yds after the catch`);
+  await G(() => window.__game.nextPlay());
+
+  // 6. Hold the ball against an all-out blitz: should get sacked (a tap with no drag just snaps).
+  await G(() => { window.__game.mode = 'pull'; window.__game.sim.forceCall = 'c0'; window.__game.nextPlay(); });
+  await tap({ x: 90, y: 150 });
+  await waitPhase('done');
+  const sackRes = await G(() => window.__game.sim.result + ' ' + window.__game.sim.call.id + ' ball:' + !!window.__game.sim.ball);
+  check(sackRes.startsWith('sack'), 'tap without a drag snaps; holding vs COVER 0 ends in a sack (' + sackRes + ')');
+  check(await G(() => window.__game.drive.stats.plays === 3 && window.__game.drive.stats.sacks === 1), 'drive stats counted the plays and the sack');
+
+  // 7. Buttons: MODE toggles; PLAYS reopens the playbook between snaps.
   const before = await G(() => window.__game.mode);
   await tap({ x: 150, y: 310 });
   check((await G(() => window.__game.mode)) !== before, 'MODE button toggles aim mode');
-  await G(() => window.__game.sim.reset(window.__game.play));
+  await G(() => window.__game.nextPlay());
   await tap({ x: 24, y: 310 });
   check(await G(() => window.__game.menuOpen), 'PLAYS button reopens the playbook');
 

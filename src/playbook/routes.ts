@@ -20,7 +20,15 @@ export const ROUTES = {
   drag:      { name: 'DRAG',      end: 'continue', pts: [{ o: -2, d: 2 }, { o: -28, d: 5 }] },
   dragHigh:  { name: 'DRAG',      end: 'continue', pts: [{ o: -2, d: 3 }, { o: -28, d: 6.5 }] },
   swing:     { name: 'SWING',     end: 'continue', pts: [{ o: 3, d: -1 }, { o: 10, d: 1.5 }] },
-  checkdown: { name: 'CHECKDOWN', end: 'stop',     pts: [{ o: -1, d: 2 }, { o: -2.5, d: 5 }] },
+  checkdown: { name: 'CHECKDOWN', end: 'stop',     pts: [{ o: 4.5, d: 2.5 }, { o: 3.5, d: 9 }] }, // outside the tackle, 4 yds past the line
+  stick:     { name: 'STICK',     end: 'stop',     pts: [{ o: 0, d: 6 }, { o: 1.5, d: 6 }] },
+  snag:      { name: 'SNAG',      end: 'stop',     pts: [{ o: 0, d: 4 }, { o: -2.5, d: 6 }] },
+  speedOut:  { name: 'SPEED OUT', end: 'continue', pts: [{ o: 0, d: 5 }, { o: 7, d: 5 }] },
+  in5:       { name: 'IN',        end: 'continue', pts: [{ o: 0, d: 5 }, { o: -10, d: 5 }] },
+  sail:      { name: 'SAIL',      end: 'continue', pts: [{ o: 0, d: 9 }, { o: 8, d: 14 }] },
+  cross:     { name: 'CROSS',     end: 'continue', pts: [{ o: 0, d: 4 }, { o: -22, d: 15 }] },
+  deepOver:  { name: 'DEEP OVER', end: 'continue', pts: [{ o: 0, d: 7 }, { o: -26, d: 19 }] },
+  wheel:     { name: 'WHEEL',     end: 'continue', pts: [{ o: 3, d: 1 }, { o: 6, d: 4 }, { o: 6.5, d: 40 }] },
 } satisfies Record<string, RouteDef>;
 
 export type RouteKey = keyof typeof ROUTES;

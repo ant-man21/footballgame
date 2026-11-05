@@ -8,9 +8,8 @@ export const FIELD_RIGHT = W - 6;
 export const CX = W / 2;
 export const YD = 3.15; // pixels per yard: 168px field width ≈ 53.3 yards
 
-export const LOS_Y = 228; // line of scrimmage
+export const LOS_Y = 210; // line of scrimmage (screen y; the field scrolls under it)
 export const QB_DEPTH = 5; // shotgun, yards behind the line
-export const ENDZONE_BOTTOM = Math.round(LOS_Y - 65 * YD);
 
 /** Yards across (0 = middle of the field, + = right) to a pixel x. */
 export const fx = (xYd: number) => CX + xYd * YD;
@@ -19,9 +18,10 @@ export const fy = (dYd: number) => LOS_Y - dYd * YD;
 
 // Game feel
 export const TIME_SCALE = 1.2; // simulation runs this much faster than real time
-export const MAX_THROW = 230; // longest throw, in pixels
+export const MAX_THROW = 165; // longest throw, in pixels (~52 yards)
 export const PULL_POWER = 2.6; // pull mode: target offset = drag distance * this
 export const RESULT_TIME = 2.6; // seconds the result banner stays up
+export const CAM_ANCHOR = 130; // camera follows a runner once he's above this screen y
 
 // Colours (PICO-8-ish palette)
 export const C = {

@@ -29,7 +29,7 @@ export interface ZoneDef {
   wide?: boolean; // flat defenders take the widest threat instead of the nearest
 }
 
-const deep = (name: string, x: number, wx: number, d: number): ZoneDef => ({ name, x, wx, d, dmin: 10, dmax: 50, deep: true });
+const deep = (name: string, x: number, wx: number, d: number, dmin = 10): ZoneDef => ({ name, x, wx, d, dmin, dmax: 50, deep: true });
 const under = (name: string, x: number, wx: number, d: number, dmin: number, dmax: number, wide = false): ZoneDef =>
   ({ name, x, wx, d, dmin, dmax, deep: false, wide });
 
@@ -40,12 +40,12 @@ export const ZONES = {
   deep3L: deep('DEEP THIRD', -18, 9, 15),
   deep3M: deep('DEEP THIRD', 0, 9, 16),
   deep3R: deep('DEEP THIRD', 18, 9, 15),
-  deep4L1: deep('DEEP QUARTER', -19.5, 7, 13),
-  deep4L2: deep('DEEP QUARTER', -6.5, 6.5, 14),
-  deep4R2: deep('DEEP QUARTER', 6.5, 6.5, 14),
-  deep4R1: deep('DEEP QUARTER', 19.5, 7, 13),
-  flatL: under('FLAT', -19, 7, 4, 0, 9, true),
-  flatR: under('FLAT', 19, 7, 4, 0, 9, true),
+  deep4L1: deep('DEEP QUARTER', -19.5, 7, 15, 7),
+  deep4L2: deep('DEEP QUARTER', -6.5, 6.5, 16, 7),
+  deep4R2: deep('DEEP QUARTER', 6.5, 6.5, 16, 7),
+  deep4R1: deep('DEEP QUARTER', 19.5, 7, 15, 7),
+  flatL: under('FLAT', -19, 7, 4, 0, 13, true),
+  flatR: under('FLAT', 19, 7, 4, 0, 13, true),
   curlFlatL: under('CURL FLAT', -15, 10, 7, 1, 13, true),
   curlFlatR: under('CURL FLAT', 15, 10, 7, 1, 13, true),
   hookL: under('HOOK', -7, 6, 9, 3, 14),

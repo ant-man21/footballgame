@@ -60,6 +60,62 @@ export const PLAYS: Play[] = [
     ],
   },
   {
+    id: 'stick', name: 'STICK', category: 'quick', formation: 'trips', vs: 'VS COVER 3',
+    routes: [
+      { who: 'X', route: 'slant' }, { who: 'Y', route: 'flat' },
+      { who: 'H', route: 'stick' }, { who: 'Z', route: 'go' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'quick-outs', name: 'QUICK OUTS', category: 'quick', formation: 'spread', vs: 'VS SOFT',
+    routes: [
+      { who: 'X', route: 'speedOut' }, { who: 'H', route: 'snag' },
+      { who: 'Y', route: 'snag' }, { who: 'Z', route: 'speedOut' },
+      { who: 'RB', route: 'checkdown' },
+    ],
+  },
+  {
+    id: 'flood', name: 'FLOOD', category: 'core', formation: 'trips', vs: 'VS COVER 3',
+    routes: [
+      { who: 'X', route: 'dig' }, { who: 'Y', route: 'flat' },
+      { who: 'H', route: 'sail' }, { who: 'Z', route: 'go' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'y-cross', name: 'Y CROSS', category: 'core', formation: 'ace', vs: 'VS MAN',
+    routes: [
+      { who: 'X', route: 'go' }, { who: 'Y', route: 'cross' },
+      { who: 'H', route: 'flat' }, { who: 'Z', route: 'curl' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'levels', name: 'LEVELS', category: 'core', formation: 'trips', vs: 'VS ZONE',
+    routes: [
+      { who: 'X', route: 'curl' }, { who: 'Y', route: 'in5' },
+      { who: 'H', route: 'dig' }, { who: 'Z', route: 'go' },
+      { who: 'RB', route: 'checkdown' },
+    ],
+  },
+  {
+    id: 'yankee', name: 'YANKEE', category: 'shots', formation: 'ace', vs: 'VS COVER 1',
+    routes: [
+      { who: 'X', route: 'post' }, { who: 'Y', route: 'block' },
+      { who: 'H', route: 'flat' }, { who: 'Z', route: 'deepOver' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'post-wheel', name: 'POST WHEEL', category: 'shots', formation: 'spread', vs: 'VS MAN',
+    routes: [
+      { who: 'X', route: 'post' }, { who: 'H', route: 'wheel' },
+      { who: 'Y', route: 'flat' }, { who: 'Z', route: 'curl' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
     id: 'four-verts', name: 'FOUR VERTS', category: 'shots', formation: 'spread', vs: 'VS COVER 3',
     routes: [
       { who: 'X', route: 'go' }, { who: 'H', route: 'seam' },
