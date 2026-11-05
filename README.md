@@ -19,6 +19,16 @@ A full game against the CPU: **4 quarters of 3 minutes**, passing only, no kicks
 - Hold it too long and the rush gets home: **sack**. After each play the banner shows the result, yards, and the defense you faced.
 - Two control schemes; tap **MODE** to switch: **PULL** (slingshot, finger never covers the target) and **AIM** (landing spot just above your finger).
 
+### The defense you face
+- Twelve calls: Cover 0, Cover 1 (with and without a blitz or robber), Cover 2, Cover 2 Man, Tampa 2, Cover 3 (and a fire-zone blitz), Cover 4, Cover 6, with 3- to 6-man rushes.
+- It lines up to your formation (flat defenders over the slot, linebackers sliding to the strength), and man defenders vary their technique snap to snap: inside or outside leverage, press or off. Read it before the snap: outside leverage leaves the slant, off coverage leaves the hitch.
+- The safeties show a shell (one-high, two-high, or both down) that is usually, not always, what they play; they rotate after the snap.
+- It adapts: lean on the same play and it starts calling coverages that beat it and jumps it quicker ("THEY'VE SEEN THIS PLAY").
+- Every player gets a slightly different speed each game, and routes vary a little in depth, so no two snaps are identical.
+
+### Settings
+From the playbook: **DIFFICULTY** (Rookie, Pro, All-Pro: how much the CPU side is slowed and how contested catches lean), **GAME SPEED** (slows or speeds up everything together, so timing feels the same), and **AIM MODE**. Saved on your device.
+
 ### Your defense
 - The CPU calls plays by down and distance and runs them with a quarterback that **reads its receivers one at a time** and throws to the first one open enough. A **yellow arrow from the QB shows who he's looking at.**
 - You are the **MIKE linebacker** (yellow marker). He plays his assignment in the call on his own (shown before the snap, e.g. `COVER 3 - YOU: HOOK ZONE` or `BLITZ!`). **Touch and drag anywhere to take over** (a thumb joystick), and let go to hand him back. Jump the QB's read for a pick, break up passes, chase down a runner, or come through the line for a sack (the line will try to block you).
@@ -58,6 +68,10 @@ Picked at random each snap. Linemen block, rushers try to beat their block; spar
 | SHOTS | Yankee | Cover 1 |
 | SHOTS | Post Wheel | man |
 | SHOTS | Double Post | Cover 3 |
+| SHOTS | Sluggo | man (slant-and-go) |
+| SHOTS | Out and Up | man |
+| SHOTS | Scissors | Cover 4 |
+| SHOTS | Hail Mary | last play |
 
 Against three or more wide receivers the defense subs a nickel back in for a linebacker.
 
@@ -92,4 +106,5 @@ Open the page on your phone, then *Add to Home Screen* for full-screen play.
 - `src/menu.ts`, `src/playart.ts`: the playbook menu and its play diagrams
 - `src/sprites.ts`, `src/font.ts`: pixel-art sprites and the 3x5 bitmap font
 - `src/view.ts`: portrait/landscape views (how the field maps onto the screen)
+- `src/settings.ts`: difficulty / game speed / aim mode, saved on the device
 - `src/main.ts`: canvas sizing per orientation + pointer (touch/mouse) input

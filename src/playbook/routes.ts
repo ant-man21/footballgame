@@ -32,6 +32,10 @@ export const ROUTES = {
   deepDig:   { name: 'DEEP DIG',  end: 'continue', pts: [{ o: 0, d: 15 }, { o: -14, d: 15 }] },
   skinnyPost:{ name: 'SKINNY',    end: 'continue', pts: [{ o: 0, d: 9 }, { o: -4, d: 24 }] },
   shallow:   { name: 'SHALLOW',   end: 'continue', pts: [{ o: -1, d: 1.5 }, { o: -26, d: 3 }] },
+  // double moves: sell the short route, then take off
+  sluggo:    { name: 'SLUGGO',    end: 'continue', pts: [{ o: 0, d: 2 }, { o: -2.5, d: 5 }, { o: -2.5, d: 6 }, { o: -1.5, d: 40 }] },
+  outAndUp:  { name: 'OUT + UP',  end: 'continue', pts: [{ o: 0, d: 5 }, { o: 2.5, d: 5.5 }, { o: 3, d: 7 }, { o: 3, d: 40 }] },
+  bomb:      { name: 'BOMB',      end: 'continue', pts: [{ o: 0, d: 10 }, { o: -10, d: 45 }] },
 } satisfies Record<string, RouteDef>;
 
 export type RouteKey = keyof typeof ROUTES;

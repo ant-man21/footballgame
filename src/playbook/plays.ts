@@ -157,6 +157,38 @@ export const PLAYS: Play[] = [
     ],
   },
   {
+    id: 'sluggo', name: 'SLUGGO', category: 'shots', formation: 'spread', vs: 'VS MAN',
+    routes: [
+      { who: 'X', route: 'sluggo' }, { who: 'H', route: 'flat' },
+      { who: 'Y', route: 'curl' }, { who: 'Z', route: 'sluggo' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'out-and-up', name: 'OUT AND UP', category: 'shots', formation: 'trips', vs: 'VS MAN',
+    routes: [
+      { who: 'X', route: 'outAndUp' }, { who: 'Y', route: 'drag' },
+      { who: 'H', route: 'curl' }, { who: 'Z', route: 'outAndUp' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'scissors', name: 'SCISSORS', category: 'shots', formation: 'spread', vs: 'VS COVER 4',
+    routes: [
+      { who: 'X', route: 'post' }, { who: 'H', route: 'corner' },
+      { who: 'Y', route: 'flat' }, { who: 'Z', route: 'curl' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'hail-mary', name: 'HAIL MARY', category: 'shots', formation: 'spread', vs: 'LAST PLAY',
+    routes: [
+      { who: 'X', route: 'bomb' }, { who: 'H', route: 'seam' },
+      { who: 'Y', route: 'seam' }, { who: 'Z', route: 'bomb' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
     id: 'four-verts', name: 'FOUR VERTS', category: 'shots', formation: 'spread', vs: 'VS COVER 3',
     routes: [
       { who: 'X', route: 'go' }, { who: 'H', route: 'seam' },

@@ -33,7 +33,7 @@ const OUT = process.env.SHOT_DIR || '.';
   // 1. Every defensive call accounts for all 11 defenders, for every play.
   const bad = await G(() => {
     const g = window.__game; const out = [];
-    for (const call of ['c0', 'c1-blitz', 'c1', 'c2', 'c2-drop', 'c3', 'c3-fire', 'c4', 'c4-drop']) {
+    for (const call of ['c0', 'c1-blitz', 'c1', 'c2', 'c2-drop', 'c3', 'c3-fire', 'c4', 'c4-drop', 'c2-man', 'c6', 'tampa2']) {
       for (const play of window.__plays) {
         g.sim.forceCall = call; g.sim.reset(play);
         const d = g.sim.defense;
@@ -45,6 +45,16 @@ const OUT = process.env.SHOT_DIR || '.';
     return out;
   });
   check(bad.length === 0, `all calls field 11 v 11 for all ${await G(() => window.__plays.length)} plays ${bad.join(' ')}`);
+
+  // 1b. The defense adapts: after 8 straight Smash calls (built to beat Cover 2), it calls Cover 2 / Tampa 2 less.
+  const adapt = await G(() => {
+    const g = window.__game; const smash = window.__plays.find((p) => p.id === 'smash');
+    const rate = (hist) => { let n = 0; g.history = hist; for (let i = 0; i < 400; i++) { g.play = smash; g.match.offense = 'you'; g.match.drive.down = 1; g.nextPlay(); if (['COVER 2', 'TAMPA 2'].includes(g.sim.call.coverage)) n++; } return n / 400; };
+    const base = rate([]), seen = rate(Array(8).fill('smash'));
+    g.history = []; g.play = window.__plays[0]; g.nextPlay();
+    return { base, seen };
+  });
+  check(adapt.seen < adapt.base * 0.6, `defense adapts: Cover 2 looks vs Smash ${Math.round(adapt.base * 100)}% fresh -> ${Math.round(adapt.seen * 100)}% after 8 straight calls`);
 
   // 2. Drive starts at our own 25, 1st & 10.
   check(await G(() => window.__game.match.drive.spotText === 'OWN 25' && window.__game.match.drive.downText === '1ST & 10' && window.__game.match.clockText === '3:00'), 'game starts Q1 3:00, 1ST & 10 at OWN 25');
@@ -118,7 +128,9 @@ const OUT = process.env.SHOT_DIR || '.';
   await G(new Function(offense + ' g.nextPlay();'));
   await tap({ x: 24, y: 310 });
   check(await G(() => window.__game.menuOpen), 'PLAYS button reopens the playbook');
-  await tap({ x: 90, y: 309 }); // BACK
+  const backBtn = await G(() => window.__game.menu.layout(window.__game.view).back);
+  await tap({ x: backBtn.x + backBtn.w / 2, y: backBtn.y + backBtn.h / 2 }); // BACK
+  check(await G(() => !window.__game.menuOpen), 'BACK closes the playbook');
 
   // 8. 4th down: you choose GO FOR IT or PUNT.
   await G(new Function(offense + ' g.match.drive.down = 4; g.match.drive.toGo = 7; g.match.drive.ballOn = 30; g.nextPlay();'));

@@ -82,7 +82,20 @@ export interface Actor {
   stunUntil: number;
   user: boolean; // the defender you control
   read: Vec; // man coverage: the defender's (lagging) read of his man's velocity
+  leverage: number; // man coverage: +1 shades inside, -1 outside (decided each snap)
+  cushion: number; // man coverage: yards off at the snap (press ~1, off ~5); closes as the route develops
 }
+
+type Shell = 'one' | 'two' | 'zero';
+export interface ResetOptions {
+  userDefender?: DefId | null; // the defender you control (on defense)
+  ratings?: Record<string, number>; // per-game speed ratings, keyed 'off:X' / 'def:CB_L'
+  cpuTeam?: Team | null; // which side the CPU controls (difficulty applies to it)
+  tuning?: { speed: number; react: number; catchBonus: number };
+  callBias?: (c: Call) => number; // weight the defensive call (the defense adapting to you)
+  recognition?: number; // 0..1: how well the defense has your play scouted
+}
+const NO_TUNING = { speed: 1, react: 0, catchBonus: 0 };
 
 export interface Ball {
   aim: Vec; // where the QB aimed
@@ -114,7 +127,7 @@ function makeActor(id: string, team: Team, kind: Kind, x: number, y: number): Ac
     man: null, zone: null, goal: { x, y }, react: 0,
     assigned: null, engaged: null, beatenBy: [], setSpot: { x, y: y + 1.5 * YD },
     engagedBy: null, shedAt: Infinity, burstAt: 0, push: 0,
-    vel: { x: 0, y: 0 }, stunUntil: 0, read: { x: 0, y: 0 }, user: false,
+    vel: { x: 0, y: 0 }, stunUntil: 0, read: { x: 0, y: 0 }, user: false, leverage: 1, cushion: 1,
   };
 }
 
@@ -135,6 +148,9 @@ export class Sim {
   call: Call = CALLS[0];
   play!: Play;
   forceCall: string | null = null; // tests can pin a defensive call
+  speedFactor = 1; // game speed setting: scales the whole simulation together
+  catchBias = 0; // difficulty: nudges contested catches toward (or away from) the receiver
+  shell: Shell = 'one'; // what the safeties showed before the snap
   lastContest: { off: number | null; def: number | null; outcome: Result } | null = null;
   goalY = -1e9; // pixel y of the goal line we're attacking
   get endLineY() { return this.goalY - 10 * YD; }
@@ -162,14 +178,16 @@ export class Sim {
   // ---------- setup ----------
 
   /** Sets up the next play. goalY is where the goal line is (pixel y). */
-  reset(play: Play, goalY = this.goalY, userDefender: DefId | null = null): void {
+  reset(play: Play, goalY = this.goalY, opts: ResetOptions = {}): void {
+    const { userDefender = null, ratings = {}, cpuTeam = null, tuning = NO_TUNING, callBias, recognition = 0 } = opts;
     this.play = play;
+    this.catchBias = cpuTeam === 'def' ? tuning.catchBonus : cpuTeam === 'off' ? -tuning.catchBonus : 0;
     this.goalY = goalY;
     this.carrier = null;
     this.runT = 0;
     this.touchdown = false;
     this.outOfBounds = false;
-    this.call = CALLS.find((c) => c.id === this.forceCall) ?? pickCall();
+    this.call = CALLS.find((c) => c.id === this.forceCall) ?? pickCall(callBias);
     this.phase = 'presnap';
     this.t = 0;
     this.airT = 0;
@@ -195,8 +213,10 @@ export class Sim {
         p.job = 'route';
         p.end = route.end;
         p.color = ROUTE_COLORS[colorIdx++ % ROUTE_COLORS.length];
+        const depth = rand(0.93, 1.07); // a little variety in how deep he runs it
         p.path = routeYards(spot.x, spot.d, route, pr.flip).map((q) => ({
-          x: clamp(fx(q.x), FIELD_LEFT + 2, FIELD_RIGHT - 2), y: Math.max(fy(q.d), this.endLineY + 2),
+          x: clamp(fx(q.x), FIELD_LEFT + 2, FIELD_RIGHT - 2),
+          y: Math.max(fy(spot.d + (q.d - spot.d) * depth), this.endLineY + 2),
         }));
       }
       a.push(p);
@@ -210,7 +230,16 @@ export class Sim {
       a.push(makeActor(id, 'def', kind, fx(b.x), fy(b.d)));
     }
     this.actors = a;
+    // per-game player ratings (a few percent faster or slower) and difficulty
+    for (const p of a) {
+      p.speed *= ratings[`${p.team}:${p.id}`] ?? 1;
+      if (cpuTeam === p.team && (p.team === 'def' ? p.kind !== 'dl' : p.job === 'route')) p.speed *= tuning.speed;
+    }
     this.applyCall();
+    for (const d of this.defense) {
+      if (cpuTeam === 'def') d.react += tuning.react;
+      d.react *= 1 - 0.35 * recognition; // they've seen this play before: quicker to jump it
+    }
     this.userMove = { x: 0, y: 0 };
     this.userControl = false;
     if (userDefender) {
@@ -259,33 +288,65 @@ export class Sim {
     }
     for (const d of pool) { d.job = 'zone'; d.zone = ZONES.robber; } // spare man defenders sit in the hole
 
-    // Pre-snap alignment.
+    // Pre-snap alignment. The defense lines up to the formation, and the
+    // safeties show a shell (one-high, two-high, or zero) that is usually,
+    // but not always, what they really play: they rotate after the snap.
+    const shown: Shell = call.shell === 'zero'
+      ? (Math.random() < 0.5 ? 'zero' : 'one')
+      : Math.random() < 0.35 ? (call.shell === 'one' ? 'two' : 'one') : call.shell;
+    this.shell = shown;
+    const sideRecs = (side: number) => this.receivers.filter((r) => (r.x - CX) * side > 0).sort((p, q) => Math.abs(q.x - CX) - Math.abs(p.x - CX));
+    const strength = Math.sign(sideRecs(1).length - sideRecs(-1).length); // +1 = more receivers to the right
     for (const d of this.defense) {
       if (d.job === 'man' && d.man) {
         const r = d.man;
-        if (r.kind === 'rb') continue; // backfield: stay at the base spot
-        const inside = r.x < CX ? 1 : -1;
-        const depth = d.kind === 'lb' ? 3.5 : call.id === 'c0' ? 2.5 : 4.5;
-        d.x = r.x + inside * 0.8 * YD;
-        d.y = fy(depth);
+        if (r.kind !== 'rb') {
+          // Technique varies snap to snap, and you can read it before the snap:
+          // inside leverage takes away slants, outside takes away outs; press
+          // fights the release, off coverage gives up the short stuff.
+          d.leverage = Math.random() < 0.55 ? 1 : -1;
+          const press = d.kind === 'db' && Math.random() < (call.id === 'c0' ? 0.75 : 0.45);
+          d.cushion = d.kind === 'lb' ? 2.5 : press ? 1 : rand(4, 6);
+          const side = (r.x < CX ? 1 : -1) * d.leverage;
+          d.x = r.x + side * 0.8 * YD;
+          d.y = fy(d.cushion);
+        }
       } else if (d.job === 'zone' && d.zone) {
         const z = d.zone;
+        const zside = Math.sign(z.x) || (d.x < CX ? -1 : 1);
         if (d.id === 'CB_L' || d.id === 'CB_R') {
           const side = d.id === 'CB_L' ? -1 : 1;
-          const wide = this.receivers.filter((r) => (r.x - CX) * side > 0).sort((p, q) => (q.x - p.x) * side)[0];
+          const wide = sideRecs(side)[0];
           if (wide) d.x = wide.x - side * 0.5 * YD;
-          d.y = fy(z.deep ? 7 : 5);
-        } else if (d.id === 'FS' || d.id === 'SS') {
-          d.x = fx(z.x);
-          d.y = fy(clamp(z.d, 6, 13));
+          d.y = fy(z.deep ? rand(5, 8) : rand(3, 6)); // sometimes a press look, then bail
+        } else if (!z.deep && z.wide && d.kind !== 'dl') {
+          // flat / curl-flat defenders: apex over the slot (#2), or walk out if there isn't one
+          const two = sideRecs(zside)[1];
+          d.x = two ? lerp(two.x, fx(zside * 4.6), 0.4) : fx(z.x * 0.7);
+          d.y = fy(two ? 5 : 6);
+        } else if (!z.deep && d.kind === 'lb') {
+          d.x = fx(DEF_BASE[d.id as DefId].x + strength * 1.5); // slide toward the strength
         }
       }
+      if (d.id === 'FS' || d.id === 'SS') this.alignSafety(d, shown, strength);
       d.y = Math.max(d.y, this.endLineY + 2);
       d.goal = { x: d.x, y: d.y };
       // zone defenders watch the QB and break quickest; man defenders see the ball late
       d.react = d.job === 'man' ? (d.kind === 'db' ? rand(0.45, 0.6) : rand(0.55, 0.7))
-        : d.kind === 'db' ? rand(0.12, 0.25) : rand(0.2, 0.35);
+        : d.kind === 'db' ? rand(0.12, 0.25) : rand(0.3, 0.45);
     }
+  }
+
+  /** Where a safety stands before the snap for the shell being shown. */
+  private alignSafety(d: Actor, shell: Shell, strength: number): void {
+    const fsSide = d.id === 'FS' ? -1 : 1;
+    if (shell === 'two') { d.x = fx(fsSide * rand(8, 11)); d.y = fy(rand(11, 13)); return; }
+    if (shell === 'one' && d.id === 'FS') { d.x = fx(rand(-2, 2)); d.y = fy(rand(12, 14)); return; }
+    // down safety (SS in one-high, both in zero): over the slot to the strength, or in the box
+    const side = shell === 'zero' ? fsSide : (strength || 1);
+    const slot = this.receivers.filter((r) => (r.x - CX) * side > 0).sort((p, q) => Math.abs(p.x - CX) - Math.abs(q.x - CX))[0];
+    d.x = slot ? lerp(slot.x, fx(side * 4.6), 0.3) : fx(side * 6);
+    d.y = fy(rand(6, 8));
   }
 
   // ---------- snap & throw ----------
@@ -356,7 +417,7 @@ export class Sim {
   // ---------- simulation ----------
 
   update(dtReal: number): void {
-    const dt = dtReal * TIME_SCALE;
+    const dt = dtReal * TIME_SCALE * this.speedFactor;
     if (this.phase === 'presnap') { this.updateUser(dt); return; } // you can line up before the snap
     if (this.phase !== 'live' && this.phase !== 'air' && this.phase !== 'run') return;
     this.t += dt;
@@ -531,9 +592,10 @@ export class Sim {
           const m = d.man;
           const f = Math.min(1, 3 * dt); // lower = slower to read cuts
           d.read = { x: lerp(d.read.x, m.vel.x, f), y: lerp(d.read.y, m.vel.y, f) };
-          const inside = m.x < CX ? 1 : -1;
-          // in phase: inside and level with him (deep help is the safety's job)
-          raw = { x: m.x + d.read.x * 0.15 + inside * 0.6 * YD, y: m.y + d.read.y * 0.15 - 0.3 * YD };
+          const side = (m.x < CX ? 1 : -1) * d.leverage;
+          // keep his leverage; an off cushion closes as the route develops
+          const cush = 0.3 + Math.max(0, d.cushion - 0.3) * Math.max(0, 1 - this.t / 2.2);
+          raw = { x: m.x + d.read.x * 0.15 + side * 0.6 * YD, y: m.y + d.read.y * 0.15 - cush * YD };
           k = 10;
         } else {
           raw = this.zoneTarget(d.zone!);
@@ -574,7 +636,7 @@ export class Sim {
       : threats.reduce((p, q) => (dist(q, land) < dist(p, land) ? q : p)); // nearest
     // sit in the zone and shade toward the threat, rather than attaching to him
     // (flat defenders widen more gradually: they sink under the curl first)
-    const k = z.wide ? 0.45 : 0.6;
+    const k = z.wide ? 0.35 : 0.45; // hold the spot; lean toward the route
     const shade = { x: lerp(land.x, t.x, k), y: lerp(land.y, t.y - 0.8 * YD, k) };
     return { x: clamp(shade.x, x0, x1), y: clamp(shade.y, top, bottom) };
   }
@@ -631,14 +693,14 @@ export class Sim {
       if (o.p && !d.p) outcome = 'catch';
       else if (d.p && !o.p) outcome = roll < 0.12 ? 'int' : 'inc'; // defenders drop plenty
       else if (o.p && d.p) {
-        // contested: who is really closer to the ball decides it, and the
-        // longer the ball hangs, the more time the defender has to play it
-        const edge = d.d - o.d; // px the receiver is closer by
+        // Contested: the closer the receiver is to the ball than the defender
+        // (edge, px), the likelier the catch; the longer the ball hangs, the
+        // more time the defender has to play it.
+        const edge = d.d - o.d;
         const hang = clamp(1.45 - dist(ball.from, ball.to) / 150, 0.4, 1.2); // quick throws favour the receiver
-        if (edge >= 3) outcome = roll < 0.68 * hang ? 'catch' : roll < 0.98 ? 'inc' : 'int';
-        else if (edge >= 0) outcome = roll < 0.45 * hang ? 'catch' : roll < 0.96 ? 'inc' : 'int';
-        else if (edge > -2) outcome = roll < 0.3 * hang ? 'catch' : roll < 0.94 ? 'inc' : 'int';
-        else outcome = roll < 0.13 ? 'int' : 'inc';
+        const pCatch = clamp(0.55 + edge * 0.06, 0.12, 0.85) * hang + this.catchBias;
+        const pInt = clamp(0.02 + Math.max(0, -edge) * 0.02, 0.02, 0.12);
+        outcome = roll < pCatch ? 'catch' : roll < pCatch + pInt ? 'int' : 'inc';
       }
       if (outcome) this.lastContest = { off: o.p ? o.d : null, def: d.p ? d.d : null, outcome }; // for tuning
       if (outcome === 'catch' && o.p) { this.startRun(o.p); return; }

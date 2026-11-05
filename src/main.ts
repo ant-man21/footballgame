@@ -1,3 +1,4 @@
+import { predict, readReceiver } from './cpu';
 import { Game } from './game';
 import { PLAYS } from './playbook/plays';
 import { PORTRAIT, landscapeView } from './view';
@@ -8,6 +9,7 @@ const ctx = canvas.getContext('2d')!;
 const game = new Game();
 (window as unknown as { __game: Game }).__game = game; // handles for automated tests
 (window as unknown as { __plays: typeof PLAYS }).__plays = PLAYS;
+(window as unknown as { __cpu: unknown }).__cpu = { readReceiver, predict };
 
 /** Portrait or landscape follows the screen: turn the phone and the game turns with it. */
 function fit(): void {

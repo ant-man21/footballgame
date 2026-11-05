@@ -2,14 +2,15 @@
 // quarterback when you're on defense, the playbook menu, and drawing.
 import { C, FIELD_LEFT, FIELD_RIGHT, LOS_Y, MAX_THROW, PULL_POWER, RESULT_TIME, TIME_SCALE, W, YD } from './config';
 import { CpuQb, callPlay, cpuGoesForIt } from './cpu';
-import { rushLabel } from './defense/calls';
+import { DEF_BASE, beats, rushLabel } from './defense/calls';
 import { drawText, textWidth } from './font';
 import { type Banner, Match } from './match';
 import { Menu } from './menu';
 import { PLAYS, type Play } from './playbook/plays';
 import { Sim, arcHeight, flightFor, throwSpread } from './sim';
 import { ballSprite, drawCentered, playerSprite } from './sprites';
-import { type Vec, clamp, dist, lerp } from './util';
+import { type Vec, clamp, dist, lerp, rand } from './util';
+import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
 import { PORTRAIT, type View } from './view';
 
 export type AimMode = 'pull' | 'aim';
@@ -21,13 +22,26 @@ const USER_DEFENDER = 'MIKE';
 type Rect = { x: number; y: number; w: number; h: number };
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
+/** Per-game speed ratings for a team: everyone is a few percent faster or slower. */
+function makeRatings(): Record<string, number> {
+  const r: Record<string, number> = {};
+  for (const id of ['X', 'H', 'Y', 'Z', 'RB']) r[`off:${id}`] = rand(0.95, 1.05);
+  for (const id of Object.keys(DEF_BASE)) r[`def:${id}`] = rand(0.95, 1.05);
+  return r;
+}
+const pick = (r: Record<string, number>, prefix: string) =>
+  Object.fromEntries(Object.entries(r).filter(([k]) => k.startsWith(prefix)));
+
 export class Game {
+  settings = loadSettings();
   sim = new Sim();
   match = new Match('you');
   play: Play = PLAYS[0]; // your selected play
-  menu = new Menu(this.play.id);
+  menu = new Menu(this.play.id, this.settings);
   menuOpen = true; // start on the playbook
-  mode: AimMode = 'pull';
+  mode: AimMode = this.settings.aim;
+  ratings = { you: makeRatings(), cpu: makeRatings() };
+  history: string[] = []; // your recent play calls: the defense notices repeats
   view: View = PORTRAIT;
   clock = 0;
   paused = false; // tests step the sim by hand
@@ -48,7 +62,16 @@ export class Game {
   private lineToGain = 35;
   private attackingYours = false; // is the top end zone yours (CPU on offense)?
 
-  constructor() { this.nextPlay(); }
+  constructor() { this.applySettings(); this.nextPlay(); }
+
+  applySettings(): void {
+    this.mode = this.settings.aim;
+    this.sim.speedFactor = SPEED_FACTOR[this.settings.speed];
+    saveSettings(this.settings);
+  }
+
+  /** How many of your last 8 calls were this play. */
+  repeats(play: Play): number { return this.history.filter((id) => id === play.id).length; }
 
   get onOffense(): boolean { return this.match.offense === 'you'; }
 
@@ -76,6 +99,8 @@ export class Game {
 
   newGame(): void {
     this.match = new Match('you');
+    this.ratings = { you: makeRatings(), cpu: makeRatings() };
+    this.history = [];
     this.screen = 'play';
     this.nextPlay();
   }
@@ -98,11 +123,24 @@ export class Game {
     if (this.onOffense) {
       this.fourth = d.down === 4 ? 'ask' : null;
       if (this.autoplay) this.play = callPlay(d); // tests: call plays like the CPU does
-      this.sim.reset(this.play, d.goalY);
+      // The defense adapts: the more you lean on a play, the more it calls
+      // coverages that beat it, and the quicker it jumps it.
+      const reps = this.repeats(this.play);
+      const vs = this.play.vs;
+      this.sim.reset(this.play, d.goalY, {
+        ratings: { ...pick(this.ratings.you, 'off:'), ...pick(this.ratings.cpu, 'def:') },
+        cpuTeam: 'def', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
+        callBias: reps >= 2 ? (c) => (beats(vs, c) ? 1 / (1 + reps * 0.8) : 1) : undefined,
+        recognition: clamp((reps - 1) / 4, 0, 1),
+      });
     } else {
       this.fourth = null;
       if (d.down === 4 && !cpuGoesForIt(d, m.score.cpu - m.score.you, m.quarter, m.clock)) { this.showPunt(); return; }
-      this.sim.reset(callPlay(d), d.goalY, USER_DEFENDER);
+      this.sim.reset(callPlay(d), d.goalY, {
+        userDefender: USER_DEFENDER,
+        ratings: { ...pick(this.ratings.cpu, 'off:'), ...pick(this.ratings.you, 'def:') },
+        cpuTeam: 'off', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
+      });
       this.snapAt = this.clock + DEF_PRESNAP;
     }
   }
@@ -117,7 +155,7 @@ export class Game {
     this.play = play;
     this.menu.selectedId = play.id;
     this.menuOpen = false;
-    if (this.onOffense && this.screen === 'play' && this.sim.phase === 'presnap') this.sim.reset(play, this.match.drive.goalY);
+    if (this.onOffense && this.screen === 'play' && this.sim.phase === 'presnap') this.nextPlay();
   }
 
   // ---------- input ----------
@@ -150,6 +188,7 @@ export class Game {
       const a = this.menu.tap(p, this.view);
       if (a?.type === 'pick') this.pickPlay(a.play);
       else if (a?.type === 'close') this.menuOpen = false;
+      else if (a?.type === 'settings') this.applySettings();
       return;
     }
     if (this.screen === 'final') { this.newGame(); return; }
@@ -158,9 +197,9 @@ export class Game {
     const phase = this.sim.phase;
     if (!this.onOffense) { this.stick = { origin: p, cur: p }; return; } // defense: joystick anywhere
 
-    if (hit(this.modeButton, p)) { this.mode = this.mode === 'pull' ? 'aim' : 'pull'; return; }
+    if (hit(this.modeButton, p)) { this.settings.aim = this.mode === 'pull' ? 'aim' : 'pull'; this.applySettings(); return; }
     if (hit(this.playsButton, p)) {
-      if (phase === 'presnap') { this.menuOpen = true; this.menu = new Menu(this.play.id); }
+      if (phase === 'presnap') { this.menuOpen = true; this.menu = new Menu(this.play.id, this.settings); }
       return;
     }
     if (this.fourth === 'ask') {
@@ -192,7 +231,9 @@ export class Game {
 
   private snap(): void {
     this.sim.snap();
-    if (!this.onOffense || this.autoplay) this.cpuQb = new CpuQb(this.sim);
+    if (this.onOffense) this.history = [...this.history, this.play.id].slice(-8);
+    if (!this.onOffense) this.cpuQb = new CpuQb(this.sim, DIFFICULTY_TUNING[this.settings.difficulty].qbPicky);
+    else if (this.autoplay) this.cpuQb = new CpuQb(this.sim);
   }
 
   // ---------- loop ----------
@@ -503,8 +544,11 @@ export class Game {
         drawText(ctx, `4TH & ${d.toGo} - GO OR PUNT?`, fieldMid, b.go.y - 11, { align: 'center', color: C.yellow });
         button(ctx, b.go, 'GO FOR IT', C.green);
         button(ctx, b.punt, 'PUNT', C.white);
-      } else if (offense && Math.floor(this.clock * 2.5) % 2 === 0) {
-        drawText(ctx, 'TOUCH TO SNAP + THROW', fieldMid, y, { align: 'center', color: C.white, shadow: '#000' });
+      } else if (offense) {
+        if (Math.floor(this.clock * 2.5) % 2 === 0) drawText(ctx, 'TOUCH TO SNAP + THROW', fieldMid, y, { align: 'center', color: C.white, shadow: '#000' });
+        if (this.repeats(this.play) >= 3) {
+          drawText(ctx, "THEY'VE SEEN THIS PLAY", fieldMid, y + 9, { align: 'center', color: C.orange, shadow: '#000' });
+        }
       } else if (!offense) {
         const left = Math.max(0, Math.ceil(this.snapAt - this.clock));
         const ty = v.landscape ? 4 : 24;

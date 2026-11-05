@@ -52,6 +52,7 @@ export const ZONES = {
   hookR: under('HOOK', 7, 6, 9, 3, 14),
   midHook: under('MIDDLE HOOK', 0, 6, 10, 3, 15),
   robber: under('ROBBER', 0, 8, 12, 6, 18),
+  tampaMiddle: deep('DEEP MIDDLE', 0, 7, 14, 8), // Tampa 2: the MIKE runs the deep middle
 } satisfies Record<string, ZoneDef>;
 export type ZoneKey = keyof typeof ZONES;
 
@@ -59,6 +60,7 @@ export interface Call {
   id: string;
   coverage: string; // e.g. 'COVER 3'
   family: 'man' | 'zone';
+  shell: 'one' | 'two' | 'zero'; // safeties' true look (they may disguise it)
   weight: number; // how often it gets picked
   rush: DefId[];
   man: DefId[]; // man-to-man defenders, matched to receivers at the snap
@@ -69,54 +71,85 @@ const DL: DefId[] = ['DE_L', 'DT_L', 'DT_R', 'DE_R'];
 
 export const CALLS: Call[] = [
   {
-    id: 'c0', coverage: 'COVER 0', family: 'man', weight: 0.8,
+    id: 'c0', coverage: 'COVER 0', family: 'man', shell: 'zero', weight: 0.8,
     rush: [...DL, 'MIKE', 'WILL'], man: ['CB_L', 'CB_R', 'SS', 'FS', 'SAM'], zones: {},
   },
   {
-    id: 'c1-blitz', coverage: 'COVER 1', family: 'man', weight: 1.1,
+    id: 'c1-blitz', coverage: 'COVER 1', family: 'man', shell: 'one', weight: 1.1,
     rush: [...DL, 'MIKE'], man: ['CB_L', 'CB_R', 'SS', 'SAM', 'WILL'], zones: { FS: 'deepMiddle' },
   },
   {
-    id: 'c1', coverage: 'COVER 1', family: 'man', weight: 1.1,
+    id: 'c1', coverage: 'COVER 1', family: 'man', shell: 'one', weight: 1.1,
     rush: [...DL], man: ['CB_L', 'CB_R', 'SS', 'SAM', 'WILL'], zones: { FS: 'deepMiddle', MIKE: 'robber' },
   },
   {
-    id: 'c2', coverage: 'COVER 2', family: 'zone', weight: 1.2,
+    id: 'c2', coverage: 'COVER 2', family: 'zone', shell: 'two', weight: 1.2,
     rush: [...DL], man: [],
     zones: { FS: 'deepHalfL', SS: 'deepHalfR', CB_L: 'flatL', CB_R: 'flatR', WILL: 'hookL', MIKE: 'midHook', SAM: 'hookR' },
   },
   {
-    id: 'c2-drop', coverage: 'COVER 2', family: 'zone', weight: 0.5,
+    id: 'c2-drop', coverage: 'COVER 2', family: 'zone', shell: 'two', weight: 0.5,
     rush: ['DE_L', 'DT_R', 'DE_R'], man: [],
     zones: { FS: 'deepHalfL', SS: 'deepHalfR', CB_L: 'flatL', CB_R: 'flatR', WILL: 'hookL', MIKE: 'midHook', SAM: 'hookR', DT_L: 'robber' },
   },
   {
-    id: 'c3', coverage: 'COVER 3', family: 'zone', weight: 1.4,
+    id: 'c3', coverage: 'COVER 3', family: 'zone', shell: 'one', weight: 1.4,
     rush: [...DL], man: [],
     zones: { CB_L: 'deep3L', FS: 'deep3M', CB_R: 'deep3R', WILL: 'curlFlatL', MIKE: 'hookL', SAM: 'hookR', SS: 'curlFlatR' },
   },
   {
-    id: 'c3-fire', coverage: 'COVER 3', family: 'zone', weight: 0.9,
+    id: 'c3-fire', coverage: 'COVER 3', family: 'zone', shell: 'one', weight: 0.9,
     rush: [...DL, 'MIKE'], man: [],
     zones: { CB_L: 'deep3L', FS: 'deep3M', CB_R: 'deep3R', WILL: 'curlFlatL', SAM: 'midHook', SS: 'curlFlatR' },
   },
   {
-    id: 'c4', coverage: 'COVER 4', family: 'zone', weight: 1,
+    id: 'c4', coverage: 'COVER 4', family: 'zone', shell: 'two', weight: 1,
     rush: [...DL], man: [],
     zones: { CB_L: 'deep4L1', FS: 'deep4L2', SS: 'deep4R2', CB_R: 'deep4R1', WILL: 'curlFlatL', MIKE: 'midHook', SAM: 'curlFlatR' },
   },
   {
-    id: 'c4-drop', coverage: 'COVER 4', family: 'zone', weight: 0.7,
+    id: 'c4-drop', coverage: 'COVER 4', family: 'zone', shell: 'two', weight: 0.7,
     rush: ['DE_L', 'DT_L', 'DT_R'], man: [],
     zones: { CB_L: 'deep4L1', FS: 'deep4L2', SS: 'deep4R2', CB_R: 'deep4R1', WILL: 'curlFlatL', MIKE: 'hookL', SAM: 'curlFlatR', DE_R: 'hookR' },
   },
+  {
+    id: 'c2-man', coverage: 'COVER 2 MAN', family: 'man', shell: 'two', weight: 0.9,
+    rush: [...DL], man: ['CB_L', 'CB_R', 'SAM', 'WILL', 'MIKE'], zones: { FS: 'deepHalfL', SS: 'deepHalfR' },
+  },
+  {
+    id: 'c6', coverage: 'COVER 6', family: 'zone', shell: 'two', weight: 0.8,
+    rush: [...DL], man: [],
+    zones: { CB_L: 'deep4L1', FS: 'deep4L2', SS: 'deepHalfR', CB_R: 'flatR', WILL: 'curlFlatL', MIKE: 'midHook', SAM: 'hookR' },
+  },
+  {
+    id: 'tampa2', coverage: 'TAMPA 2', family: 'zone', shell: 'two', weight: 0.7,
+    rush: [...DL], man: [],
+    zones: { FS: 'deepHalfL', SS: 'deepHalfR', MIKE: 'tampaMiddle', CB_L: 'flatL', CB_R: 'flatR', WILL: 'hookL', SAM: 'hookR' },
+  },
 ];
 
-export function pickCall(): Call {
-  const total = CALLS.reduce((s, c) => s + c.weight, 0);
+/** Picks a call at random; bias (if given) re-weights calls, e.g. to counter a play you keep running. */
+export function pickCall(bias?: (c: Call) => number): Call {
+  const w = (c: Call) => c.weight * (bias ? bias(c) : 1);
+  const total = CALLS.reduce((s, c) => s + w(c), 0);
   let r = Math.random() * total;
-  for (const c of CALLS) { r -= c.weight; if (r <= 0) return c; }
+  for (const c of CALLS) { r -= w(c); if (r <= 0) return c; }
   return CALLS[CALLS.length - 1];
+}
+
+/** Does a play built to beat `vs` (its playbook label, e.g. 'VS COVER 2') beat this call? */
+export function beats(vs: string, c: Call): boolean {
+  switch (vs) {
+    case 'VS BLITZ': return c.rush.length >= 5;
+    case 'VS MAN': case 'LAST PLAY': return c.family === 'man';
+    case 'VS ZONE': return c.family === 'zone';
+    case 'VS SOFT': return c.family === 'zone' && c.rush.length <= 4;
+    case 'VS COVER 1': return c.coverage === 'COVER 1';
+    case 'VS COVER 2': return c.coverage === 'COVER 2' || c.coverage === 'TAMPA 2';
+    case 'VS COVER 3': return c.coverage === 'COVER 3';
+    case 'VS COVER 4': return c.coverage === 'COVER 4' || c.coverage === 'COVER 6';
+    default: return false;
+  }
 }
 
 export function rushLabel(call: Call): string {

@@ -48,7 +48,8 @@ export class CpuQb {
   private readLen = rand(0.5, 0.8);
   private patience = rand(2.6, 3.6); // sim seconds before he just gets rid of it
 
-  constructor(sim: Sim) {
+  /** picky: extra margin (px) he wants before throwing; higher = a more cautious, easier QB. */
+  constructor(sim: Sim, private picky = 0) {
     this.order = sim.play.routes
       .map((pr) => sim.receivers.find((a) => a.id === pr.who))
       .filter((a): a is Actor => !!a);
@@ -63,7 +64,7 @@ export class CpuQb {
     this.eyes = r;
     if (t < 0.7) return null; // catching the snap, settling his feet
     const read = readReceiver(sim, r);
-    const need = t < 1.6 ? 10 : t < 2.4 ? 5 : 1; // pickier early, less so as the pocket collapses
+    const need = (t < 1.6 ? 10 : t < 2.4 ? 5 : 1) + this.picky; // pickier early, less so as the pocket collapses
     if (read.margin > need) return this.aim(read.to);
     if (t - this.readStart > this.readLen) { // next read
       this.idx = (this.idx + 1) % this.order.length;
