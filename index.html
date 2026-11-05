@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#111d2b" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <title>Football Game</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #111d2b; overflow: hidden; }
+      body { display: flex; align-items: center; justify-content: center;
+             touch-action: none; user-select: none; -webkit-user-select: none;
+             -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+      canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges;
+               width: min(100vw, calc(100dvh * 9 / 16)); height: min(100dvh, calc(100vw * 16 / 9)); }
+    </style>
+  </head>
+  <body>
+    <canvas id="game" width="180" height="320"></canvas>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
