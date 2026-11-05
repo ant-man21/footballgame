@@ -22,7 +22,6 @@ const PLAYER_UP = [
   '.JJJ.',
   '.P.P.',
 ];
-const PLAYER_DOWN = [...PLAYER_UP].reverse();
 
 // The original, chunkier 7px player, used in landscape where the field is bigger.
 const CLASSIC_UP = [
@@ -34,7 +33,6 @@ const CLASSIC_UP = [
   '.JJJJJ.',
   '..P.P..',
 ];
-const CLASSIC_DOWN = [...CLASSIC_UP].reverse();
 
 // Linemen: same idea, wider shoulders.
 const BIG_UP = [
@@ -46,30 +44,37 @@ const BIG_UP = [
   '.JJJJJJJ.',
   '..PP.PP..',
 ];
-const BIG_DOWN = [...BIG_UP].reverse();
 
-const OFFENSE: Palette = { M: '#c2c3c7', H: '#1d2b53', S: '#1d6fb8', J: '#29adff', N: '#fff1e8', P: '#fff1e8' };
-const QB: Palette = { ...OFFENSE, H: '#ffec27', N: '#1d2b53' };
-const DEFENSE: Palette = { M: '#c2c3c7', H: '#7e2553', S: '#b8003a', J: '#ff004d', N: '#fff1e8', P: '#5f574f' };
+// Team colours. You are always blue; the CPU is red. Either team can be on
+// offense (facing up the screen) or defense (facing down).
+const BLUE: Palette = { M: '#c2c3c7', H: '#1d2b53', S: '#1d6fb8', J: '#29adff', N: '#fff1e8', P: '#fff1e8' };
+const RED: Palette = { M: '#c2c3c7', H: '#7e2553', S: '#b8003a', J: '#ff004d', N: '#fff1e8', P: '#5f574f' };
 
 const BALL = ['.BB.', 'BWWB', '.BB.'];
 
-export type SpriteName = 'off' | 'offBig' | 'qb' | 'def' | 'defBig' | 'ball' | 'offL' | 'qbL' | 'defL';
-let cache: Record<SpriteName, HTMLCanvasElement> | null = null;
+export type TeamColor = 'blue' | 'red';
+export type Build = 'qb' | 'skill' | 'big';
 
-export function sprites(): Record<SpriteName, HTMLCanvasElement> {
-  cache ??= {
-    off: bake(PLAYER_UP, OFFENSE),
-    offL: bake(CLASSIC_UP, OFFENSE),
-    qbL: bake(CLASSIC_UP, QB),
-    defL: bake(CLASSIC_DOWN, DEFENSE),
-    offBig: bake(BIG_UP, OFFENSE),
-    defBig: bake(BIG_DOWN, DEFENSE),
-    qb: bake(PLAYER_UP, QB),
-    def: bake(PLAYER_DOWN, DEFENSE),
-    ball: bake(BALL, { B: '#ab5236', W: '#fff1e8' }),
-  };
-  return cache;
+const cache = new Map<string, HTMLCanvasElement>();
+
+/** A player sprite: team colour, build, which way he faces, and classic (7px) or slim (5px). */
+export function playerSprite(team: TeamColor, build: Build, facing: 'up' | 'down', classic: boolean): HTMLCanvasElement {
+  const key = `${team}/${build}/${facing}/${classic}`;
+  let img = cache.get(key);
+  if (!img) {
+    let pal = team === 'blue' ? BLUE : RED;
+    if (build === 'qb') pal = { ...pal, H: '#ffec27', N: '#1d2b53' };
+    const up = build === 'big' ? BIG_UP : classic ? CLASSIC_UP : PLAYER_UP;
+    img = bake(facing === 'up' ? up : [...up].reverse(), pal);
+    cache.set(key, img);
+  }
+  return img;
+}
+
+let ball: HTMLCanvasElement | null = null;
+export function ballSprite(): HTMLCanvasElement {
+  ball ??= bake(BALL, { B: '#ab5236', W: '#fff1e8' });
+  return ball;
 }
 
 export function drawCentered(ctx: CanvasRenderingContext2D, img: HTMLCanvasElement, x: number, y: number): void {

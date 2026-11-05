@@ -1,16 +1,29 @@
-// Field position, downs and distance, and the running stat line.
-// Yard lines are measured from our own goal line: 0 = our goal, 100 = theirs.
-import { C, LOS_Y, YD } from './config';
+// Field position and downs for whichever team has the ball. Yard lines are
+// measured from the offense's own goal line: 0 = their goal, 100 = the one
+// they're attacking. The Match decides what happens on a change of possession.
+import { LOS_Y, YD } from './config';
 import type { Sim } from './sim';
 
 export const START_YARD = 25;
 
-export interface PlaySummary {
-  headline: string;
-  color: string;
-  detail: string; // e.g. "+12 YDS - FIRST DOWN"
+/** What a play did to the drive. */
+export type DriveEvent =
+  | { kind: 'continue' }
+  | { kind: 'td' }
+  | { kind: 'int'; atYard: number } // where the defender caught it (offense's yard line)
+  | { kind: 'downs' };
+
+export interface PlayOutcome {
+  result: 'catch' | 'int' | 'inc' | 'sack';
   gained: number;
+  firstDown: boolean;
+  outOfBounds: boolean;
+  event: DriveEvent;
+  playsInDrive: number;
 }
+
+export interface TeamStats { plays: number; yards: number; tds: number; cmp: number; att: number; int: number; sacks: number }
+export const newStats = (): TeamStats => ({ plays: 0, yards: 0, tds: 0, cmp: 0, att: 0, int: 0, sacks: 0 });
 
 const ORD = ['', '1ST', '2ND', '3RD', '4TH'];
 
@@ -18,10 +31,11 @@ export class Drive {
   ballOn = START_YARD;
   down = 1;
   toGo = 10;
-  stats = { plays: 0, yards: 0, tds: 0, drives: 1, turnovers: 0, cmp: 0, att: 0, int: 0, sacks: 0 };
-  private playsThisDrive = 0;
+  plays = 0;
 
-  /** Pixel y of the goal line we're attacking, with the line of scrimmage at LOS_Y. */
+  constructor(ballOn = START_YARD) { this.ballOn = ballOn; }
+
+  /** Pixel y of the goal line being attacked, with the line of scrimmage at LOS_Y. */
   get goalY(): number { return LOS_Y - (100 - this.ballOn) * YD; }
 
   get downText(): string {
@@ -35,22 +49,18 @@ export class Drive {
     return y < 50 ? `OWN ${y}` : `OPP ${100 - y}`;
   }
 
-  get yardsPerPlay(): number { return this.stats.plays ? this.stats.yards / this.stats.plays : 0; }
-  get playsPerTd(): number { return this.stats.tds ? this.stats.plays / this.stats.tds : 0; }
-
-  /** Applies a finished play to the drive and describes what happened. */
-  apply(sim: Sim): PlaySummary {
-    const st = this.stats;
+  /** Applies a finished play: updates field position and downs, and the offense's stats. */
+  apply(sim: Sim, st: TeamStats): PlayOutcome {
     st.plays++;
-    this.playsThisDrive++;
+    this.plays++;
     const r = sim.result!;
     if (r !== 'sack') st.att++;
+    const base = { result: r, outOfBounds: sim.outOfBounds, playsInDrive: this.plays };
 
     if (r === 'int') {
       st.int++;
-      st.turnovers++;
-      this.newDrive();
-      return { headline: 'INTERCEPTED!', color: C.red, detail: 'TURNOVER', gained: 0 };
+      const atYard = this.ballOn + (LOS_Y - sim.spotY) / YD;
+      return { ...base, gained: 0, firstDown: false, event: { kind: 'int', atYard } };
     }
 
     let gained = r === 'inc' ? 0 : Math.round((LOS_Y - sim.spotY) / YD);
@@ -62,38 +72,19 @@ export class Drive {
       gained = 100 - this.ballOn;
       st.yards += gained;
       st.tds++;
-      const n = this.playsThisDrive;
-      this.newDrive();
-      return { headline: 'TOUCHDOWN!', color: C.yellow, detail: `+${gained} YDS - ${n} PLAY DRIVE`, gained };
+      return { ...base, gained, firstDown: false, event: { kind: 'td' } };
     }
 
     st.yards += gained;
     this.ballOn += gained;
-    const yds = gained > 0 ? `+${gained} YDS` : gained < 0 ? `${gained} YDS` : 'NO GAIN';
-    const headline = r === 'catch' ? 'CATCH!' : r === 'sack' ? 'SACK!' : 'INCOMPLETE';
-    const color = r === 'catch' ? C.green : r === 'sack' ? C.orange : C.grey;
-
     if (gained >= this.toGo) {
       this.down = 1;
       this.toGo = Math.min(10, 100 - this.ballOn);
-      return { headline, color, detail: `${yds} - FIRST DOWN`, gained };
+      return { ...base, gained, firstDown: true, event: { kind: 'continue' } };
     }
     this.toGo -= gained;
     this.down++;
-    if (this.down > 4) {
-      st.turnovers++;
-      this.newDrive();
-      return { headline, color, detail: `${yds} - TURNOVER ON DOWNS`, gained };
-    }
-    const oob = sim.outOfBounds ? ' - OUT' : '';
-    return { headline, color, detail: r === 'inc' ? yds : `${yds}${oob}`, gained };
-  }
-
-  private newDrive(): void {
-    this.ballOn = START_YARD;
-    this.down = 1;
-    this.toGo = 10;
-    this.playsThisDrive = 0;
-    this.stats.drives++;
+    if (this.down > 4) return { ...base, gained, firstDown: false, event: { kind: 'downs' } };
+    return { ...base, gained, firstDown: false, event: { kind: 'continue' } };
   }
 }

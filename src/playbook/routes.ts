@@ -29,6 +29,9 @@ export const ROUTES = {
   cross:     { name: 'CROSS',     end: 'continue', pts: [{ o: 0, d: 4 }, { o: -22, d: 15 }] },
   deepOver:  { name: 'DEEP OVER', end: 'continue', pts: [{ o: 0, d: 7 }, { o: -26, d: 19 }] },
   wheel:     { name: 'WHEEL',     end: 'continue', pts: [{ o: 3, d: 1 }, { o: 6, d: 4 }, { o: 6.5, d: 40 }] },
+  deepDig:   { name: 'DEEP DIG',  end: 'continue', pts: [{ o: 0, d: 15 }, { o: -14, d: 15 }] },
+  skinnyPost:{ name: 'SKINNY',    end: 'continue', pts: [{ o: 0, d: 9 }, { o: -4, d: 24 }] },
+  shallow:   { name: 'SHALLOW',   end: 'continue', pts: [{ o: -1, d: 1.5 }, { o: -26, d: 3 }] },
 } satisfies Record<string, RouteDef>;
 
 export type RouteKey = keyof typeof ROUTES;

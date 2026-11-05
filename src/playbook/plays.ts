@@ -4,10 +4,11 @@ import type { RouteKey } from './routes';
 // The playbook. Plays are grouped into categories so the menu can grow:
 // add a category here and plays that use it, and the menu picks them up.
 
-export type CategoryId = 'quick' | 'core' | 'shots';
+export type CategoryId = 'quick' | 'core' | 'crossers' | 'shots';
 export const CATEGORIES: { id: CategoryId; name: string }[] = [
   { id: 'quick', name: 'QUICK' },
   { id: 'core', name: 'CORE' },
+  { id: 'crossers', name: 'CROSSERS' },
   { id: 'shots', name: 'SHOTS' },
 ];
 
@@ -44,7 +45,7 @@ export const PLAYS: Play[] = [
     ],
   },
   {
-    id: 'mesh', name: 'MESH', category: 'core', formation: 'spread', vs: 'VS MAN',
+    id: 'mesh', name: 'MESH', category: 'crossers', formation: 'spread', vs: 'VS MAN',
     routes: [
       { who: 'X', route: 'corner' }, { who: 'H', route: 'drag' },
       { who: 'Y', route: 'dragHigh' }, { who: 'Z', route: 'dig' },
@@ -84,7 +85,7 @@ export const PLAYS: Play[] = [
     ],
   },
   {
-    id: 'y-cross', name: 'Y CROSS', category: 'core', formation: 'ace', vs: 'VS MAN',
+    id: 'y-cross', name: 'Y CROSS', category: 'crossers', formation: 'ace', vs: 'VS MAN',
     routes: [
       { who: 'X', route: 'go' }, { who: 'Y', route: 'cross' },
       { who: 'H', route: 'flat' }, { who: 'Z', route: 'curl' },
@@ -111,6 +112,46 @@ export const PLAYS: Play[] = [
     id: 'post-wheel', name: 'POST WHEEL', category: 'shots', formation: 'spread', vs: 'VS MAN',
     routes: [
       { who: 'X', route: 'post' }, { who: 'H', route: 'wheel' },
+      { who: 'Y', route: 'flat' }, { who: 'Z', route: 'curl' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'spacing', name: 'SPACING', category: 'quick', formation: 'trips', vs: 'VS ZONE',
+    routes: [
+      { who: 'X', route: 'slant' }, { who: 'Y', route: 'flat' },
+      { who: 'H', route: 'snag' }, { who: 'Z', route: 'hitch' },
+      { who: 'RB', route: 'checkdown' },
+    ],
+  },
+  {
+    id: 'snag', name: 'SNAG', category: 'quick', formation: 'trips', vs: 'VS COVER 3',
+    routes: [
+      { who: 'X', route: 'hitch' }, { who: 'Y', route: 'flat' },
+      { who: 'H', route: 'snag' }, { who: 'Z', route: 'corner' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'dagger', name: 'DAGGER', category: 'core', formation: 'spread', vs: 'VS COVER 1',
+    routes: [
+      { who: 'X', route: 'deepDig' }, { who: 'H', route: 'seam' },
+      { who: 'Y', route: 'flat' }, { who: 'Z', route: 'curl' },
+      { who: 'RB', route: 'checkdown' },
+    ],
+  },
+  {
+    id: 'drive', name: 'DRIVE', category: 'crossers', formation: 'ace', vs: 'VS MAN',
+    routes: [
+      { who: 'X', route: 'go' }, { who: 'Y', route: 'shallow' },
+      { who: 'H', route: 'flat' }, { who: 'Z', route: 'dig' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'double-post', name: 'DOUBLE POST', category: 'shots', formation: 'spread', vs: 'VS COVER 3',
+    routes: [
+      { who: 'X', route: 'post' }, { who: 'H', route: 'skinnyPost' },
       { who: 'Y', route: 'flat' }, { who: 'Z', route: 'curl' },
       { who: 'RB', route: 'block' },
     ],
