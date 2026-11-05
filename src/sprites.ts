@@ -24,6 +24,18 @@ const PLAYER_UP = [
 ];
 const PLAYER_DOWN = [...PLAYER_UP].reverse();
 
+// The original, chunkier 7px player, used in landscape where the field is bigger.
+const CLASSIC_UP = [
+  '..MMM..',
+  '.HHHHH.',
+  '.HHHHH.',
+  'SJJJJJS',
+  'SJJNJJS',
+  '.JJJJJ.',
+  '..P.P..',
+];
+const CLASSIC_DOWN = [...CLASSIC_UP].reverse();
+
 // Linemen: same idea, wider shoulders.
 const BIG_UP = [
   '...MMM...',
@@ -42,12 +54,15 @@ const DEFENSE: Palette = { M: '#c2c3c7', H: '#7e2553', S: '#b8003a', J: '#ff004d
 
 const BALL = ['.BB.', 'BWWB', '.BB.'];
 
-export type SpriteName = 'off' | 'offBig' | 'qb' | 'def' | 'defBig' | 'ball';
+export type SpriteName = 'off' | 'offBig' | 'qb' | 'def' | 'defBig' | 'ball' | 'offL' | 'qbL' | 'defL';
 let cache: Record<SpriteName, HTMLCanvasElement> | null = null;
 
 export function sprites(): Record<SpriteName, HTMLCanvasElement> {
   cache ??= {
     off: bake(PLAYER_UP, OFFENSE),
+    offL: bake(CLASSIC_UP, OFFENSE),
+    qbL: bake(CLASSIC_UP, QB),
+    defL: bake(CLASSIC_DOWN, DEFENSE),
     offBig: bake(BIG_UP, OFFENSE),
     defBig: bake(BIG_DOWN, DEFENSE),
     qb: bake(PLAYER_UP, QB),

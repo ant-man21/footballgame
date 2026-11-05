@@ -12,6 +12,7 @@ Top-down, vertical, pixel-art football game for phone and laptop (browser / inst
 - Hold it too long and the rush gets home: **sack**.
 - After each play the banner shows the result, yards, and the defense you faced (e.g. `COVER 3 - 4-MAN RUSH`).
 - Top bar: down & distance, field position, and TDs / yards per play / plays per TD.
+- **Portrait or landscape:** turn the phone sideways and the game turns with it. The play still runs up the screen, but the field's width gets the long side (about 1.3x bigger, classic chunky players), with the scoreboard and buttons in side panels; the camera follows deep balls. Rotate back for portrait.
 - Two control schemes; tap **MODE** to switch: **PULL** (slingshot, finger never covers the target) and **AIM** (landing spot just above your finger).
 
 Balance target: 8-15 plays per touchdown, with the short game as the reliable way to move the chains and deep shots as boom-or-bust. A scripted QB that reads coverage and aims with some error gets about 8.4 yards per play and 12 plays per TD; short throws complete ~72% (about 50% success), deep throws ~33%.
@@ -73,4 +74,5 @@ Open the page on your phone, then *Add to Home Screen* for full-screen play.
 - `src/game.ts`: input, aiming, camera, field/HUD drawing
 - `src/menu.ts`, `src/playart.ts`: the playbook menu and its play diagrams
 - `src/sprites.ts`, `src/font.ts`: pixel-art sprites and the 3x5 bitmap font
-- `src/main.ts`: canvas + pointer (touch/mouse) input
+- `src/view.ts`: portrait/landscape views (how the field maps onto the screen)
+- `src/main.ts`: canvas sizing per orientation + pointer (touch/mouse) input

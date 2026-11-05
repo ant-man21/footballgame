@@ -111,6 +111,37 @@ const OUT = process.env.SHOT_DIR || '.';
   await tap({ x: 24, y: 310 });
   check(await G(() => window.__game.menuOpen), 'PLAYS button reopens the playbook');
 
+  // 8. Landscape: turn the phone sideways; same game, bigger field between side panels.
+  const lctx = await browser.newContext({ ...devices['Pixel 7 landscape'] });
+  const lp = await lctx.newPage();
+  lp.on('pageerror', (e) => errors.push(e.message));
+  await lp.goto(URL);
+  const lcdp = await lctx.newCDPSession(lp);
+  const LG = (fn, arg) => lp.evaluate(fn, arg);
+  const ltouch = (type, pts) => lcdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+  const lscreen = (q) => LG(({ x, y }) => {
+    const r = document.getElementById('game').getBoundingClientRect(), v = window.__game.view;
+    return { x: r.left + (x / v.w) * r.width, y: r.top + (y / v.h) * r.height };
+  }, q);
+  const lw = await LG(() => window.__game.view.landscape ? document.getElementById('game').width : 0);
+  check(lw >= 320, `landscape: ${lw}x180 view (fills a ${(915/412).toFixed(2)}:1 phone) when the phone is sideways`);
+  const card = await LG(() => { const g = window.__game; const c = g.menu.layout(g.view).cards[2]; return { x: c.r.x + c.r.w / 2, y: c.r.y + c.r.h / 2, id: c.play.id }; });
+  const cp = await lscreen(card);
+  await ltouch('touchStart', [cp]); await ltouch('touchEnd', []);
+  check(await LG((id) => !window.__game.menuOpen && window.__game.play.id === id, card.id), `landscape: picked ${card.id} from a 3-column playbook`);
+  await LG(() => { window.__game.mode = 'pull'; window.__game.sim.forceCall = 'c4'; window.__game.nextPlay(); });
+  const a = await lscreen({ x: 160, y: 110 }), b = await lscreen({ x: 160, y: 140 });
+  await ltouch('touchStart', [a]);
+  for (let i = 1; i <= 8; i++) await ltouch('touchMove', [{ x: a.x + ((b.x - a.x) * i) / 8, y: a.y + ((b.y - a.y) * i) / 8 }]);
+  await lp.screenshot({ path: `${OUT}/smoke-landscape.png` });
+  await ltouch('touchEnd', []);
+  await lp.waitForFunction(() => window.__game.sim.phase === 'air', null, { timeout: 2000 });
+  await lp.waitForFunction(() => window.__game.sim.phase === 'done', null, { timeout: 10000 });
+  check(await LG(() => !!window.__game.summary), `landscape: touch-drag throw resolves (${await LG(() => window.__game.summary.headline)})`);
+  await lp.setViewportSize({ width: 412, height: 915 });
+  await lp.waitForTimeout(200);
+  check(await LG(() => !window.__game.view.landscape && document.getElementById('game').width === 180), 'rotating back switches to portrait');
+
   await browser.close();
   if (errors.length) throw new Error('page errors: ' + errors.join('; '));
   console.log('SMOKE OK');

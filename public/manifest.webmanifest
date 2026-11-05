@@ -2,7 +2,7 @@
   "name": "Football Game",
   "short_name": "Football",
   "display": "fullscreen",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#111d2b",
   "theme_color": "#111d2b",
   "start_url": "./"

@@ -1,18 +1,35 @@
-import { H, W } from './config';
 import { Game } from './game';
 import { PLAYS } from './playbook/plays';
+import { PORTRAIT, landscapeView } from './view';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
-ctx.imageSmoothingEnabled = false;
 
 const game = new Game();
 (window as unknown as { __game: Game }).__game = game; // handles for automated tests
 (window as unknown as { __plays: typeof PLAYS }).__plays = PLAYS;
 
+/** Portrait or landscape follows the screen: turn the phone and the game turns with it. */
+function fit(): void {
+  const aspect = window.innerWidth / window.innerHeight;
+  const v = aspect > 1 ? landscapeView(aspect) : PORTRAIT;
+  if (v.landscape !== game.view.landscape || canvas.width !== v.w) {
+    game.setView(v);
+    canvas.width = v.w;
+    canvas.height = v.h;
+  }
+  const scale = Math.min(window.innerWidth / v.w, window.innerHeight / v.h);
+  canvas.style.width = `${Math.floor(v.w * scale)}px`;
+  canvas.style.height = `${Math.floor(v.h * scale)}px`;
+  ctx.imageSmoothingEnabled = false;
+}
+fit();
+window.addEventListener('resize', fit);
+window.addEventListener('orientationchange', () => setTimeout(fit, 100));
+
 function toLogical(e: PointerEvent) {
   const r = canvas.getBoundingClientRect();
-  return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+  return { x: ((e.clientX - r.left) / r.width) * game.view.w, y: ((e.clientY - r.top) / r.height) * game.view.h };
 }
 
 let activePointer: number | null = null;
