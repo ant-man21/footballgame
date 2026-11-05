@@ -19,12 +19,20 @@ const SPEED: Record<Kind, number> = { qb: 0, ol: 6, wr: 8.0, te: 7.1, rb: 7.6, d
 const CATCH_RADIUS = 7; // receivers attack the ball
 /** How far a defender can reach to play the ball: quick throws are on top of him before he reacts. */
 const defenderReach = (throwLen: number) => clamp(3.5 + throwLen / 45, 4, 6.5);
-const BALL_HAWK = 22; // receivers this close to the landing spot go get the ball...
-const BALL_READ = 0.3; // ...once they've picked it up in the air (sim seconds)
+const BALL_HAWK = 22; // a receiver this close to the landing spot always goes for it
+const BALL_READ = 0.25; // sim seconds for receivers to pick the ball up in the air
 
 // Throwing
-// Landing-spot error (std dev, px): short throws are on the money, deep balls wander.
-export const throwError = (d: number) => d * 0.02 + Math.max(0, d - 70) * 0.13;
+/**
+ * How far off a throw can land (px), as the half-axes of an oval around the aim
+ * point: 'along' the throw line (long/short) and 'lat' (left/right). Short throws
+ * are on the money; deep balls can drift a few yards, mostly long or short.
+ * The ball always lands inside this oval; pressure makes it bigger.
+ */
+export function throwSpread(d: number, pressured: boolean): { along: number; lat: number } {
+  const e = (d * 0.02 + Math.max(0, d - 70) * 0.07) * (pressured ? 1.6 : 1);
+  return { along: 1 + e * 1.6, lat: 1 + e * 0.9 };
+}
 const PRESSURE_DIST = 18; // a free rusher this close doubles the error
 
 // Run after catch
@@ -84,6 +92,10 @@ export interface Ball {
   carrier: Actor | null;
 }
 
+function gauss(): number {
+  return Math.sqrt(-2 * Math.log(1 - Math.random() * 0.999)) * Math.cos(Math.random() * Math.PI * 2);
+}
+
 /** Height of the ball above the ground at flight progress s (0..1). */
 export const arcHeight = (peak: number, s: number) => 4 * peak * s * (1 - s);
 
@@ -109,6 +121,7 @@ export class Sim {
   phase: Phase = 'presnap';
   t = 0; // sim seconds since the snap
   airT = 0; // sim seconds since the throw
+  intended: Actor | null = null; // receiver going for the thrown ball
   ball: Ball | null = null;
   result: Result | null = null;
   carrier: Actor | null = null; // receiver running after the catch
@@ -145,6 +158,7 @@ export class Sim {
     this.phase = 'presnap';
     this.t = 0;
     this.airT = 0;
+    this.intended = null;
     this.ball = null;
     this.result = null;
 
@@ -295,14 +309,26 @@ export class Sim {
   throwTo(aim: Vec, accurate = false): void {
     if (this.phase !== 'live') return;
     const from = { x: this.qb.x, y: this.qb.y - 3 };
-    // longer throws (and throws under pressure) wander off target
-    const sd = accurate ? 0 : throwError(dist(from, aim)) * (this.pressured ? 2 : 1);
-    const a = Math.random() * Math.PI * 2;
-    const r = sd * Math.sqrt(-2 * Math.log(1 - Math.random() * 0.999));
-    const to = { x: clamp(aim.x + Math.cos(a) * r, FIELD_LEFT, FIELD_RIGHT), y: aim.y + Math.sin(a) * r };
+    // Longer throws (and throws under pressure) drift, mostly long or short,
+    // but always inside the oval the player sees while aiming.
+    let to = { ...aim };
+    if (!accurate) {
+      const { along, lat } = throwSpread(dist(from, aim), this.pressured);
+      const u = unit(from, aim);
+      let a = 0, b = 0;
+      for (let i = 0; i < 12; i++) { // centre-weighted, truncated to the oval
+        a = gauss() * 0.5; b = gauss() * 0.5;
+        if (a * a + b * b <= 1) break;
+      }
+      const n = Math.hypot(a, b);
+      if (n > 1) { a /= n; b /= n; }
+      to = { x: aim.x + u.x * a * along - u.y * b * lat, y: aim.y + u.y * a * along + u.x * b * lat };
+    }
+    to.x = clamp(to.x, FIELD_LEFT, FIELD_RIGHT);
     this.ball = { aim, from, to, ...flightFor(from, to), t: 0, carrier: null };
     this.phase = 'air';
     this.airT = 0;
+    this.intended = null;
   }
 
   // ---------- simulation ----------
@@ -333,13 +359,32 @@ export class Sim {
   private updateReceivers(dt: number): void {
     const landing = this.landing();
     const release = clamp(0.35 + this.t / 0.9, 0.35, 1); // receivers build up speed off the line
+    // Once the ball is read, the intended receiver (the one who can get to
+    // the spot) runs to it, pacing himself to arrive in stride. That's what
+    // makes leading a receiver work.
+    if (landing && this.airT >= BALL_READ && !this.intended) this.intended = this.pickIntended(landing);
+    const remain = this.ball ? Math.max(0.05, this.ball.dur - this.ball.t) : 1;
     for (const p of this.receivers) {
       const step = p.speed * dt * release;
       const x0 = p.x, y0 = p.y;
-      if (landing && this.airT >= BALL_READ && dist(p, landing) < BALL_HAWK) moveToward(p, landing, step);
-      else this.followRoute(p, step);
+      if (landing && p === this.intended) {
+        const pace = clamp(dist(p, landing) / remain, p.speed * 0.8, p.speed); // keep running, ease off only a little
+        moveToward(p, landing, pace * dt * release);
+      } else this.followRoute(p, step);
       if (dt > 0) p.vel = { x: (p.x - x0) / dt, y: (p.y - y0) / dt };
     }
+  }
+
+  /** The receiver who can reach the landing spot soonest, if anyone can get there in time. */
+  private pickIntended(landing: Vec): Actor | null {
+    const remain = Math.max(0.05, this.ball!.dur - this.ball!.t);
+    let best: Actor | null = null, bestSlack = Infinity;
+    for (const p of this.receivers) {
+      const d = dist(p, landing);
+      const slack = d / p.speed - remain; // <= 0 means he gets there before the ball
+      if ((slack <= 0.2 || d < BALL_HAWK) && slack < bestSlack) { best = p; bestSlack = slack; }
+    }
+    return best;
   }
 
   private followRoute(p: Actor, step: number): void {
@@ -433,7 +478,7 @@ export class Sim {
     const landing = this.landing();
     for (const d of this.defense) {
       if (d.job !== 'man' && d.job !== 'zone') continue;
-      const range = d.kind === 'lb' ? 30 : d.kind === 'dl' ? 24 : d.zone?.deep ? 85 : 45;
+      const range = d.kind === 'lb' ? 30 : d.kind === 'dl' ? 24 : d.zone?.deep ? 100 : 45;
       const sees = landing && this.airT >= d.react;
       if (sees && d.job === 'man' && d.man && dist(d.man, landing) < 24) {
         // ball is coming to my man: race him to the spot and contest the catch
@@ -462,7 +507,7 @@ export class Sim {
       }
       d.goal.y = Math.max(d.goal.y, this.endLineY + 2); // nobody drops out the back of the end zone
       const driving = landing && this.airT >= d.react && d.zone?.deep; // deep help drives on the ball
-      moveToward(d, d.goal, d.speed * dt * (driving ? 1.15 : 1));
+      moveToward(d, d.goal, d.speed * dt * (driving ? 1.25 : 1));
     }
   }
 
@@ -491,7 +536,9 @@ export class Sim {
       ? threats.reduce((p, q) => (Math.abs(q.x - CX) > Math.abs(p.x - CX) ? q : p)) // widest
       : threats.reduce((p, q) => (dist(q, land) < dist(p, land) ? q : p)); // nearest
     // sit in the zone and shade toward the threat, rather than attaching to him
-    const shade = { x: lerp(land.x, t.x, 0.6), y: lerp(land.y, t.y - 0.8 * YD, 0.6) };
+    // (flat defenders widen more gradually: they sink under the curl first)
+    const k = z.wide ? 0.45 : 0.6;
+    const shade = { x: lerp(land.x, t.x, k), y: lerp(land.y, t.y - 0.8 * YD, k) };
     return { x: clamp(shade.x, x0, x1), y: clamp(shade.y, top, bottom) };
   }
 
@@ -504,6 +551,8 @@ export class Sim {
         if (p.engaged === q || q.engaged === p || p.engagedBy === q || q.engagedBy === p) continue;
         if ((p.kind === 'qb' && q.job === 'rush') || (q.kind === 'qb' && p.job === 'rush')) continue;
         if (p === this.carrier || q === this.carrier) continue;
+        // the receiver going for the ball and defenders can both get to it; the catch decides
+        if (this.phase === 'air' && (p === this.intended || q === this.intended)) continue;
         const d = dist(p, q);
         if (d >= BODY || d < 1e-6) continue;
         const push = (BODY - d) / d;
@@ -548,7 +597,7 @@ export class Sim {
         // contested: who is really closer to the ball decides it, and the
         // longer the ball hangs, the more time the defender has to play it
         const edge = d.d - o.d; // px the receiver is closer by
-        const hang = clamp(1.25 - dist(ball.from, ball.to) / 220, 0.45, 1);
+        const hang = clamp(1.45 - dist(ball.from, ball.to) / 150, 0.4, 1.2); // quick throws favour the receiver
         if (edge >= 3) outcome = roll < 0.68 * hang ? 'catch' : roll < 0.98 ? 'inc' : 'int';
         else if (edge >= 0) outcome = roll < 0.45 * hang ? 'catch' : roll < 0.96 ? 'inc' : 'int';
         else if (edge > -2) outcome = roll < 0.3 * hang ? 'catch' : roll < 0.94 ? 'inc' : 'int';
@@ -582,8 +631,10 @@ export class Sim {
     for (const a of this.actors) { a.engaged = null; a.engagedBy = null; }
     for (const d2 of this.defense) d2.react = rand(0.12, 0.3) + (d2.job === 'rush' ? 0.2 : 0); // read the catch
     // caught in stride? he keeps most of his speed
+    // caught in stride he keeps most of his speed; an over-the-shoulder deep ball costs some
     const moving = Math.hypot(c.vel.x, c.vel.y) > c.speed * 0.5;
-    this.runStart = moving ? 0.6 : 0.35;
+    const deepBall = dist(this.ball!.from, this.ball!.to) > 20 * YD;
+    this.runStart = moving && !deepBall ? 0.6 : 0.35;
     this.phase = 'run';
   }
 

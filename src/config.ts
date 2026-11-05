@@ -19,7 +19,7 @@ export const fy = (dYd: number) => LOS_Y - dYd * YD;
 // Game feel
 export const TIME_SCALE = 1.2; // simulation runs this much faster than real time
 export const MAX_THROW = 165; // longest throw, in pixels (~52 yards)
-export const PULL_POWER = 2.6; // pull mode: target offset = drag distance * this
+export const PULL_POWER = 2.2; // pull mode: target offset = drag distance * this
 export const RESULT_TIME = 2.6; // seconds the result banner stays up
 export const CAM_ANCHOR = 130; // camera follows a runner once he's above this screen y
 

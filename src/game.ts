@@ -7,12 +7,13 @@ import { Drive, type PlaySummary } from './drive';
 import { drawText, textWidth } from './font';
 import { Menu } from './menu';
 import { PLAYS, type Play } from './playbook/plays';
-import { type Actor, Sim, arcHeight, flightFor, throwError } from './sim';
+import { type Actor, Sim, arcHeight, flightFor, throwSpread } from './sim';
 import { drawCentered, sprites } from './sprites';
 import { type Vec, clamp, dist, lerp } from './util';
 
 export type AimMode = 'pull' | 'aim';
 const SNAP_CATCH = 0.3; // sim seconds for the QB to catch the shotgun snap
+const AIM_OFFSET = 10; // AIM mode: the landing spot sits this far above your finger
 type Rect = { x: number; y: number; w: number; h: number };
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
@@ -70,7 +71,7 @@ export class Game {
       if (Math.hypot(dx, dy) < 5) return null;
       t = { x: qb.x + dx * PULL_POWER, y: qb.y + dy * PULL_POWER };
     } else {
-      t = { x: cur.x, y: cur.y - this.camY };
+      t = { x: cur.x, y: cur.y - this.camY - AIM_OFFSET }; // just above the finger, so it doesn't hide the target
       if (dist(t, qb) < 12) return null;
     }
     const d = dist(t, qb);
@@ -145,9 +146,10 @@ export class Game {
     this.renderRoutes(ctx);
     const spr = sprites();
     for (const p of [...sim.actors].sort((a, b) => a.y - b.y)) {
+      const img = spriteFor(p, spr);
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
-      ctx.fillRect(Math.round(p.x - 3), Math.round(p.y + 3), 7, 1);
-      drawCentered(ctx, spriteFor(p, spr), p.x, p.y);
+      ctx.fillRect(Math.round(p.x - img.width / 2), Math.round(p.y + img.height / 2), img.width, 1);
+      drawCentered(ctx, img, p.x, p.y);
     }
     this.renderAim(ctx);
     this.renderBall(ctx);
@@ -200,26 +202,25 @@ export class Game {
       ctx.fillStyle = C.white;
       ctx.fillRect(Math.round(gx), Math.round(gy - arcHeight(peak, s)), 2, 2);
     }
-    // Landing circle: the ball will come down somewhere inside it (most of
-    // the time). It grows with distance and doubles under pressure, the same
-    // in both aim modes.
+    // Landing oval: the ball will come down somewhere inside it. It stretches
+    // along the throw line with distance and grows under pressure (orange).
     const pressured = this.sim.pressured;
-    const r = 2 + throwError(dist(from, to)) * (pressured ? 2 : 1) * 1.5;
+    const { along, lat } = throwSpread(dist(from, to), pressured);
+    const u = { x: (to.x - from.x) / (dist(from, to) || 1), y: (to.y - from.y) / (dist(from, to) || 1) };
     const x = Math.round(to.x), y = Math.round(to.y);
-    const color = pressured ? C.orange : C.yellow;
-    ctx.fillStyle = color;
-    const n = Math.max(12, Math.round(r * 2.5));
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + this.clock * 0.8; // slow spin so it reads as "live"
-      if (i % 2) continue; // dotted ring
-      ctx.fillRect(Math.round(x + Math.cos(a) * r), Math.round(y + Math.sin(a) * r), 1, 1);
+    ctx.fillStyle = pressured ? C.orange : C.yellow;
+    const n = Math.max(14, Math.round((along + lat) * 2.5));
+    for (let i = 0; i < n; i += 2) { // dotted outline
+      const t = (i / n) * Math.PI * 2;
+      const a = Math.cos(t) * along, b = Math.sin(t) * lat;
+      ctx.fillRect(Math.round(x + u.x * a - u.y * b), Math.round(y + u.y * a + u.x * b), 1, 1);
     }
     ctx.fillRect(x - 1, y, 3, 1); // aim point
     ctx.fillRect(x, y - 1, 1, 3);
-    if (r > 8) { // a faint fill so big circles read as an area
+    if (along > 6) { // faint fill so the big ovals read as an area
       ctx.globalAlpha = 0.12;
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.ellipse(x, y, along, lat, Math.atan2(u.y, u.x), 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
@@ -234,7 +235,7 @@ export class Game {
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(Math.round(g.x - 1), Math.round(g.y), 3, 1);
     }
-    drawCentered(ctx, sprites().ball, g.x + (sim.ball.carrier ? 3 : 0), g.y - h - (sim.ball.carrier ? 1 : 0));
+    drawCentered(ctx, sprites().ball, g.x + (sim.ball.carrier ? 2 : 0), g.y - h - (sim.ball.carrier ? 1 : 0));
   }
 
   private renderHud(ctx: CanvasRenderingContext2D): void {

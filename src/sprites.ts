@@ -13,14 +13,14 @@ function bake(rows: string[], palette: Palette): HTMLCanvasElement {
 }
 
 // Top-down player facing up the field: facemask (M) at the front.
+// Kept small (5px, about 1.6 yards) so passing windows read clearly.
 const PLAYER_UP = [
-  '..MMM..',
-  '.HHHHH.',
-  '.HHHHH.',
-  'SJJJJJS',
-  'SJJNJJS',
-  '.JJJJJ.',
-  '..P.P..',
+  '.MMM.',
+  '.HHH.',
+  'SJJJS',
+  'SJNJS',
+  '.JJJ.',
+  '.P.P.',
 ];
 const PLAYER_DOWN = [...PLAYER_UP].reverse();
 
