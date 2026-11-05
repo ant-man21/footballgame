@@ -28,8 +28,9 @@ export const throwError = (d: number) => d * 0.02 + Math.max(0, d - 70) * 0.13;
 const PRESSURE_DIST = 18; // a free rusher this close doubles the error
 
 // Run after catch
-const TACKLE_DIST = 6;
-const BREAK_CHANCE: Partial<Record<Kind, number>> = { wr: 0.12, te: 0.15, rb: 0.18 };
+const TACKLE_DIST = 5;
+const FALL_FORWARD = 1; // yards a tackled runner falls forward
+const BREAK_CHANCE: Partial<Record<Kind, number>> = { wr: 0.14, te: 0.18, rb: 0.2 };
 const STUN_TIME = 0.7; // a defender who misses a tackle is out of the play this long
 const SCREEN_DIST = 6; // a receiver this close to a pursuer slows him down
 
@@ -112,6 +113,7 @@ export class Sim {
   result: Result | null = null;
   carrier: Actor | null = null; // receiver running after the catch
   runT = 0; // sim seconds since the catch
+  private runStart = 0.4; // fraction of top speed the runner starts the run at
   spotY = 0; // where the play ended (pixel y), for measuring the gain
   touchdown = false;
   outOfBounds = false;
@@ -431,7 +433,7 @@ export class Sim {
     const landing = this.landing();
     for (const d of this.defense) {
       if (d.job !== 'man' && d.job !== 'zone') continue;
-      const range = d.kind === 'lb' ? 36 : d.kind === 'dl' ? 26 : d.zone?.deep ? 75 : 45;
+      const range = d.kind === 'lb' ? 30 : d.kind === 'dl' ? 24 : d.zone?.deep ? 85 : 45;
       const sees = landing && this.airT >= d.react;
       if (sees && d.job === 'man' && d.man && dist(d.man, landing) < 24) {
         // ball is coming to my man: race him to the spot and contest the catch
@@ -459,7 +461,8 @@ export class Sim {
         d.goal = { x: lerp(d.goal.x, raw.x, f), y: lerp(d.goal.y, raw.y, f) };
       }
       d.goal.y = Math.max(d.goal.y, this.endLineY + 2); // nobody drops out the back of the end zone
-      moveToward(d, d.goal, d.speed * dt);
+      const driving = landing && this.airT >= d.react && d.zone?.deep; // deep help drives on the ball
+      moveToward(d, d.goal, d.speed * dt * (driving ? 1.15 : 1));
     }
   }
 
@@ -540,7 +543,7 @@ export class Sim {
       let outcome: Result | null = null;
       const roll = Math.random();
       if (o.p && !d.p) outcome = 'catch';
-      else if (d.p && !o.p) outcome = roll < 0.18 ? 'int' : 'inc'; // defenders drop plenty
+      else if (d.p && !o.p) outcome = roll < 0.12 ? 'int' : 'inc'; // defenders drop plenty
       else if (o.p && d.p) {
         // contested: who is really closer to the ball decides it, and the
         // longer the ball hangs, the more time the defender has to play it
@@ -549,10 +552,12 @@ export class Sim {
         if (edge >= 3) outcome = roll < 0.68 * hang ? 'catch' : roll < 0.98 ? 'inc' : 'int';
         else if (edge >= 0) outcome = roll < 0.45 * hang ? 'catch' : roll < 0.96 ? 'inc' : 'int';
         else if (edge > -2) outcome = roll < 0.3 * hang ? 'catch' : roll < 0.94 ? 'inc' : 'int';
-        else outcome = roll < 0.18 ? 'int' : 'inc';
+        else outcome = roll < 0.13 ? 'int' : 'inc';
       }
       if (outcome) this.lastContest = { off: o.p ? o.d : null, def: d.p ? d.d : null, outcome }; // for tuning
       if (outcome === 'catch' && o.p) { this.startRun(o.p); return; }
+      // linebackers and linemen have worse hands: half their picks are drops
+      if (outcome === 'int' && d.p && d.p.kind !== 'db' && Math.random() < 0.5) outcome = 'inc';
       if (outcome === 'int' && d.p) { ball.carrier = d.p; this.finish('int', d.p.y); return; }
       this.finish('inc', this.qb.y); // nobody there, or knocked away
     }
@@ -571,12 +576,14 @@ export class Sim {
     this.carrier = c;
     this.result = 'catch';
     this.runT = 0;
-    const d = c.dir ?? { x: 0, y: -1 };
-    c.vel = { x: d.x * c.speed, y: d.y * c.speed };
+    if (Math.hypot(c.vel.x, c.vel.y) < 1) { const d = c.dir ?? { x: 0, y: -1 }; c.vel = { x: d.x * c.speed, y: d.y * c.speed }; }
     if (c.y <= this.goalY) { this.touchdown = true; this.finish('catch', c.y); return; }
     // the line play is over: everyone turns and chases
     for (const a of this.actors) { a.engaged = null; a.engagedBy = null; }
-    for (const d2 of this.defense) d2.react = rand(0.05, 0.25) + (d2.job === 'rush' ? 0.2 : 0);
+    for (const d2 of this.defense) d2.react = rand(0.12, 0.3) + (d2.job === 'rush' ? 0.2 : 0); // read the catch
+    // caught in stride? he keeps most of his speed
+    const moving = Math.hypot(c.vel.x, c.vel.y) > c.speed * 0.5;
+    this.runStart = moving ? 0.6 : 0.35;
     this.phase = 'run';
   }
 
@@ -601,7 +608,7 @@ export class Sim {
     want.y = Math.min(want.y, -0.35); // always keep going forward
     const wl = Math.hypot(want.x, want.y);
     const turn = Math.min(1, 5 * dt);
-    const speed = c.speed * 0.88 * clamp(0.4 + this.runT / 0.6, 0.4, 1); // gathers himself after the catch
+    const speed = c.speed * 0.92 * clamp(this.runStart + this.runT / 0.5, 0, 1); // gathers himself after the catch
     c.vel = {
       x: lerp(c.vel.x, (want.x / wl) * speed, turn),
       y: lerp(c.vel.y, (want.y / wl) * speed, turn),
@@ -635,7 +642,7 @@ export class Sim {
         if (Math.random() < (BREAK_CHANCE[c.kind] ?? 0.15)) {
           d.stunUntil = this.t + STUN_TIME; // broken tackle!
         } else {
-          this.finish('catch', c.y);
+          this.finish('catch', Math.max(c.y - FALL_FORWARD * YD, this.goalY + 1)); // falls forward
           return;
         }
       }

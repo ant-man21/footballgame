@@ -200,12 +200,29 @@ export class Game {
       ctx.fillStyle = C.white;
       ctx.fillRect(Math.round(gx), Math.round(gy - arcHeight(peak, s)), 2, 2);
     }
-    // reticle; it opens up on long throws and under pressure (less accurate)
-    const spread = 2 + Math.round(throwError(dist(from, to)) * (this.sim.pressured ? 2 : 1));
+    // Landing circle: the ball will come down somewhere inside it (most of
+    // the time). It grows with distance and doubles under pressure, the same
+    // in both aim modes.
+    const pressured = this.sim.pressured;
+    const r = 2 + throwError(dist(from, to)) * (pressured ? 2 : 1) * 1.5;
     const x = Math.round(to.x), y = Math.round(to.y);
-    ctx.fillStyle = this.sim.pressured ? C.orange : C.yellow;
-    ctx.fillRect(x - spread - 2, y, 3, 1); ctx.fillRect(x + spread, y, 3, 1);
-    ctx.fillRect(x, y - spread - 2, 1, 3); ctx.fillRect(x, y + spread, 1, 3);
+    const color = pressured ? C.orange : C.yellow;
+    ctx.fillStyle = color;
+    const n = Math.max(12, Math.round(r * 2.5));
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + this.clock * 0.8; // slow spin so it reads as "live"
+      if (i % 2) continue; // dotted ring
+      ctx.fillRect(Math.round(x + Math.cos(a) * r), Math.round(y + Math.sin(a) * r), 1, 1);
+    }
+    ctx.fillRect(x - 1, y, 3, 1); // aim point
+    ctx.fillRect(x, y - 1, 1, 3);
+    if (r > 8) { // a faint fill so big circles read as an area
+      ctx.globalAlpha = 0.12;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
   }
 
   private renderBall(ctx: CanvasRenderingContext2D): void {
