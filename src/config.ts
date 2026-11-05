@@ -5,9 +5,28 @@ export const H = 320;
 
 export const FIELD_LEFT = 6;
 export const FIELD_RIGHT = W - 6;
-export const ENDZONE_BOTTOM = 26;
-export const LOS_Y = 252; // line of scrimmage
-export const QB_POS = { x: 90, y: 284 };
+export const CX = W / 2;
+export const YD = 3.15; // pixels per yard: 168px field width ≈ 53.3 yards
 
+export const LOS_Y = 228; // line of scrimmage
+export const QB_DEPTH = 5; // shotgun, yards behind the line
+export const ENDZONE_BOTTOM = Math.round(LOS_Y - 65 * YD);
+
+/** Yards across (0 = middle of the field, + = right) to a pixel x. */
+export const fx = (xYd: number) => CX + xYd * YD;
+/** Yards downfield from the line of scrimmage (+ = toward the end zone) to a pixel y. */
+export const fy = (dYd: number) => LOS_Y - dYd * YD;
+
+// Game feel
+export const TIME_SCALE = 1.2; // simulation runs this much faster than real time
 export const MAX_THROW = 230; // longest throw, in pixels
 export const PULL_POWER = 2.6; // pull mode: target offset = drag distance * this
+export const RESULT_TIME = 2.6; // seconds the result banner stays up
+
+// Colours (PICO-8-ish palette)
+export const C = {
+  white: '#fff1e8', yellow: '#ffec27', red: '#ff004d', green: '#00e436', grey: '#c2c3c7',
+  darkGrey: '#5f574f', navy: '#1d2b53', blue: '#29adff', ink: '#111d2b', orange: '#ffa300', pink: '#ff77a8',
+};
+// One colour per receiver, used for routes on the field and in play art.
+export const ROUTE_COLORS = [C.yellow, C.pink, C.orange, C.green, C.white];

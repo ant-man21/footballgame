@@ -1,0 +1,125 @@
+// Defensive calls: who rushes the QB, who plays man-to-man, who plays a zone.
+// A call is picked at random before each snap.
+
+export type DefId = 'DE_L' | 'DT_L' | 'DT_R' | 'DE_R' | 'WILL' | 'MIKE' | 'SAM' | 'CB_L' | 'CB_R' | 'FS' | 'SS';
+export type DefKind = 'dl' | 'lb' | 'db';
+
+/** Base alignment in yards (x across, d off the ball). DBs get moved by the call. */
+export const DEF_BASE: Record<DefId, { x: number; d: number; kind: DefKind }> = {
+  DE_L: { x: -6.4, d: 1, kind: 'dl' },
+  DT_L: { x: -1.6, d: 1, kind: 'dl' },
+  DT_R: { x: 1.6, d: 1, kind: 'dl' },
+  DE_R: { x: 6.4, d: 1, kind: 'dl' },
+  WILL: { x: -4.5, d: 5, kind: 'lb' },
+  MIKE: { x: 0, d: 5.5, kind: 'lb' },
+  SAM: { x: 4.5, d: 5, kind: 'lb' },
+  CB_L: { x: -18, d: 6, kind: 'db' },
+  CB_R: { x: 18, d: 6, kind: 'db' },
+  FS: { x: -6, d: 12, kind: 'db' },
+  SS: { x: 6, d: 12, kind: 'db' },
+};
+
+/**
+ * A zone is an area of the field to guard (yards). The defender drops to the
+ * landmark (x, d) and plays whoever enters the box [x-wx, x+wx] x [dmin, dmax].
+ * Deep zones stay on top of the deepest threat; underneath zones squeeze the nearest.
+ */
+export interface ZoneDef {
+  name: string; x: number; wx: number; d: number; dmin: number; dmax: number; deep: boolean;
+  wide?: boolean; // flat defenders take the widest threat instead of the nearest
+}
+
+const deep = (name: string, x: number, wx: number, d: number): ZoneDef => ({ name, x, wx, d, dmin: 10, dmax: 50, deep: true });
+const under = (name: string, x: number, wx: number, d: number, dmin: number, dmax: number, wide = false): ZoneDef =>
+  ({ name, x, wx, d, dmin, dmax, deep: false, wide });
+
+export const ZONES = {
+  deepMiddle: deep('DEEP MIDDLE', 0, 16, 15),
+  deepHalfL: deep('DEEP HALF', -13, 13.5, 17),
+  deepHalfR: deep('DEEP HALF', 13, 13.5, 17),
+  deep3L: deep('DEEP THIRD', -18, 9, 15),
+  deep3M: deep('DEEP THIRD', 0, 9, 16),
+  deep3R: deep('DEEP THIRD', 18, 9, 15),
+  deep4L1: deep('DEEP QUARTER', -19.5, 7, 13),
+  deep4L2: deep('DEEP QUARTER', -6.5, 6.5, 14),
+  deep4R2: deep('DEEP QUARTER', 6.5, 6.5, 14),
+  deep4R1: deep('DEEP QUARTER', 19.5, 7, 13),
+  flatL: under('FLAT', -19, 7, 4, 0, 9, true),
+  flatR: under('FLAT', 19, 7, 4, 0, 9, true),
+  curlFlatL: under('CURL FLAT', -15, 10, 7, 1, 13, true),
+  curlFlatR: under('CURL FLAT', 15, 10, 7, 1, 13, true),
+  hookL: under('HOOK', -7, 6, 9, 3, 14),
+  hookR: under('HOOK', 7, 6, 9, 3, 14),
+  midHook: under('MIDDLE HOOK', 0, 6, 10, 3, 15),
+  robber: under('ROBBER', 0, 8, 12, 6, 18),
+} satisfies Record<string, ZoneDef>;
+export type ZoneKey = keyof typeof ZONES;
+
+export interface Call {
+  id: string;
+  coverage: string; // e.g. 'COVER 3'
+  family: 'man' | 'zone';
+  weight: number; // how often it gets picked
+  rush: DefId[];
+  man: DefId[]; // man-to-man defenders, matched to receivers at the snap
+  zones: Partial<Record<DefId, ZoneKey>>;
+}
+
+const DL: DefId[] = ['DE_L', 'DT_L', 'DT_R', 'DE_R'];
+
+export const CALLS: Call[] = [
+  {
+    id: 'c0', coverage: 'COVER 0', family: 'man', weight: 0.8,
+    rush: [...DL, 'MIKE', 'WILL'], man: ['CB_L', 'CB_R', 'SS', 'FS', 'SAM'], zones: {},
+  },
+  {
+    id: 'c1-blitz', coverage: 'COVER 1', family: 'man', weight: 1.1,
+    rush: [...DL, 'MIKE'], man: ['CB_L', 'CB_R', 'SS', 'SAM', 'WILL'], zones: { FS: 'deepMiddle' },
+  },
+  {
+    id: 'c1', coverage: 'COVER 1', family: 'man', weight: 1.1,
+    rush: [...DL], man: ['CB_L', 'CB_R', 'SS', 'SAM', 'WILL'], zones: { FS: 'deepMiddle', MIKE: 'robber' },
+  },
+  {
+    id: 'c2', coverage: 'COVER 2', family: 'zone', weight: 1.2,
+    rush: [...DL], man: [],
+    zones: { FS: 'deepHalfL', SS: 'deepHalfR', CB_L: 'flatL', CB_R: 'flatR', WILL: 'hookL', MIKE: 'midHook', SAM: 'hookR' },
+  },
+  {
+    id: 'c2-drop', coverage: 'COVER 2', family: 'zone', weight: 0.5,
+    rush: ['DE_L', 'DT_R', 'DE_R'], man: [],
+    zones: { FS: 'deepHalfL', SS: 'deepHalfR', CB_L: 'flatL', CB_R: 'flatR', WILL: 'hookL', MIKE: 'midHook', SAM: 'hookR', DT_L: 'robber' },
+  },
+  {
+    id: 'c3', coverage: 'COVER 3', family: 'zone', weight: 1.4,
+    rush: [...DL], man: [],
+    zones: { CB_L: 'deep3L', FS: 'deep3M', CB_R: 'deep3R', WILL: 'curlFlatL', MIKE: 'hookL', SAM: 'hookR', SS: 'curlFlatR' },
+  },
+  {
+    id: 'c3-fire', coverage: 'COVER 3', family: 'zone', weight: 0.9,
+    rush: [...DL, 'MIKE'], man: [],
+    zones: { CB_L: 'deep3L', FS: 'deep3M', CB_R: 'deep3R', WILL: 'curlFlatL', SAM: 'midHook', SS: 'curlFlatR' },
+  },
+  {
+    id: 'c4', coverage: 'COVER 4', family: 'zone', weight: 1,
+    rush: [...DL], man: [],
+    zones: { CB_L: 'deep4L1', FS: 'deep4L2', SS: 'deep4R2', CB_R: 'deep4R1', WILL: 'curlFlatL', MIKE: 'midHook', SAM: 'curlFlatR' },
+  },
+  {
+    id: 'c4-drop', coverage: 'COVER 4', family: 'zone', weight: 0.7,
+    rush: ['DE_L', 'DT_L', 'DT_R'], man: [],
+    zones: { CB_L: 'deep4L1', FS: 'deep4L2', SS: 'deep4R2', CB_R: 'deep4R1', WILL: 'curlFlatL', MIKE: 'hookL', SAM: 'curlFlatR', DE_R: 'hookR' },
+  },
+];
+
+export function pickCall(): Call {
+  const total = CALLS.reduce((s, c) => s + c.weight, 0);
+  let r = Math.random() * total;
+  for (const c of CALLS) { r -= c.weight; if (r <= 0) return c; }
+  return CALLS[CALLS.length - 1];
+}
+
+export function rushLabel(call: Call): string {
+  const n = call.rush.length;
+  return n >= 5 ? `${n}-MAN BLITZ` : `${n}-MAN RUSH`;
+}

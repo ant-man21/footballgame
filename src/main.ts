@@ -1,12 +1,14 @@
 import { H, W } from './config';
 import { Game } from './game';
+import { PLAYS } from './playbook/plays';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 ctx.imageSmoothingEnabled = false;
 
 const game = new Game();
-(window as unknown as { __game: Game }).__game = game; // handle for automated tests
+(window as unknown as { __game: Game }).__game = game; // handles for automated tests
+(window as unknown as { __plays: typeof PLAYS }).__plays = PLAYS;
 
 function toLogical(e: PointerEvent) {
   const r = canvas.getBoundingClientRect();

@@ -24,18 +24,32 @@ const PLAYER_UP = [
 ];
 const PLAYER_DOWN = [...PLAYER_UP].reverse();
 
+// Linemen: same idea, wider shoulders.
+const BIG_UP = [
+  '...MMM...',
+  '..HHHHH..',
+  '..HHHHH..',
+  'SSJJJJJSS',
+  'SSJJNJJSS',
+  '.JJJJJJJ.',
+  '..PP.PP..',
+];
+const BIG_DOWN = [...BIG_UP].reverse();
+
 const OFFENSE: Palette = { M: '#c2c3c7', H: '#1d2b53', S: '#1d6fb8', J: '#29adff', N: '#fff1e8', P: '#fff1e8' };
 const QB: Palette = { ...OFFENSE, H: '#ffec27', N: '#1d2b53' };
 const DEFENSE: Palette = { M: '#c2c3c7', H: '#7e2553', S: '#b8003a', J: '#ff004d', N: '#fff1e8', P: '#5f574f' };
 
 const BALL = ['.BB.', 'BWWB', '.BB.'];
 
-export type SpriteName = 'off' | 'qb' | 'def' | 'ball';
+export type SpriteName = 'off' | 'offBig' | 'qb' | 'def' | 'defBig' | 'ball';
 let cache: Record<SpriteName, HTMLCanvasElement> | null = null;
 
 export function sprites(): Record<SpriteName, HTMLCanvasElement> {
   cache ??= {
     off: bake(PLAYER_UP, OFFENSE),
+    offBig: bake(BIG_UP, OFFENSE),
+    defBig: bake(BIG_DOWN, DEFENSE),
     qb: bake(PLAYER_UP, QB),
     def: bake(PLAYER_DOWN, DEFENSE),
     ball: bake(BALL, { B: '#ab5236', W: '#fff1e8' }),
