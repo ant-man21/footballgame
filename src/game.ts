@@ -5,7 +5,9 @@ import { C, CX, FIELD_LEFT, FIELD_RIGHT, LOS_Y, PULL_POWER, RESULT_TIME, TIME_SC
 import { CpuQb, callPlay, cpuGoesForIt } from './cpu';
 import { type Call, beats, rushLabel } from './defense/calls';
 import { drawText, textWidth } from './font';
-import { type Banner, Match, PLAY_CLOCK } from './match';
+import { type Units, simDrive } from './career/quicksim';
+import { type TeamStats, rawFromSim } from './drive';
+import { type Banner, Match, PLAY_CLOCK, type Side } from './match';
 import { Menu, type MenuAction } from './menu';
 import { PLAYS, type Play } from './playbook/plays';
 import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
@@ -27,7 +29,25 @@ type Rect = { x: number; y: number; w: number; h: number };
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
 
-type Screen = 'title' | 'huddle' | 'play' | 'banner' | 'final' | 'roster';
+type Screen = 'title' | 'huddle' | 'play' | 'banner' | 'final' | 'roster' | 'career';
+
+/** A career game handed to the field: the match (maybe already in progress) and how to run it. */
+export interface CareerGameSetup {
+  match: Match;
+  you: Roster; // your team, with your QB
+  opp: Roster;
+  units: Record<Side, Units>; // quick-sim strength (simulated opponent drives)
+  simDefense: boolean; // simulate the other team's drives instead of playing the MIKE
+  endAtHalf: boolean; // a two-minute drill: your stint ends at halftime
+  label: string; // shown as you take the field
+  onDone: (m: Match, stint?: TeamStats) => void; // stint: your team's stats when your part ended early
+}
+
+/** The career screens (src/ui/career.ts) as the Game sees them. */
+export interface Screens {
+  tap(p: Vec, v: View): void;
+  render(ctx: CanvasRenderingContext2D, v: View): void;
+}
 
 export class Game {
   settings = loadSettings();
@@ -43,7 +63,7 @@ export class Game {
   mode: AimMode = this.settings.aim;
   team: Roster = loadRoster(); // your team (saved on this device)
   rosterView: RosterView | null = null; // the TEAM screen
-  private rosterFrom: 'title' | 'pause' = 'title';
+  private rosterFrom: 'title' | 'pause' | 'career' = 'title';
   cpuTeam: Roster = makeRoster('CPU', DIFFICULTY_TUNING[this.settings.difficulty].strength);
   history: string[] = []; // your recent play calls: the defense notices repeats
   view: View = PORTRAIT;
@@ -63,6 +83,10 @@ export class Game {
   private queuedThrow: Vec | null = null; // released before the QB had the snap
   runoff = 0; // game seconds run off since the last play ended (the play clock)
   camY = 0; // how far (world px) the view has scrolled upfield to follow the ball
+  careerGame: CareerGameSetup | null = null; // playing a career game (coach calls the plays)
+  careerScreens: Screens | null = null; // the career hub and its screens (screen 'career')
+  onCareer: (() => void) | null = null; // the title screen's CAREER button (set up in main.ts)
+  confirmSim = false;
 
   // Field state captured for the coming snap, so the field doesn't jump while a banner is up.
   private fieldBallOn = 25;
@@ -142,8 +166,54 @@ export class Game {
 
   private openRoster(from: 'title' | 'pause'): void {
     this.rosterFrom = from;
-    this.rosterView = new RosterView(this.team, from === 'pause' ? this.cpuTeam : null);
+    this.rosterView = new RosterView(this.yourTeam, from === 'pause' ? this.cpuTeam : null, !this.careerGame);
     this.pauseOpen = false;
+  }
+
+  /** The TEAM screen for a career team (read-only). BACK returns to the career screens. */
+  showRosterOf(team: Roster, opponent: Roster | null = null): void {
+    this.rosterFrom = 'career';
+    this.rosterView = new RosterView(team, opponent, false);
+  }
+
+  /** Your team on the field: the exhibition roster, or your career team. */
+  get yourTeam(): Roster { return this.careerGame?.you ?? this.team; }
+
+  /** Shows the career screens (hub etc.). */
+  showCareer(screens: Screens): void {
+    this.careerScreens = screens;
+    this.careerGame = null;
+    this.screen = 'career';
+    this.menu = null;
+    this.pauseOpen = false;
+    this.banner = null;
+  }
+
+  /** Plays a career game: the coach calls the plays, you run them (and play the MIKE, unless the defense is simulated). */
+  playCareerGame(setup: CareerGameSetup): void {
+    this.careerGame = setup;
+    this.match = setup.match;
+    this.cpuTeam = setup.opp;
+    this.history = [];
+    this.lastPlayId = null;
+    this.lastCallId = null;
+    this.runoff = 0;
+    this.pauseOpen = false;
+    this.confirmSim = false;
+    this.startHuddle();
+    this.showToast(setup.label);
+  }
+
+  /** Your part of the career game is over: hand the match back. */
+  private finishCareerGame(stint?: TeamStats): void {
+    const cg = this.careerGame;
+    if (!cg) return;
+    this.careerGame = null;
+    this.screen = 'career';
+    this.menu = null;
+    this.banner = null;
+    this.pauseOpen = false;
+    cg.onDone(this.match, stint);
   }
 
   newGame(): void {
@@ -177,6 +247,8 @@ export class Game {
     this.camY = 0;
     const m = this.match;
     if (m.over) { this.screen = 'final'; this.menu = null; return; }
+    const cg = this.careerGame;
+    if (cg?.endAtHalf && m.quarter >= 3) { this.finishCareerGame({ ...m.stats.you }); return; }
     const d = m.drive;
     this.fieldBallOn = d.ballOn;
     this.lineToGain = d.ballOn + d.toGo;
@@ -184,6 +256,7 @@ export class Game {
     this.camY = this.camBase();
     this.cpuTimeout();
 
+    if (cg && !this.autoplay) { this.careerHuddle(cg); return; }
     if (this.onOffense) {
       if (this.autoplay) {
         if (d.down === 4 && !cpuGoesForIt(d, m.score.you - m.score.cpu, m.quarter, m.clock)) { this.showPunt(); return; }
@@ -198,6 +271,42 @@ export class Game {
       this.menu = new Menu({ kind: 'defense', selectedId: this.lastCallId, settings: this.settings, subtitle: this.situation() });
     }
     this.screen = 'huddle';
+  }
+
+  /** Career games: the coach calls the plays (and the defense), or the other team's drive is simulated. */
+  private careerHuddle(cg: CareerGameSetup): void {
+    const m = this.match, d = m.drive;
+    if (this.onOffense) {
+      if (d.down === 4 && !cpuGoesForIt(d, m.score.you - m.score.cpu, m.quarter, m.clock)) { this.showPunt(); return; }
+      let play = callPlay(d);
+      for (let i = 0; i < 3 && play.id === this.lastPlayId; i++) play = callPlay(d); // coach mixes it up
+      this.play = play;
+      this.flipped = false;
+      this.lastPlayId = play.id;
+      this.setupSnap();
+      this.showToast(`COACH: ${play.name}`, C.white);
+      return;
+    }
+    if (cg.simDefense) {
+      const before = m.score.cpu;
+      const r = simDrive(m, cg.units);
+      const name = m.names.cpu;
+      const what = { td: 'TOUCHDOWN', punt: 'PUNT', int: 'INTERCEPTED!', downs: 'STOPPED ON DOWNS', half: 'END OF HALF', end: 'END OF GAME' }[r.end];
+      const good = r.end === 'int' || r.end === 'downs';
+      this.banner = {
+        headline: `${name} DRIVE`, color: r.end === 'td' ? C.red : good ? C.green : C.grey,
+        detail: `${what} - ${r.plays} PLAYS ${r.yards} YDS`,
+        note: m.score.cpu > before ? `${name} +${m.score.cpu - before}` : m.over ? 'FINAL' : undefined, kind: 'note',
+      };
+      this.menu = null;
+      this.screen = 'banner';
+      this.bannerAt = this.clock;
+      this.runoff = 0;
+      return;
+    }
+    if (d.down === 4 && !cpuGoesForIt(d, m.score.cpu - m.score.you, m.quarter, m.clock)) { this.showPunt(); return; }
+    this.defCall = null; // the coordinator's call; you play the MIKE
+    this.setupSnap();
   }
 
   /** Late in a half, a trailing CPU uses its timeouts to save the clock. */
@@ -223,7 +332,7 @@ export class Game {
       const reps = this.repeats(this.play);
       const vs = this.play.vs;
       this.sim.reset(this.play, d.goalY, {
-        teams: { off: this.team, def: this.cpuTeam },
+        teams: { off: this.yourTeam, def: this.cpuTeam },
         cpuTeam: 'def', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
         callBias: reps >= 2 ? (c) => (beats(vs, c) ? 1 / (1 + reps * 0.8) : 1) : undefined,
         recognition: clamp((reps - 1) / 4, 0, 1),
@@ -233,7 +342,7 @@ export class Game {
     } else {
       this.sim.reset(callPlay(d), d.goalY, {
         userDefender: USER_DEFENDER,
-        teams: { off: this.cpuTeam, def: this.team },
+        teams: { off: this.cpuTeam, def: this.yourTeam },
         cpuTeam: 'off', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
         call: this.defCall ?? undefined,
         ballX: d.ballX, mirror: toField !== (Math.random() < 0.2),
@@ -304,6 +413,7 @@ export class Game {
   }
 
   pointerDown(p: Vec): void {
+    if (this.screen === 'career' && this.careerScreens && !this.rosterView) { this.careerScreens.tap(p, this.view); return; }
     if (this.rosterView) { // the TEAM screen
       const a = this.rosterView.tap(p, this.view);
       if (a === 'new') { this.team = makeRoster('YOU'); saveRoster(this.team); this.rosterView.team = this.team; }
@@ -315,6 +425,7 @@ export class Game {
       if (a?.type === 'settings') this.applySettings();
       if (a?.type === 'team') this.openRoster('title');
       if (a?.type === 'start') { this.applySettings(); this.newGame(); }
+      if (a?.type === 'career') { this.applySettings(); this.onCareer?.(); }
       return;
     }
     // settings opened from the pause menu
@@ -328,14 +439,14 @@ export class Game {
     if (this.screen !== 'final' && hit(this.pauseButton, p)) { this.pauseOpen = true; this.confirmRestart = false; return; }
 
     if (this.screen === 'huddle' && this.menu) { this.huddleAction(this.menu.tap(p, this.view)); return; }
-    if (this.screen === 'final') { this.newGame(); return; }
+    if (this.screen === 'final') { if (this.careerGame) this.finishCareerGame(); else this.newGame(); return; }
     if (this.screen === 'banner') { this.afterBanner(); return; }
 
     const phase = this.sim.phase;
     if (!this.onOffense) { this.stick = { origin: p, cur: p }; return; } // defense: joystick anywhere
 
     if (hit(this.modeButton, p)) { this.settings.aim = this.mode === 'pull' ? 'aim' : 'pull'; this.applySettings(); return; }
-    if (hit(this.playsButton, p)) { // back to the huddle to change the call
+    if (hit(this.playsButton, p) && !this.careerGame) { // back to the huddle to change the call
       if (phase === 'presnap') this.startHuddle();
       return;
     }
@@ -357,10 +468,13 @@ export class Game {
       this.huddleMenu = this.menu;
       this.menu = new Menu({ kind: 'offense', selectedId: null, settings: this.settings, settingsOnly: true });
       this.pauseOpen = false;
+    } else if (this.careerGame && hit(b.restart, p)) { // career: simulate the rest of the game
+      if (this.confirmSim) this.simRestOfCareerGame();
+      else this.confirmSim = true;
     } else if (hit(b.restart, p)) {
       if (this.confirmRestart) this.newGame();
       else this.confirmRestart = true;
-    } else if (hit(b.title, p)) this.showTitle();
+    } else if (hit(b.title, p) && !this.careerGame) this.showTitle();
     else if (hit(b.team, p)) this.openRoster('pause');
   }
 
@@ -388,6 +502,14 @@ export class Game {
     else if (this.autoplay) this.cpuQb = new CpuQb(this.sim);
   }
 
+  /** Career: leave the field; the rest of the game is simulated. */
+  simRestOfCareerGame(): void {
+    const cg = this.careerGame;
+    if (!cg) return;
+    const stint = { ...this.match.stats.you };
+    this.finishCareerGame(stint);
+  }
+
   private afterBanner(): void {
     if (this.match.over) { this.screen = 'final'; this.banner = null; return; }
     this.startHuddle();
@@ -398,7 +520,7 @@ export class Game {
   update(dt: number): void {
     this.clock += dt;
     if (this.paused || this.pauseOpen || this.rosterView || (this.screen !== 'title' && this.menu?.showSettings)) return;
-    if (this.screen === 'final' || this.screen === 'title') return;
+    if (this.screen === 'final' || this.screen === 'title' || this.screen === 'career') return;
     const sim = this.sim;
 
     // Between plays the clock keeps running (if it's running), up to the play clock.
@@ -443,7 +565,7 @@ export class Game {
       const q = this.match.quarter;
       const offenseBefore = this.match.offense;
       const spot = this.spotAfter(sim);
-      const b = this.match.afterPlay(sim, sim.t / TIME_SCALE);
+      const b = this.match.afterPlay(rawFromSim(sim), sim.t / TIME_SCALE);
       // next snap: where the play ended (on the hash if it ended outside it); the middle after a change of possession,
       // except an interception or turnover on downs, spotted from the other side's view
       const halftime = q === 2 && this.match.quarter === 3;
@@ -486,7 +608,7 @@ export class Game {
     const q = m.over ? 4 : m.quarter - 1;
     const headline = m.over ? 'FINAL' : q === 2 ? 'HALFTIME' : `END OF Q${q}`;
     this.menu = null;
-    this.banner = { headline, color: C.yellow, detail: `YOU ${m.score.you} - CPU ${m.score.cpu}`, kind: 'note' };
+    this.banner = { headline, color: C.yellow, detail: `${m.names.you} ${m.score.you} - ${m.names.cpu} ${m.score.cpu}`, kind: 'note' };
     this.screen = 'banner';
     this.bannerAt = this.clock;
     this.runoff = 0;
@@ -496,6 +618,7 @@ export class Game {
 
   render(ctx: CanvasRenderingContext2D): void {
     if (this.rosterView) { this.rosterView.render(ctx, this.view); return; }
+    if (this.screen === 'career' && this.careerScreens) { this.careerScreens.render(ctx, this.view); return; }
     if (this.screen === 'title' && this.menu) {
       drawField(ctx, this, 50, 60, false); // a field behind the title
       this.menu.render(ctx, this.view);
@@ -550,14 +673,18 @@ export class Game {
     ctx.fillStyle = 'rgba(17,29,43,0.93)';
     ctx.fillRect(0, 0, v.w, v.h);
     drawText(ctx, 'PAUSED', v.w / 2, v.landscape ? 10 : 60, { scale: 2, color: C.yellow, align: 'center' });
-    drawText(ctx, `YOU ${m.score.you} - CPU ${m.score.cpu}   Q${m.quarter} ${m.clockText}`, v.w / 2, v.landscape ? 26 : 80, { align: 'center', color: C.grey });
+    drawText(ctx, `${m.names.you} ${m.score.you} - ${m.names.cpu} ${m.score.cpu}   Q${m.quarter} ${m.clockText}`, v.w / 2, v.landscape ? 26 : 80, { align: 'center', color: C.grey });
     const b = this.pauseButtons;
     button(ctx, b.resume, 'RESUME', C.green);
     button(ctx, b.timeout, `TIMEOUT (${m.timeouts.you} LEFT)`, this.canTimeout() ? C.white : C.darkGrey);
     button(ctx, b.settings, 'SETTINGS', C.white);
     button(ctx, b.team, 'TEAM', C.blue);
-    button(ctx, b.restart, this.confirmRestart ? 'TAP AGAIN TO RESTART' : 'RESTART GAME', this.confirmRestart ? C.orange : C.white);
-    button(ctx, b.title, 'MAIN MENU', C.white);
+    if (this.careerGame) {
+      button(ctx, b.restart, this.confirmSim ? 'TAP AGAIN TO SIM' : 'SIM REST OF GAME', this.confirmSim ? C.orange : C.white);
+    } else {
+      button(ctx, b.restart, this.confirmRestart ? 'TAP AGAIN TO RESTART' : 'RESTART GAME', this.confirmRestart ? C.orange : C.white);
+      button(ctx, b.title, 'MAIN MENU', C.white);
+    }
   }
 
   private renderPlayers(ctx: CanvasRenderingContext2D): void {
@@ -742,9 +869,9 @@ export class Game {
       ctx.fillRect(0, 0, v.panel, v.h);
       ctx.fillRect(v.w - v.panel, 0, v.panel, v.h);
       const lx = 3;
-      drawText(ctx, `YOU ${m.score.you}`, lx, 5, { color: C.blue });
+      drawText(ctx, `${m.names.you} ${m.score.you}`, lx, 5, { color: C.blue });
       pips(lx + 30, 7, m.timeouts.you, C.blue);
-      drawText(ctx, `CPU ${m.score.cpu}`, lx, 13, { color: C.red });
+      drawText(ctx, `${m.names.cpu} ${m.score.cpu}`, lx, 13, { color: C.red });
       pips(lx + 30, 15, m.timeouts.cpu, C.red);
       drawText(ctx, q, lx, 23);
       if (playClock !== null) drawText(ctx, `PLAY CLK ${playClock}`, lx, 31, { color: playClock <= 5 ? C.orange : C.grey });
@@ -756,7 +883,7 @@ export class Game {
       if (offense) {
         drawText(ctx, 'PLAY', lx, v.h - 34, { color: C.grey });
         drawText(ctx, this.play.name, lx, v.h - 26, { color: C.yellow });
-        button(ctx, this.playsButton, 'PLAYS', live ? C.darkGrey : C.white);
+        button(ctx, this.playsButton, this.careerGame ? 'COACH' : 'PLAYS', live || this.careerGame ? C.darkGrey : C.white);
         if (sim.phase === 'presnap') button(ctx, this.flipButton, this.flipped ? 'FLIPPED' : 'FLIP', this.flipped ? C.yellow : C.white);
         drawText(ctx, 'MODE', v.w - v.panel / 2, v.h - 26, { align: 'center', color: C.grey });
         button(ctx, this.modeButton, this.mode.toUpperCase(), C.white);
@@ -768,9 +895,9 @@ export class Game {
     } else {
       ctx.fillStyle = 'rgba(17,29,43,0.9)';
       ctx.fillRect(0, 0, v.w, 19);
-      drawText(ctx, `YOU ${m.score.you}`, 5, 3, { color: C.blue });
+      drawText(ctx, `${m.names.you} ${m.score.you}`, 5, 3, { color: C.blue });
       pips(5, 9, m.timeouts.you, C.blue);
-      drawText(ctx, `CPU ${m.score.cpu}`, 45, 3, { color: C.red });
+      drawText(ctx, `${m.names.cpu} ${m.score.cpu}`, 45, 3, { color: C.red });
       pips(45, 9, m.timeouts.cpu, C.red);
       drawText(ctx, q, v.w - 21, 3, { align: 'right' });
       if (playClock !== null) drawText(ctx, `:${String(playClock).padStart(2, '0')}`, v.w - 21, 11, { align: 'right', color: playClock <= 5 ? C.orange : C.grey });
@@ -779,7 +906,7 @@ export class Game {
         drawText(ctx, offense ? d.spotText : flipSpot(d.spotText), 85, 11);
       }
       if (offense) {
-        button(ctx, this.playsButton, 'PLAYS', live ? C.darkGrey : C.white);
+        button(ctx, this.playsButton, this.careerGame ? 'COACH' : 'PLAYS', live || this.careerGame ? C.darkGrey : C.white);
         if (sim.phase === 'presnap') button(ctx, this.flipButton, this.flipped ? 'FLIPPED' : 'FLIP', this.flipped ? C.yellow : C.white);
         button(ctx, this.modeButton, `MODE ${this.mode.toUpperCase()}`, C.white);
         drawText(ctx, this.play.name, (this.playsButton.x + this.playsButton.w + this.modeButton.x) / 2, v.h - 12,
@@ -830,21 +957,22 @@ export class Game {
     let y = v.landscape ? 14 : 70;
     drawText(ctx, 'FINAL', mid, y, { scale: 2, color: C.yellow, align: 'center' });
     y += 18;
-    drawText(ctx, `YOU ${m.score.you}  -  CPU ${m.score.cpu}`, mid, y, { scale: 2, align: 'center' });
+    drawText(ctx, `${m.names.you} ${m.score.you}  -  ${m.names.cpu} ${m.score.cpu}`, mid, y, { scale: 2, align: 'center' });
     y += 18;
-    const res = m.score.you > m.score.cpu ? ['YOU WIN!', C.green] : m.score.you < m.score.cpu ? ['CPU WINS', C.red] : ['TIE GAME', C.grey];
+    const res = m.score.you > m.score.cpu ? ['YOU WIN!', C.green] : m.score.you < m.score.cpu ? [`${m.names.cpu} WINS`, C.red]
+      : [this.careerGame ? 'TIED - OVERTIME' : 'TIE GAME', C.grey];
     drawText(ctx, res[0], mid, y, { align: 'center', color: res[1] });
     y += 16;
     for (const side of ['you', 'cpu'] as const) {
       const st = m.stats[side];
       const ypp = st.plays ? (st.yards / st.plays).toFixed(1) : '0.0';
       const ppt = st.tds ? (st.plays / st.tds).toFixed(1) : '-';
-      drawText(ctx, side === 'you' ? 'YOUR OFFENSE' : 'CPU OFFENSE', mid, y, { align: 'center', color: side === 'you' ? C.blue : C.red });
+      drawText(ctx, side === 'you' ? 'YOUR OFFENSE' : `${m.names.cpu} OFFENSE`, mid, y, { align: 'center', color: side === 'you' ? C.blue : C.red });
       drawText(ctx, `${st.cmp}/${st.att}  ${st.yards} YDS  ${st.tds} TD  ${st.int} INT`, mid, y + 8, { align: 'center' });
       drawText(ctx, `YDS/PLAY ${ypp}  PLAYS/TD ${ppt}  SACKS ${st.sacks}`, mid, y + 16, { align: 'center', color: C.grey });
       y += 28;
     }
-    if (Math.floor(this.clock * 2) % 2 === 0) drawText(ctx, 'TAP FOR A NEW GAME', mid, y + 4, { align: 'center', color: C.yellow });
+    if (Math.floor(this.clock * 2) % 2 === 0) drawText(ctx, this.careerGame ? 'TAP TO CONTINUE' : 'TAP FOR A NEW GAME', mid, y + 4, { align: 'center', color: C.yellow });
   }
 }
 
@@ -887,7 +1015,7 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
   }
   const ez = yOf(105);
   if (ez > -10 && ez < v.h + 10) {
-    drawText(ctx, attackingYours ? 'YOU' : 'CPU', g.sx(W / 2), ez - 5, { scale: 2, color: attackingYours ? C.blue : C.pink, align: 'center' });
+    drawText(ctx, attackingYours ? g.match.names.you : g.match.names.cpu, g.sx(W / 2), ez - 5, { scale: 2, color: attackingYours ? C.blue : C.pink, align: 'center' });
   }
 
   // yard lines, numbers, hash marks

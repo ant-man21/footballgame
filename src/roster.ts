@@ -27,7 +27,7 @@ const ovrColor = (v: number) => (v >= 85 ? C.green : v >= 78 ? C.yellow : v >= 7
 export class RosterView {
   tab: 'offense' | 'defense' = 'offense';
   confirmNew = false;
-  constructor(public team: Roster, private opponent: Roster | null) {}
+  constructor(public team: Roster, private opponent: Roster | null, private canReroll = true) {}
 
   layout(v: View) {
     const tabW = 70, tabY = v.landscape ? 18 : 34;
@@ -46,7 +46,7 @@ export class RosterView {
     const { tabs, back, fresh } = this.layout(v);
     for (const t of tabs) if (hit(t.r, p)) { this.tab = t.id; this.confirmNew = false; return null; }
     if (hit(back, p)) return 'back';
-    if (hit(fresh, p)) {
+    if (hit(fresh, p) && this.canReroll) {
       if (this.confirmNew) { this.confirmNew = false; return 'new'; }
       this.confirmNew = true;
     }
@@ -57,7 +57,7 @@ export class RosterView {
     ctx.fillStyle = 'rgba(17,29,43,0.97)';
     ctx.fillRect(0, 0, v.w, v.h);
     drawText(ctx, 'YOUR TEAM', v.w / 2, v.landscape ? 2 : 8, { scale: 2, color: C.blue, shadow: C.navy, align: 'center' });
-    const sub = `OVR ${teamOvr(this.team)}` + (this.opponent ? `   VS CPU OVR ${teamOvr(this.opponent)}` : '');
+    const sub = `OVR ${teamOvr(this.team)}` + (this.opponent ? `   VS ${this.opponent.name.length <= 10 ? this.opponent.name : 'OPP'} ${teamOvr(this.opponent)}` : '');
     if (v.landscape) drawText(ctx, sub, v.w - 6, 5, { align: 'right', color: C.grey }); // beside the title
     else drawText(ctx, sub, v.w / 2, 24, { align: 'center', color: C.grey });
 
@@ -76,17 +76,20 @@ export class RosterView {
 
     box(ctx, back, C.ink, C.white);
     drawText(ctx, 'BACK', back.x + back.w / 2, back.y + 5, { align: 'center' });
-    box(ctx, fresh, C.ink, this.confirmNew ? C.orange : C.grey);
-    drawText(ctx, this.confirmNew ? 'SURE?' : 'NEW TEAM', fresh.x + fresh.w / 2, fresh.y + 5, { align: 'center', color: this.confirmNew ? C.orange : C.grey });
+    if (this.canReroll) {
+      box(ctx, fresh, C.ink, this.confirmNew ? C.orange : C.grey);
+      drawText(ctx, this.confirmNew ? 'SURE?' : 'NEW TEAM', fresh.x + fresh.w / 2, fresh.y + 5, { align: 'center', color: this.confirmNew ? C.orange : C.grey });
+    }
   }
 
   private row(ctx: CanvasRenderingContext2D, p: Player, x: number, y: number): void {
     drawText(ctx, p.pos, x, y, { color: C.grey });
     drawText(ctx, p.name, x + 12, y);
-    drawText(ctx, String(p.ovr), x + 60, y, { color: ovrColor(p.ovr) });
+    const t = this.team.tier ?? 0; // colours are relative to the level of play
+    drawText(ctx, String(p.ovr), x + 60, y, { color: ovrColor(p.ovr - t) });
     KEY_RATINGS[p.pos].forEach((k, i) => {
       const val = p.r[k];
-      drawText(ctx, `${k.toUpperCase()}${val}`, x + 74 + i * 26, y, { color: val >= 85 ? C.green : val < 65 ? C.grey : C.white });
+      drawText(ctx, `${k.toUpperCase()}${val}`, x + 74 + i * 26, y, { color: val - t >= 85 ? C.green : val - t < 65 ? C.grey : C.white });
     });
   }
 }

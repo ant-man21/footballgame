@@ -175,7 +175,9 @@ export class Sim {
   private released = false; // screen linemen have released
   private qbSpot: Vec | null = null; // rollouts: where the QB is sprinting to
   /** A player's rating relative to his position's norm (0 = average starter). */
-  rd(a: Actor | null | undefined, k: RatingKey): number { return a ? delta(a.pl, k) : 0; }
+  rd(a: Actor | null | undefined, k: RatingKey): number { return a?.pl ? delta(a.pl, k) - this.tier[a.team] : 0; }
+  /** The level of play of each roster (see Roster.tier): ratings are judged against that tier's norms. */
+  tier: Record<Team, number> = { off: 0, def: 0 };
   /** QB accuracy: scales the landing oval. */
   get accFactor(): number { return clamp(1 - this.rd(this.qb, 'acc') * 0.008, 0.65, 1.4); }
   /** QB arm: the longest throw he can make. */
@@ -282,6 +284,7 @@ export class Sim {
       a.push(makeActor(id, 'def', kind, fx(b.x + bx * (b.kind === 'db' ? 0.3 : 1)), fy(b.d))); // the box shifts with the ball
     }
     this.actors = a;
+    this.tier = { off: teams?.off.tier ?? 0, def: teams?.def.tier ?? 0 };
     // who's who: ratings from the rosters (speed applies right away; the rest where they matter)
     const teOnField = FORMATIONS[play.formation].skill.some((sp) => sp.id === 'Y' && sp.type === 'te');
     for (const p of a) {

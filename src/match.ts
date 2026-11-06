@@ -8,8 +8,7 @@
 // and turnovers stop it. It stops at the two-minute warning in Q2 and Q4, and
 // a timeout stops it.
 import { C } from './config';
-import { Drive, START_YARD, type TeamStats, newStats } from './drive';
-import type { Sim } from './sim';
+import { Drive, type PlayRaw, START_YARD, type TeamStats, newStats } from './drive';
 import { clamp, rand } from './util';
 
 export type Side = 'you' | 'cpu';
@@ -20,6 +19,21 @@ const TIMEOUTS = 3; // per team, per half
 
 /** A result banner, written from your point of view (green/yellow = good for you). */
 export interface Banner { headline: string; color: string; detail: string; note?: string }
+
+/** A game picked up in the middle: used for scenario snaps (mop-up, relief, two-minute drill). */
+export interface Situation {
+  quarter: number;
+  clock: number; // seconds left in the quarter
+  score: Record<Side, number>;
+  offense: Side;
+  ballOn: number;
+  down?: number;
+  toGo?: number;
+  ballX?: number;
+  timeouts?: Record<Side, number>;
+  firstOffense?: Side; // who had the ball first (the other team gets it after halftime)
+  stats?: Record<Side, TeamStats>; // what has happened so far
+}
 
 const other = (s: Side): Side => (s === 'you' ? 'cpu' : 'you');
 const fmtYds = (g: number) => (g > 0 ? `+${g} YDS` : g < 0 ? `${g} YDS` : 'NO GAIN');
@@ -34,6 +48,7 @@ export class Match {
   over = false;
   clockRunning = false; // is the clock running between plays?
   timeouts: Record<Side, number> = { you: TIMEOUTS, cpu: TIMEOUTS };
+  names: Record<Side, string> = { you: 'YOU', cpu: 'CPU' }; // how the banners name each team
   private warned = new Set<number>(); // quarters that have had their two-minute warning
   private firstOffense: Side;
 
@@ -43,6 +58,27 @@ export class Match {
     this.clock = quarterSeconds;
   }
 
+  /** A game in progress: the quarter, clock, score, field position and down you pick it up at. */
+  static fromSituation(s: Situation, quarterSeconds = QUARTER_SECONDS): Match {
+    const m = new Match(s.firstOffense ?? (s.quarter >= 3 ? other(s.offense) : s.offense), quarterSeconds);
+    m.quarter = s.quarter;
+    m.clock = Math.min(s.clock, quarterSeconds);
+    m.score = { ...s.score };
+    m.offense = s.offense;
+    m.drive = new Drive(s.ballOn);
+    if (s.down) m.drive.down = s.down;
+    if (s.toGo) m.drive.toGo = Math.min(s.toGo, 100 - s.ballOn);
+    else m.drive.toGo = Math.min(10, 100 - s.ballOn);
+    m.drive.ballX = s.ballX ?? 0;
+    if (s.timeouts) m.timeouts = { ...s.timeouts };
+    if (s.stats) m.stats = { you: { ...s.stats.you }, cpu: { ...s.stats.cpu } };
+    for (const q of [2, 4]) if (s.quarter > q || (s.quarter === q && m.clock <= 120)) m.warned.add(q);
+    return m;
+  }
+
+  /** Who had the ball first (the other team receives after halftime). */
+  get receivedFirst(): Side { return this.firstOffense; }
+
   get defense(): Side { return other(this.offense); }
   get clockText(): string {
     const s = Math.max(0, Math.ceil(this.clock));
@@ -50,10 +86,11 @@ export class Match {
   }
 
   /** Applies a finished play. playSeconds is how long the play itself took. */
-  afterPlay(sim: Sim, playSeconds: number): Banner {
+  afterPlay(p: PlayRaw, playSeconds: number): Banner {
     const off = this.offense;
     const mine = off === 'you';
-    const o = this.drive.apply(sim, this.stats[off]);
+    const N = this.names;
+    const o = this.drive.apply(p, this.stats[off]);
     const running = (o.result === 'catch' && !o.outOfBounds && o.event.kind === 'continue') || o.result === 'sack';
     const yds = fmtYds(o.gained);
     let b: Banner;
@@ -62,20 +99,20 @@ export class Match {
       case 'td':
         this.score[off] += TD_POINTS;
         b = {
-          headline: mine ? 'TOUCHDOWN!' : 'CPU TOUCHDOWN', color: mine ? C.yellow : C.red,
-          detail: `${yds} - ${o.playsInDrive} PLAY DRIVE`, note: `${mine ? 'YOU' : 'CPU'} +${TD_POINTS}`,
+          headline: mine ? 'TOUCHDOWN!' : `${N.cpu} TOUCHDOWN`, color: mine ? C.yellow : C.red,
+          detail: `${yds} - ${o.playsInDrive} PLAY DRIVE`, note: `${mine ? N.you : N.cpu} +${TD_POINTS}`,
         };
         this.changePossession(START_YARD);
         break;
       case 'int': {
         const at = o.event.atYard;
         const spot = at >= 100 ? 20 : clamp(Math.round(100 - at), 1, 99); // picked in the end zone: touchback
-        b = { headline: mine ? 'INTERCEPTED!' : 'PICKED OFF!', color: mine ? C.red : C.green, detail: `TURNOVER - ${mine ? 'CPU' : 'YOUR'} BALL` };
+        b = { headline: mine ? 'INTERCEPTED!' : 'PICKED OFF!', color: mine ? C.red : C.green, detail: `TURNOVER - ${mine ? `${N.cpu}` : 'YOUR'} BALL` };
         this.changePossession(spot);
         break;
       }
       case 'downs':
-        b = { headline: 'TURNOVER ON DOWNS', color: mine ? C.red : C.green, detail: `${yds} - ${mine ? 'CPU' : 'YOUR'} BALL` };
+        b = { headline: 'TURNOVER ON DOWNS', color: mine ? C.red : C.green, detail: `${yds} - ${mine ? N.cpu : 'YOUR'} BALL` };
         this.changePossession(100 - this.drive.ballOn);
         break;
       default: {
@@ -107,9 +144,9 @@ export class Match {
     this.clockRunning = false;
     const receiver = this.offense;
     return {
-      headline: kicker === 'you' ? 'YOU PUNT' : 'CPU PUNTS', color: C.grey,
+      headline: kicker === 'you' ? 'YOU PUNT' : `${this.names.cpu} PUNTS`, color: C.grey,
       detail: lands >= 100 ? `${dist} YD PUNT - TOUCHBACK` : `${dist} YD PUNT`,
-      note: `${receiver === 'you' ? 'YOUR' : 'CPU'} BALL AT ${spot === 50 ? '50' : `${receiver === 'you' ? 'OWN' : 'THEIR'} ${spot}`}`,
+      note: `${receiver === 'you' ? 'YOUR' : this.names.cpu} BALL AT ${spot === 50 ? '50' : `${receiver === 'you' ? 'OWN' : 'THEIR'} ${spot}`}`,
     };
   }
 

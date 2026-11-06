@@ -19,7 +19,7 @@ export type MenuAction =
   | { type: 'pick'; play: Play }
   | { type: 'pickCall'; call: Call }
   | { type: 'same' } | { type: 'auto' } | { type: 'punt' }
-  | { type: 'close' } | { type: 'settings' } | { type: 'start' } | { type: 'team' }
+  | { type: 'close' } | { type: 'settings' } | { type: 'start' } | { type: 'team' } | { type: 'career' }
   | null;
 
 export interface MenuOptions {
@@ -114,17 +114,20 @@ export class Menu {
       const y = top + i * rowH;
       return { row, y, left: { x, y: y + 9, w: 22, h: 16 }, right: { x: x + w - 22, y: y + 9, w: 22, h: 16 }, mid: x + w / 2 };
     });
+    const mid = Math.round(v.w / 2);
     const done = title
-      ? (v.landscape ? { x: Math.round(v.w / 2 + 4), y: v.h - 22, w: 90, h: 20 } : { x: Math.round(v.w / 2 - 50), y: v.h - 56, w: 100, h: 20 })
-      : { x: Math.round(v.w / 2 - 30), y: v.h - 18, w: 60, h: 14 };
-    const team = v.landscape ? { x: Math.round(v.w / 2 - 94), y: v.h - 22, w: 90, h: 20 } : { x: Math.round(v.w / 2 - 50), y: v.h - 30, w: 100, h: 16 };
-    return { rows, done, team };
+      ? (v.landscape ? { x: mid - 46, y: v.h - 22, w: 92, h: 20 } : { x: mid - 74, y: v.h - 56, w: 72, h: 20 })
+      : { x: mid - 30, y: v.h - 18, w: 60, h: 14 };
+    const career = v.landscape ? { x: mid + 52, y: v.h - 22, w: 92, h: 20 } : { x: mid + 2, y: v.h - 56, w: 72, h: 20 };
+    const team = v.landscape ? { x: mid - 144, y: v.h - 22, w: 92, h: 20 } : { x: mid - 50, y: v.h - 30, w: 100, h: 16 };
+    return { rows, done, team, career };
   }
 
   tap(p: Vec, v: View): MenuAction {
     if (this.showSettings) {
-      const { rows, done, team } = this.settingsLayout(v);
+      const { rows, done, team, career } = this.settingsLayout(v);
       if (this.o.title && hit(team, p)) return { type: 'team' };
+      if (this.o.title && hit(career, p)) return { type: 'career' };
       for (const r of rows) {
         const dir = hit(r.left, p) ? -1 : hit(r.right, p) ? 1 : 0;
         if (!dir) continue;
@@ -211,11 +214,13 @@ export class Menu {
     } else {
       drawText(ctx, 'SETTINGS', v.w / 2, v.landscape ? 6 : 20, { scale: 2, color: C.yellow, shadow: C.navy, align: 'center' });
     }
-    const { rows, done, team } = this.settingsLayout(v);
+    const { rows, done, team, career } = this.settingsLayout(v);
     const s = this.o.settings as unknown as Record<string, string>;
     if (title) {
       box(ctx, team, C.ink, C.blue);
       drawText(ctx, 'TEAM', team.x + team.w / 2, team.y + Math.floor((team.h - 5) / 2), { align: 'center', color: C.blue });
+      box(ctx, career, C.ink, C.yellow);
+      drawText(ctx, 'CAREER', career.x + career.w / 2, career.y + 8, { align: 'center', color: C.yellow });
     }
     for (const r of rows) {
       drawText(ctx, r.row.label, r.mid, r.y, { align: 'center', color: C.grey });

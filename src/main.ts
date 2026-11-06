@@ -1,6 +1,8 @@
+import * as quicksim from './career/quicksim';
 import { predict, readReceiver } from './cpu';
 import { Game } from './game';
 import { PLAYS } from './playbook/plays';
+import { CareerScreens } from './ui/career';
 import { PORTRAIT, landscapeView } from './view';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -10,6 +12,10 @@ const game = new Game();
 (window as unknown as { __game: Game }).__game = game; // handles for automated tests
 (window as unknown as { __plays: typeof PLAYS }).__plays = PLAYS;
 (window as unknown as { __cpu: unknown }).__cpu = { readReceiver, predict };
+(window as unknown as { __quicksim: unknown }).__quicksim = quicksim;
+const careerScreens = new CareerScreens(game);
+game.onCareer = () => careerScreens.open();
+(window as unknown as { __careerUI: CareerScreens }).__careerUI = careerScreens;
 
 /** Portrait or landscape follows the screen: turn the phone and the game turns with it. */
 function fit(): void {

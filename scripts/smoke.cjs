@@ -259,6 +259,96 @@ const OUT = process.env.SHOT_DIR || '.';
   });
   check(clk.clock === 120 && !clk.running && clk.toast === 'TWO-MINUTE WARNING', `clock ran in the huddle and stopped at the two-minute warning (${clk.clock}s, "${clk.toast}")`);
 
+  // 9. Career: create a QB from the title screen, the hub, a backup scenario played on the field (coach calls the
+  // plays), the save round-trip, simulated defense, a full season into the playoffs and the next season.
+  await G(() => { const g = window.__game; g.autoplay = false; g.showTitle(); localStorage.removeItem('footballgame.career.v1'); });
+  const cb = await G(() => { const g = window.__game; return g.menu.settingsLayout(g.view).career; });
+  await tap({ x: cb.x + cb.w / 2, y: cb.y + cb.h / 2 });
+  check(await G(() => window.__game.screen === 'career' && window.__careerUI.screen === 'create'), 'CAREER on the title screen opens character creation');
+  const cl = await G(() => { const ui = window.__careerUI; return ui.createLayout(window.__game.view); });
+  await tap({ x: cl.archR.x + 5, y: cl.archR.y + 5 }); // gunslinger
+  await tap({ x: cl.start.x + cl.start.w / 2, y: cl.start.y + cl.start.h / 2 });
+  const made = await G(() => { const c = window.__careerUI.career; return c && { scr: window.__careerUI.screen, arch: c.player.archetype, games: c.s.games.length, role: c.s.role, saved: !!localStorage.getItem('footballgame.career.v1') }; });
+  check(made && made.scr === 'hub' && made.arch === 'gunslinger' && made.games === 80 && made.role === 'backup' && made.saved,
+    `START CAREER: a sophomore backup gunslinger, an 80-game schedule, saved (${JSON.stringify(made)})`);
+  await page.screenshot({ path: `${OUT}/smoke-career-hub.png` });
+  // practice focus from the hub
+  const hl = await G(() => window.__careerUI.hubLayout(window.__game.view));
+  await tap({ x: hl.focusR.x + 5, y: hl.focusR.y + 5 });
+  check(await G(() => window.__careerUI.career.s.focus === 'arm' && JSON.parse(localStorage.getItem('footballgame.career.v1')).focus === 'arm'), 'practice focus steps (ARM) and saves');
+  // game day as the backup: sit until a scenario comes up (forcing one if needed)
+  const sc = await G(() => {
+    const ui = window.__careerUI; let sat = 0;
+    for (let i = 0; i < 6 && ui.career.s.phase === 'season'; i++) {
+      ui.career.s.dry = 2; ui.gameDay();
+      if (ui.screen === 'gameday') return { label: ui.plan.label, sat, week: ui.career.s.week };
+      sat++; ui.screen = 'hub';
+    }
+    return { label: null, sat };
+  });
+  check(!!sc.label, `a backup sits (${sc.sat} weeks) until a scenario snap: ${sc.label}`);
+  const go = await G(() => window.__careerUI.gamedayLayout(window.__game.view).go);
+  await tap({ x: go.x + go.w / 2, y: go.y + go.h / 2 });
+  const cg = await G(() => { const g = window.__game; return { career: !!g.careerGame, screen: g.screen, you: g.match.names.you, team: g.yourTeam.tier, qb: g.yourTeam.players.find((p) => p.slot === 'QB').name, me: window.__careerUI.career.player.last }; });
+  check(cg.career && cg.screen !== 'huddle' && cg.team === -16 && cg.qb.endsWith(cg.me), `TAKE THE FIELD: no huddle (coach calls), high school tier, you at QB (${cg.qb}) for ${cg.you}`);
+  // on offense: the coach's call is lined up, one touch snaps and throws
+  const off = await G(() => { const g = window.__game; g.match.offense = 'you'; g.startHuddle(); return { screen: g.screen, phase: g.sim.phase, toast: g.toast && g.toast.text }; });
+  check(off.screen === 'play' && off.phase === 'presnap' && /^COACH: /.test(off.toast || ''), `the coach calls the play (${off.toast})`);
+  const c0 = await toScreen({ x: 90, y: 230 }), c1 = await toScreen({ x: 90, y: 262 });
+  await touch('touchStart', [c0]);
+  for (let i = 1; i <= 6; i++) await touch('touchMove', [{ x: c0.x, y: c0.y + ((c1.y - c0.y) * i) / 6 }]);
+  await touch('touchEnd', []);
+  await page.waitForFunction(() => window.__game.screen === 'banner' || window.__game.screen === 'final' || !window.__game.careerGame, null, { timeout: 15000 });
+  check(true, `a career snap resolves (${await G(() => window.__game.banner ? window.__game.banner.headline : window.__game.screen)})`);
+  // finish the game (auto-play the rest), tap the final screen, see the result
+  const res = await G(() => {
+    const g = window.__game, ui = window.__careerUI, wk = ui.career.s.week; g.autoplay = true; let n = 0;
+    while (g.careerGame && g.screen !== 'final' && n++ < 300000) g.update(1 / 30);
+    g.autoplay = false;
+    if (g.screen === 'final') g.pointerDown({ x: 5, y: 300 });
+    const c = ui.career, l = ui.lastLog;
+    const weekGames = c.s.games.filter((x) => x.week === l.week);
+    return { scr: ui.screen, kind: l.kind, line: l.line, grade: l.grade, battle: l.battle, adv: c.s.week === wk + 1, allPlayed: weekGames.every((x) => x.hs !== undefined), logs: c.s.log.length };
+  });
+  check(res.scr === 'result' && res.kind === 'scenario' && res.grade !== null && res.battle !== null && res.adv && res.allPlayed,
+    `the week's result: your line ${res.line.cmp}/${res.line.att} grade ${res.grade}, QB battle ${res.battle}; the whole week was played`);
+  await page.screenshot({ path: `${OUT}/smoke-career-result.png` });
+  // save round-trip: reload the page, CONTINUE lands on the same week
+  const saved0 = await G(() => JSON.stringify(window.__careerUI.career.s));
+  await page.reload();
+  await G(() => { window.__game.onCareer(); });
+  const cont = await G(() => window.__careerUI.startLayout(window.__game.view).cont);
+  await tap({ x: cont.x + cont.w / 2, y: cont.y + cont.h / 2 });
+  check(await G((b) => window.__careerUI.screen === 'hub' && JSON.stringify(window.__careerUI.career.s) === b, saved0), 'the career save round-trips through a page reload (CONTINUE)');
+  // simulated defense: as the starter, the other team's drive is simulated
+  const simd = await G(() => {
+    const ui = window.__careerUI, c = ui.career, g = window.__game;
+    c.s.role = 'starter'; c.s.defense = 'sim';
+    ui.gameDay(); ui.play();
+    g.match.offense = 'cpu'; g.startHuddle();
+    const b = g.banner;
+    const out = { kind: ui.plan ? ui.plan.kind : null, banner: b && b.headline, detail: b && b.detail, now: g.match.offense };
+    g.simRestOfCareerGame();
+    return { ...out, scr: ui.screen };
+  });
+  check(simd.kind === 'full' && / DRIVE$/.test(simd.banner || '') && simd.scr === 'result', `DEFENSE: SIMULATED: ${simd.banner} (${simd.detail}); SIM REST OF GAME finishes it`);
+  // the rest of the season (quick-simmed stints), the playoffs, the summary, the junior year
+  const season = await G(() => {
+    const ui = window.__careerUI, c = ui.career, Q = window.__quicksim; let n = 0;
+    while (c.s.phase === 'season' && n++ < 20) { const p = c.prepareGame(); if (p.kind !== 'none') Q.simToEnd(p.match, p.units); c.finishGame(p); }
+    const rounds = ['QF', 'SF', 'F'].map((r) => c.s.games.filter((g) => g.round === r).length);
+    const out = { phase: c.s.phase, rounds, finish: c.finish(), champ: c.champion && c.champion.name, seasons: c.player.seasons.length };
+    ui.screen = 'summary';
+    return out;
+  });
+  check(season.phase === 'summary' && season.rounds.join() === '4,2,1' && !!season.champ && season.seasons === 1,
+    `a full season into an 8-team playoff (${season.finish}; state champion ${season.champ})`);
+  await page.screenshot({ path: `${OUT}/smoke-career-summary.png` });
+  await tap({ x: 90, y: 312 }); // OFF-SEASON
+  const jr = await G(() => { const c = window.__careerUI.career; return { yr: c.s.year, wk: c.s.week, games: c.s.games.filter((g) => g.hs === undefined).length, scr: window.__careerUI.screen }; });
+  check(jr.yr === 1 && jr.wk === 1 && jr.games === 80 && jr.scr === 'hub', 'OFF-SEASON: on to the junior year with a new schedule');
+  await G(() => { window.__game.showTitle(); });
+
   // 8. Landscape: turn the phone sideways; same game, bigger field between side panels.
   const lctx = await browser.newContext({ ...devices['Pixel 7 landscape'] });
   const lp = await lctx.newPage();

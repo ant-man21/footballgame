@@ -2,7 +2,7 @@
 // measured from the offense's own goal line: 0 = their goal, 100 = the one
 // they're attacking. The Match decides what happens on a change of possession.
 import { LOS_Y, YD } from './config';
-import type { Sim } from './sim';
+import type { Result, Sim } from './sim';
 
 export const START_YARD = 25;
 
@@ -21,6 +21,17 @@ export interface PlayOutcome {
   event: DriveEvent;
   playsInDrive: number;
 }
+
+/** A finished play, however it was decided (the on-field sim, or the quick-sim). */
+export interface PlayRaw {
+  result: Result;
+  yards: number; // where the play ended, in yards past the line of scrimmage (an interception: where it was caught)
+  touchdown: boolean;
+  outOfBounds: boolean;
+}
+export const rawFromSim = (sim: Sim): PlayRaw => ({
+  result: sim.result!, yards: (LOS_Y - sim.spotY) / YD, touchdown: sim.touchdown, outOfBounds: sim.outOfBounds,
+});
 
 export interface TeamStats { plays: number; yards: number; tds: number; cmp: number; att: number; int: number; sacks: number }
 export const newStats = (): TeamStats => ({ plays: 0, yards: 0, tds: 0, cmp: 0, att: 0, int: 0, sacks: 0 });
@@ -51,25 +62,25 @@ export class Drive {
   }
 
   /** Applies a finished play: updates field position and downs, and the offense's stats. */
-  apply(sim: Sim, st: TeamStats): PlayOutcome {
+  apply(p: PlayRaw, st: TeamStats): PlayOutcome {
     st.plays++;
     this.plays++;
-    const r = sim.result!;
+    const r = p.result;
     if (r !== 'sack') st.att++;
-    const base = { result: r, outOfBounds: sim.outOfBounds, playsInDrive: this.plays };
+    const base = { result: r, outOfBounds: p.outOfBounds, playsInDrive: this.plays };
 
     if (r === 'int') {
       st.int++;
-      const atYard = this.ballOn + (LOS_Y - sim.spotY) / YD;
+      const atYard = this.ballOn + p.yards;
       return { ...base, gained: 0, firstDown: false, event: { kind: 'int', atYard } };
     }
 
-    let gained = r === 'inc' ? 0 : Math.round((LOS_Y - sim.spotY) / YD);
+    let gained = r === 'inc' ? 0 : Math.round(p.yards);
     if (r === 'sack') { st.sacks++; gained = Math.min(gained, -1); }
     if (r === 'catch') st.cmp++;
     gained = Math.max(gained, 1 - this.ballOn); // can't go back past our own 1
 
-    if (sim.touchdown || this.ballOn + gained >= 100) {
+    if (p.touchdown || this.ballOn + gained >= 100) {
       gained = 100 - this.ballOn;
       st.yards += gained;
       st.tds++;

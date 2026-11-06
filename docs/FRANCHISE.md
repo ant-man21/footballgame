@@ -1,27 +1,36 @@
 # Franchise / career mode: plan
 
-Status: **planned**. This is the spec for the next phase. Decisions marked **(confirm)** are proposals: ask the owner before building them in.
+Status: **milestone 1 built; milestone 2 (high school) playable, recruiting not yet built.** See "Status" at the end for what exists and what's next.
 
 ## Vision
 A career that runs **high school -> college -> NFL**, built on the existing on-field game. Later, a **coach mode** that reuses the same league engine (recruiting, roster management, trades, full sims, scheduling, playoffs).
 
 ## Decisions so far
-- **Player mode first, as a quarterback.** The game is built around the QB; a QB career fits it, gives a clean HS -> college -> NFL path, and builds the systems coach mode needs (seasons, schedules, quick-sim, progression, saves). QB only to start; other positions need new controls. **(confirm QB-only)**
+Answered by the owner (Nov 2026):
+- **QB only** to start.
+- **Home state: pick a real state.** Generated high schools sound regional (town word pools per region).
+- **Game day: keep the defense.** You play your offense as the QB *and* the MIKE linebacker on defense, as in the exhibition. A hub toggle simulates the opponent's drives instead for players who'd rather skip defense.
+- **10 games + an 8-team state playoff. No high school transfers.**
+- **The coach calls the plays in high school** (offense and defense). You run them (FLIP still works). No other team management.
+- **Logos: a later session fetches them**; generated pixel badges until then.
+
+Original proposals:
+- **Player mode first, as a quarterback.** The game is built around the QB; a QB career fits it, gives a clean HS -> college -> NFL path, and builds the systems coach mode needs (seasons, schedules, quick-sim, progression, saves).
 - **Real college names and logos**, and the same approach for the NFL. It's a personal game. **All team identity lives in JSON** (name, abbreviation, conference, colours, logo file), so everything can be swapped in one place if the game is ever released.
-- **High schools are generated**, not real (minors are involved, and there are thousands). Generated names, mascots and colours per region. **(confirm)**
+- **High schools are generated**, not real (minors are involved, and there are thousands). Generated names, mascots and colours per region.
 - **Start with high school**, as the owner described: earn the job, play junior and senior seasons, get offers, try to win state. Then build the next tier.
 
 ## How a high school career plays (milestone 2)
-1. **Create your QB**: name, home state/region **(confirm: pick a state, or generic regions?)**, archetype that sets starting strengths:
+1. **Create your QB**: name, home state (a real state), archetype that sets starting strengths:
    - *Pocket passer* (accuracy, decisions), *Gunslinger* (arm), *Game manager* (decisions, low turnovers). Starting ratings ~55-65 (the existing `ratings.ts` scale; HS norms sit below college norms).
 2. **Sophomore year + start of junior year: the backup.** Weekly hub; most games you watch (simulated). Some weeks you get **scenario snaps**: mop-up 4th quarters, relief when the starter struggles, or a two-minute drill. Each appearance is graded (completion %, yards/attempt, TDs, INT/sacks, scoring drives, game result) and fills a **QB battle meter** against the starter's rating. Win it and you're the starter for the rest of junior year.
 3. **Senior year: the starter.** ~10-game regular season, then the **state playoffs** (bracket by record/region) and the state title game.
 4. **Weekly loop**: hub -> pick a **practice focus** (accuracy / arm / reads / mobility later) -> game day (play it, or play only your snaps / your drives; other games quick-sim) -> results, stats, standings, awards race -> next week.
 5. **Recruiting** runs from junior year: a star rating (1-5) from ratings + stats + team success + exposure. **Camps** in the off-season (a skills challenge using the game: accuracy and reading drills) raise exposure. Colleges show interest, then offer; you take visits and **commit**. Offers come from tiers (P4 / G5 / FCS) matching your rating; a breakout senior year can pull bigger offers late.
-6. **Transfers / better high school offers** (optional): a standout sophomore/junior can get an offer to move to a bigger program. **(confirm: include?)**
+6. **Transfers / better high school offers** (optional): a standout sophomore/junior can get an offer to move to a bigger program. **Not included (owner).**
 7. **End of HS**: signing day, summary screen (career stats, awards, star rating, commitment) -> unlocks college (milestone 3).
 
-### What you control on game day (confirm)
+### What you control on game day (decided: offense + the MIKE, or simulated defense; the coach calls plays in high school)
 Proposal: **you play your team's offensive drives as the QB; opponent drives are simulated** drive-by-drive (outcome, time used, field position) so games stay short and centered on you. Option: "play defense too" for players who want it (uses the existing defense mode). A game's scoreboard/clock carry over between your drives.
 
 ## Milestones
@@ -61,13 +70,25 @@ Reuses the league engine: recruiting a whole class, roster management, depth cha
 - Screens must work in portrait and landscape (`view.ts`), with the 3x5 font and existing button/box helpers.
 - Tests: extend `scripts/smoke.cjs` (create a career, sim a week, play a scenario drive, check the save round-trips, finish a season into recruiting). Add a balance script that quick-sims many seasons and checks score/stat distributions against auto-played games.
 
-## Open questions for the owner
-1. QB only to start? (proposed yes)
-2. Home state: pick a real state, or generic regions? Season length (~10 games + playoffs)?
-3. Game day: play only your offensive drives (opponent drives simulated), or full games including defense, or a choice?
-4. Include high school transfers / better-school offers?
-5. How much team management in high school (just you, or also team play-calling/strategy)?
-6. Logos: will you supply PNGs, or should a session fetch them?
+## Status
 
-## Suggested first prompt for the next session
-"Read CLAUDE.md and docs/FRANCHISE.md. Ask me the open questions, then build milestone 1 (foundation) and start milestone 2 (high school career)."
+### Built (milestone 1 + most of the high school career)
+- **Save**: `footballgame.career.v1`, one JSON blob (`CareerSave`) with `v` and `migrate()`, autosaved every week.
+- **League**: 16 generated schools in your state, 2 regions of 8; 3 non-region weeks then a 7-game region round robin; standings (region record, overall, head to head, point diff, points); top 4 per region into an 8-team crossover bracket -> state title. Ties go to overtime (no kicks, so a strength-weighted coin flip worth 7).
+- **Team strength**: each school has a prestige (0-100) that pulls its offense/defense unit ratings each year (graduation turnover is the randomness). Your team and opponents get generated rosters at the high school tier for played games.
+- **Tiers**: rosters carry a `tier` (high school -16); the on-field sim judges ratings against the tier's norms, so progression is felt on the field.
+- **Quick-sim**: runs a real `Match` with generated plays; calibrated to auto-play (`drives.cjs` vs `quicksim.cjs`): even teams ~26.5 pts, TD 46% / punt 27% / INT 11% of drives (auto-play 46 / 30 / 8-11). Career sims use a slower between-play pace (`HUMAN_RUNOFF`), ~20 pts a game.
+- **Scenario games**: `Match.fromSituation()` and the backup's game day: the starter's part is quick-simmed to a moment: a **two-minute drill** (end of the 1st half, your stint ends at halftime), **relief** (the 2nd half; likelier when trailing), **mop-up** (the 4th quarter of a 17+ point game, or forced after two dry weeks). Your line counts only your snaps.
+- **Your QB**: name, real state, archetype (pocket passer / gunslinger / game manager), ratings ~52-62 as a sophomore (high school norm ~62).
+- **Progression**: weekly practice focus (accuracy / arm / reads), playing time (better games teach more), the off-season; capped at 86 in high school; hidden growth rate.
+- **QB battle meter**: game grades (passer-rating based, ~60 = an average line), practice and the ratings gap vs the starter. A sophomore can't take a senior's job (meter capped at 90); juniors start from last year's trust and win the job at 100 (about 70% do, around week 6 in `career.cjs`). Seniors start.
+- **Stars** (1-5) after each season from ratings for your class, production and wins; season awards (region champion, all-region / all-state QB, state champion).
+- **Screens**: start (continue / new), create, hub, game day intro, week result (with around-the-state scores), schedule, standings + bracket, stats (season, game log, career), season summary, graduated. Portrait and landscape.
+- **On the field**: coach-called plays (no huddle), team abbreviations in the HUD, your defense or simulated opponent drives, SIM REST OF GAME in the pause menu.
+
+### Next (rest of milestone 2)
+- **Recruiting**: interest from colleges from the junior year, offers by tier (needs `data/colleges.json`, i.e. starts milestone 3's data), visits, commitment, signing day. The star rating already exists.
+- **Camps** in the off-season (an accuracy / reading drill on the field) to raise exposure.
+- Team colours on the field sprites (currently blue vs red), logos from JSON with the badge fallback.
+- Player of the week / season awards race on the hub; a career stats screen across levels.
+- Saving a game in progress (closing the app mid-game replays that week).

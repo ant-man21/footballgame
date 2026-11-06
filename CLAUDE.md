@@ -8,7 +8,7 @@ Vite + TypeScript, plain Canvas 2D, no framework, no runtime dependencies.
 Live at https://ant-man21.github.io/footballgame/ (GitHub Pages, deployed on every push to `main`).
 The owner plays on an iPhone (portrait and landscape) and tunes by feel; keep changes testable on a phone.
 
-Next big phase: **franchise / career mode**. The plan is in `docs/FRANCHISE.md`.
+Current phase: **franchise / career mode** (plan and status in `docs/FRANCHISE.md`). Milestone 1 (foundation) is built and the high school career is playable: create a QB, three seasons, the QB battle, state playoffs. Recruiting, camps and college are next.
 
 ## Commands
 ```sh
@@ -18,6 +18,9 @@ npm run build              # tsc --noEmit (strict) + vite build -> dist/
 npx vite preview --port 4173 --strictPort &   # serve dist/ for the tests below
 npm run test:smoke         # end-to-end smoke test (needs the preview server)
 node scripts/balance/season.cjs 10            # balance: auto-play N full games
+node scripts/balance/drives.cjs 30            # balance: what auto-played drives turn into (quick-sim calibration target)
+node scripts/balance/quicksim.cjs 2000 5      # the career quick-sim at auto-play pace, even and +-6 rating edges
+node scripts/balance/career.cjs 60            # whole high school careers: appearances, QB battle, ratings, stars
 ```
 Playwright + Chromium are preinstalled in the cloud container (`require('playwright')` works; don't install another).
 The preview server often dies between turns: if a test gets `ERR_CONNECTION_REFUSED`, restart it.
@@ -49,6 +52,12 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
 | `playbook/` | `routes.ts` (route library in "outside / depth" yards), `formations.ts`, `plays.ts` (all offensive plays + categories). Adding a play is data only. |
 | `defense/calls.ts` | Defensive alignment, zones, the 19 calls, categories, `beats()` (what each play label beats). |
 | `sprites.ts`, `font.ts`, `util.ts` | Pixel sprites (team colours, slim/classic builds), 3x5 bitmap font, small math helpers. |
+| `career/career.ts` | The high school career: `CareerSave` (the whole saved state), `Career` (season flow, `prepareGame()` -> `GamePlan`, `finishGame()`, QB battle, playoffs, season summary, `nextSeason()`). |
+| `career/league.ts` | Teams, the 10-game schedule (3 non-region + 7-game region round robin), standings + tiebreakers, 8-team playoff bracket. |
+| `career/quicksim.ts` | The quick-sim: drives a real `Match` with generated play outcomes from team unit ratings (`simPlay`, `simDrive`, `simUntil`, `simToEnd`, `simGame`). Calibrated against auto-play. |
+| `career/player.ts` | Your QB: creation (archetypes), practice/game/off-season progression, game grades, passer rating, star rating. `HS_TIER`. |
+| `career/hsnames.ts`, `career/rng.ts`, `career/save.ts` | Generated schools per state/region, seeded RNG, the versioned save (`footballgame.career.v1`, `migrate()`). |
+| `ui/career.ts`, `ui/kit.ts` | The career screens (start, create, hub, game day, result, schedule, standings/bracket, stats, summary, graduated) and drawing helpers (buttons, badges, meters, stars). |
 
 ### Key concepts
 - **World coordinates** are the 180x320 portrait layout in pixels; offense always attacks up the screen (smaller y). The line of scrimmage sits at `LOS_Y`; the field scrolls by field position (`drive.ballOn`), and `Game.camY` follows the ball. Everything drawn goes through `game.sx()/sy()`; touches come back through `wx()/wy()`.
@@ -58,9 +67,13 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
 - **Ratings** are applied as deltas from the position norm (`sim.rd(actor, key)`), so an average roster plays like the base tuning. Difficulty = CPU roster strength.
 - **Defense adapts** to repeated plays (`Game.history` -> call bias + recognition).
 - **Hashes**: `drive.ballX` (yards, +-`HASH_YD`); formations/defense shift with the ball; plays point their strength to the field; FLIP mirrors.
+- **Tiers**: `Roster.tier` shifts every position norm (high school = `HS_TIER` = -16). The sim judges ratings against the tier's norms (`sim.tier`), so an average high school starter plays like the base tuning, and a 70 QB dominates high school.
+- **Plays are data for the Match**: `Match.afterPlay(PlayRaw, secs)` takes a plain outcome (`rawFromSim(sim)` on the field, generated outcomes in the quick-sim), so clock/downs/possession rules are shared. `Match.fromSituation()` starts a game mid-way; `match.names` labels the teams.
+- **Career games**: `Game.playCareerGame(setup)`: no huddle (the coach calls plays via `callPlay`, 4th downs via `cpuGoesForIt`), you play the MIKE on defense or the opponent's drives are quick-simmed (`simDefense`), a two-minute drill ends at halftime (`endAtHalf`), the pause menu offers SIM REST OF GAME, and `onDone(match, stint)` hands the game back. `screen === 'career'` delegates input/drawing to `Game.careerScreens`.
 
 ## Testing and balance
-- `scripts/smoke.cjs`: Playwright on emulated Pixel 7 (portrait + landscape) with real touch events (CDP). Covers the title screen, TEAM screen, huddle, both aim modes, run after catch, sacks, punts, defense with the joystick, pause/timeouts/settings/restart, clock rules, hashes/FLIP, a full auto-played game, and every call vs every play fielding 11 v 11. Keep it green; extend it for new features.
+- `scripts/smoke.cjs`: Playwright on emulated Pixel 7 (portrait + landscape) with real touch events (CDP). Covers the title screen, TEAM screen, huddle, both aim modes, run after catch, sacks, punts, defense with the joystick, pause/timeouts/settings/restart, clock rules, hashes/FLIP, a full auto-played game, every call vs every play fielding 11 v 11, and the career (create, practice focus, a backup scenario on the field with coach calls, result, save round-trip through a reload, simulated defense, a season into the playoffs, the next season). Keep it green; extend it for new features.
+- Test handles: `window.__careerUI` (the career screens: `create()`, `gameDay()`, `play()`, `career`), `window.__quicksim`.
 - `scripts/balance/` (run with the preview server up; `GAME_URL` overrides the URL):
   - `season.cjs N`: auto-play N games (CPU brain both sides): yards/play, plays/TD, completion %, INT %, sacks, plays/game.
   - `difficulty.cjs`: the same per difficulty, with team overalls.
@@ -68,10 +81,13 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
   - `plays.cjs`: screens and rollouts with well-timed throws.
   - `rb-vs-man.cjs`: running back separation/completion vs man and zone.
   - `bunching.cjs`: defenders standing still / bunched in the middle.
+  - `drives.cjs N`, `quicksim.cjs N runoff`, `career.cjs N`: see Commands. Retune the quick-sim (`career/quicksim.ts`) whenever on-field balance changes.
+- Career targets (career.cjs): a sophomore backup gets in ~4 of 11 games; ~70% win the job as a junior (~week 6); seniors average ~3.5-4 stars; quick-sim drive outcomes within a few % of drives.cjs.
 - Current targets (auto-play, even rosters, Pro): ~7-9 yards/play, ~11-14 plays/TD, ~65-70% completions, ~1-3% INT. Quick routes ~60-80% vs zone, ~50% vs man; deep ~35-40%. Human players have been landing a bit higher (they read coverage well).
 
 ## Gotchas
 - `tsc` runs with `noUnusedLocals`/`noUnusedParameters`: remove unused imports.
 - Tests mutate game state directly through `window.__game`; when adding state to `Game`, make sure `startHuddle()`/`newGame()` reset it.
 - Random outcomes make single test runs flaky if a check depends on a specific result (an interception flips possession). Force the state you need (`g.match.offense = 'you'`, `sim.forceCall = '...'`) before such checks.
-- `localStorage` keys: `footballgame.settings`, `footballgame.roster`. Bump/validate shapes when they change (see `loadSettings`).
+- `localStorage` keys: `footballgame.settings`, `footballgame.roster`, `footballgame.career.v1` (has a `v` field: bump `CAREER_VERSION` and add a `migrate()` step when `CareerSave` changes). Bump/validate shapes when they change (see `loadSettings`).
+- Career state lives in `CareerSave` (plain JSON). A `GamePlan` in progress is not saved: closing the app mid-game replays that week.

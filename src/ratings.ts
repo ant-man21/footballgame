@@ -54,7 +54,12 @@ const OVR_WEIGHTS: Record<Pos, Partial<Record<RatingKey, number>>> = {
 };
 
 export interface Player { slot: string; pos: Pos; name: string; r: Ratings; ovr: number }
-export interface Roster { name: string; players: Player[] }
+/**
+ * tier: the level of play, as a shift of every position norm (0 = the base game,
+ * high school is well below). Ratings are judged against the tier's norms on the
+ * field, so an average high school starter plays like the base tuning there.
+ */
+export interface Roster { name: string; players: Player[]; tier?: number }
 
 /** Slots on the field and their positions. Offense: QB, line, X/H/Y/Z/RB. Defense: the DEF_BASE ids plus a nickel. */
 const OFF_SLOTS: [string, Pos][] = [
@@ -72,36 +77,39 @@ const LAST = ['MOORE', 'HAYES', 'PRICE', 'BROOKS', 'WARD', 'FOSTER', 'GRAY', 'BE
   'WADE', 'YATES', 'ZANE', 'BLAKE', 'CRUZ', 'DIAZ', 'ELLIS', 'FLYNN', 'GREER'];
 
 const rnd = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
-const clampR = (v: number) => Math.max(40, Math.min(99, Math.round(v)));
+const clampR = (v: number, tier = 0) => Math.max(40 + Math.min(0, tier), Math.min(99, Math.round(v)));
 
-function overall(pos: Pos, r: Ratings): number {
+export function overall(pos: Pos, r: Ratings): number {
   const w = OVR_WEIGHTS[pos];
   let s = 0, n = 0;
   for (const [k, wt] of Object.entries(w) as [RatingKey, number][]) { s += r[k] * wt; n += wt; }
   return Math.round(s / n);
 }
 
-function makePlayer(slot: string, pos: Pos, strength: number, used: Set<string>): Player {
+export function makePlayer(slot: string, pos: Pos, strength: number, used: Set<string>, tier = 0): Player {
   const norm = NORMS[pos];
   const r = {} as Ratings;
   const talent = rnd(-6, 6); // some players are just better
-  for (const k of RATING_KEYS) r[k] = clampR((norm[k] ?? 55) + strength + talent + rnd(-6, 6));
+  for (const k of RATING_KEYS) r[k] = clampR((norm[k] ?? 55) + tier + strength + talent + rnd(-6, 6), tier);
   let name = '';
   do { name = `${FIRST[Math.floor(Math.random() * FIRST.length)]}.${LAST[Math.floor(Math.random() * LAST.length)]}`; } while (used.has(name));
   used.add(name);
   return { slot, pos, name, r, ovr: overall(pos, r) };
 }
 
-/** A new roster. strength shifts every rating (0 = league average starters). */
-export function makeRoster(name: string, strength = 0): Roster {
+/** A new roster. strength shifts every rating (0 = league average starters); tier is the level of play (see Roster). */
+export function makeRoster(name: string, strength = 0, tier = 0): Roster {
   const used = new Set<string>();
   const players = [
-    ...OFF_SLOTS.map(([slot, pos]) => makePlayer(slot, pos, strength, used)),
-    ...(Object.keys(DEF_BASE) as DefId[]).map((id) => makePlayer(id, DEF_POS[id], strength, used)),
-    makePlayer('NB', 'NB', strength, used),
+    ...OFF_SLOTS.map(([slot, pos]) => makePlayer(slot, pos, strength, used, tier)),
+    ...(Object.keys(DEF_BASE) as DefId[]).map((id) => makePlayer(id, DEF_POS[id], strength, used, tier)),
+    makePlayer('NB', 'NB', strength, used, tier),
   ];
-  return { name, players };
+  return tier ? { name, players, tier } : { name, players };
 }
+
+/** The norm for a position and rating at a tier. */
+export const normFor = (pos: Pos, k: RatingKey, tier = 0) => (NORMS[pos][k] ?? 55) + tier;
 
 export const teamOvr = (t: Roster) => Math.round(t.players.reduce((s, p) => s + p.ovr, 0) / t.players.length);
 
