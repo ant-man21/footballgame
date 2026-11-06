@@ -32,6 +32,7 @@ export class Drive {
   down = 1;
   toGo = 10;
   plays = 0;
+  ballX = 0; // where the next snap is spotted across the field (yards from the middle)
 
   constructor(ballOn = START_YARD) { this.ballOn = ballOn; }
 

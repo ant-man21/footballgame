@@ -86,6 +86,7 @@ export interface Actor {
   leadReadyAt: number; // downfield blockers: when he starts looking for someone to block
   heldBy: Actor | null; // defenders: the blocker holding him
   heldUntil: number; // defenders: when he sheds that block
+  keyDelay: number; // man on a running back: the read step before he reacts (is the back blocking or releasing?)
   read: Vec; // man coverage: the defender's (lagging) read of his man's velocity
   leverage: number; // man coverage: +1 shades inside, -1 outside (decided each snap)
   cushion: number; // man coverage: yards off at the snap (press ~1, off ~5); closes as the route develops
@@ -100,7 +101,12 @@ export interface ResetOptions {
   callBias?: (c: Call) => number; // weight the defensive call (the defense adapting to you)
   recognition?: number; // 0..1: how well the defense has your play scouted
   call?: Call; // a defensive call you picked (otherwise one is chosen)
+  ballX?: number; // where the ball is spotted across the field (yards from the middle; hashes are +-HASH_YD)
+  mirror?: boolean; // run the play to the other side
 }
+
+/** Hash marks: yards either side of the middle of the field. */
+export const HASH_YD = 6.67;
 const NO_TUNING = { speed: 1, react: 0, catchBonus: 0 };
 
 export interface Ball {
@@ -134,7 +140,7 @@ function makeActor(id: string, team: Team, kind: Kind, x: number, y: number): Ac
     assigned: null, engaged: null, beatenBy: [], setSpot: { x, y: y + 1.5 * YD },
     engagedBy: null, shedAt: Infinity, burstAt: 0, push: 0,
     vel: { x: 0, y: 0 }, stunUntil: 0, read: { x: 0, y: 0 }, user: false, leverage: 1, cushion: 1,
-    delay: 0, blockTarget: null, leadReadyAt: 0, heldBy: null, heldUntil: 0,
+    delay: 0, blockTarget: null, leadReadyAt: 0, heldBy: null, heldUntil: 0, keyDelay: 0,
   };
 }
 
@@ -162,6 +168,8 @@ export class Sim {
   goalY = -1e9; // pixel y of the goal line we're attacking
   get endLineY() { return this.goalY - 10 * YD; }
   screenTarget: Actor | null = null; // the receiver a screen is for (blockers set up in front of him)
+  ballX = 0; // where the ball is spotted across the field (yards from the middle)
+  mirror = false; // the play is run to the other side
   private released = false; // screen linemen have released
   private qbSpot: Vec | null = null; // rollouts: where the QB is sprinting to
   /** Throwing on the run spreads the ball out a bit more. */
@@ -193,11 +201,15 @@ export class Sim {
   reset(play: Play, goalY = this.goalY, opts: ResetOptions = {}): void {
     const { userDefender = null, ratings = {}, cpuTeam = null, tuning = NO_TUNING, callBias, recognition = 0 } = opts;
     this.play = play;
+    this.ballX = clamp(opts.ballX ?? 0, -HASH_YD, HASH_YD);
+    this.mirror = !!opts.mirror;
+    const bx = this.ballX, m = this.mirror ? -1 : 1;
     this.screenTarget = null;
     this.released = false;
     // rollouts sprint out; screens drift back to let the rush come and buy room
-    this.qbSpot = play.rollout ? { x: fx(play.rollout === 'right' ? 8 : -8), y: fy(-6.5) }
-      : play.screen ? { x: fx(0), y: fy(-8.5) } : null;
+    const rollSide = (play.rollout === 'right' ? 1 : -1) * m;
+    this.qbSpot = play.rollout ? { x: fx(clamp(bx + rollSide * 8, -20, 20)), y: fy(-6.5) }
+      : play.screen ? { x: fx(bx), y: fy(-8.5) } : null;
     this.catchBias = cpuTeam === 'def' ? tuning.catchBonus : cpuTeam === 'off' ? -tuning.catchBonus : 0;
     this.goalY = goalY;
     this.carrier = null;
@@ -212,18 +224,24 @@ export class Sim {
     this.ball = null;
     this.result = null;
 
-    const a: Actor[] = [makeActor('QB', 'off', 'qb', fx(0), fy(-QB_DEPTH))];
+    const a: Actor[] = [makeActor('QB', 'off', 'qb', fx(bx), fy(-QB_DEPTH))];
     if (play.rollout) a[0].speed = 6.2 * YD; // sprints out
     else if (play.screen) a[0].speed = 4.5 * YD; // drifts back
     OL_SPOTS.forEach((x, i) => {
-      const ol = makeActor(`OL${i}`, 'off', 'ol', fx(x), fy(OL_DEPTH));
+      const ol = makeActor(`OL${i}`, 'off', 'ol', fx(x + bx), fy(OL_DEPTH));
       ol.job = 'block';
       a.push(ol);
     });
 
     let colorIdx = 0;
     for (const spot of FORMATIONS[play.formation].skill) {
-      const p = makeActor(spot.id, 'off', spot.type, fx(spot.x), fy(spot.d));
+      // Inside players move with the ball; wide receivers stay near the numbers
+      // (so on a hash the short side isn't jammed against the sideline).
+      const sx = spot.x * m;
+      const shortSide = Math.sign(sx) === Math.sign(bx); // the side the ball is shifted toward
+      const k = Math.abs(sx) <= 9 ? 1 : Math.abs(sx) < 15 ? 0.7 : shortSide ? 0 : 0.3;
+      const ax = clamp(sx + bx * k, -24.5, 24.5);
+      const p = makeActor(spot.id, 'off', spot.type, fx(ax), fy(spot.d));
       const pr = play.routes.find((r) => r.who === spot.id);
       if (!pr || pr.route === 'block') {
         p.job = 'block';
@@ -238,7 +256,9 @@ export class Sim {
         if (pr.route === 'screenRB' || pr.route === 'bubble' || pr.route === 'tunnel') this.screenTarget = p;
         p.color = ROUTE_COLORS[colorIdx++ % ROUTE_COLORS.length];
         const depth = rand(0.93, 1.07); // a little variety in how deep he runs it
-        p.path = routeYards(spot.x, spot.d, route, pr.flip).map((q) => ({
+        // routes break toward his own side of the formation, even if the hash put him across the middle
+        const side = Math.sign(sx) || 1, crossed = (Math.sign(ax) || side) !== side;
+        p.path = routeYards(ax, spot.d, route, !!pr.flip !== crossed).map((q) => ({
           x: clamp(fx(q.x), FIELD_LEFT + 2, FIELD_RIGHT - 2),
           y: Math.max(fy(spot.d + (q.d - spot.d) * depth), this.endLineY + 2),
         }));
@@ -251,7 +271,7 @@ export class Sim {
     for (const id of Object.keys(DEF_BASE) as DefId[]) {
       const b = DEF_BASE[id];
       const kind = id === 'SAM' && wideouts >= 3 ? 'db' : b.kind;
-      a.push(makeActor(id, 'def', kind, fx(b.x), fy(b.d)));
+      a.push(makeActor(id, 'def', kind, fx(b.x + bx * (b.kind === 'db' ? 0.3 : 1)), fy(b.d))); // the box shifts with the ball
     }
     this.actors = a;
     // per-game player ratings (a few percent faster or slower) and difficulty
@@ -287,7 +307,7 @@ export class Sim {
     // Man-to-man: corners take the widest receiver on their side, then the
     // rest are matched by position (DBs on wideouts, linebackers on backs/TEs).
     const pool = call.man.map((id) => this.def(id));
-    const recs = [...this.receivers].sort((p, q) => Math.abs(q.x - CX) - Math.abs(p.x - CX));
+    const recs = [...this.receivers].sort((p, q) => Math.abs(q.x - fx(this.ballX)) - Math.abs(p.x - fx(this.ballX)));
     const take = (d: Actor, r: Actor) => {
       d.job = 'man';
       d.man = r;
@@ -296,8 +316,9 @@ export class Sim {
     };
     const cbL = pool.find((d) => d.id === 'CB_L');
     const cbR = pool.find((d) => d.id === 'CB_R');
-    const left = recs.filter((r) => r.x < CX).sort((p, q) => p.x - q.x)[0];
-    const right = recs.filter((r) => r.x > CX).sort((p, q) => q.x - p.x)[0];
+    const mid = fx(this.ballX); // sides are measured from the ball, not the middle of the field
+    const left = recs.filter((r) => r.x < mid).sort((p, q) => p.x - q.x)[0];
+    const right = recs.filter((r) => r.x > mid).sort((p, q) => q.x - p.x)[0];
     if (cbL && left) take(cbL, left);
     if (cbR && right) take(cbR, right);
     const order: Kind[] = ['wr', 'te', 'rb'];
@@ -306,7 +327,7 @@ export class Sim {
       if (!pool.length) break;
       const cost = (d: Actor) => {
         const mismatch = r.kind === 'wr' ? (d.kind === 'db' ? 0 : 20) : d.kind === 'lb' ? 0 : 8;
-        return mismatch + Math.abs(fx(DEF_BASE[d.id as DefId].x) - r.x) / YD;
+        return mismatch + Math.abs(fx(DEF_BASE[d.id as DefId].x + this.ballX) - r.x) / YD;
       };
       take(pool.reduce((best, d) => (cost(d) < cost(best) ? d : best)), r);
     }
@@ -319,19 +340,23 @@ export class Sim {
       ? (Math.random() < 0.5 ? 'zero' : 'one')
       : Math.random() < 0.35 ? (call.shell === 'one' ? 'two' : 'one') : call.shell;
     this.shell = shown;
-    const sideRecs = (side: number) => this.receivers.filter((r) => (r.x - CX) * side > 0).sort((p, q) => Math.abs(q.x - CX) - Math.abs(p.x - CX));
+    const ballPx = fx(this.ballX); // sides and strength are measured from the ball
+    const sideRecs = (side: number) => this.receivers.filter((r) => (r.x - ballPx) * side > 0).sort((p, q) => Math.abs(q.x - ballPx) - Math.abs(p.x - ballPx));
     const strength = Math.sign(sideRecs(1).length - sideRecs(-1).length); // +1 = more receivers to the right
     for (const d of this.defense) {
       if (d.job === 'man' && d.man) {
         const r = d.man;
-        if (r.kind !== 'rb') {
+        if (r.kind === 'rb') {
+          // On a back, a linebacker has to read him first (blocking or releasing?): a beat late.
+          d.keyDelay = rand(0.55, 0.85);
+        } else {
           // Technique varies snap to snap, and you can read it before the snap:
           // inside leverage takes away slants, outside takes away outs; press
           // fights the release, off coverage gives up the short stuff.
           d.leverage = Math.random() < 0.55 ? 1 : -1;
           const press = d.kind === 'db' && Math.random() < (call.press ?? (call.id === 'c0' ? 0.75 : 0.45));
           d.cushion = d.kind === 'lb' ? 2.5 : press ? 1 : rand(4, 6);
-          const side = (r.x < CX ? 1 : -1) * d.leverage;
+          const side = (r.x < ballPx ? 1 : -1) * d.leverage;
           d.x = r.x + side * 0.8 * YD;
           d.y = fy(d.cushion);
         }
@@ -346,10 +371,10 @@ export class Sim {
         } else if (!z.deep && z.wide && d.kind !== 'dl') {
           // flat / curl-flat defenders: apex over the slot (#2), or walk out if there isn't one
           const two = sideRecs(zside)[1];
-          d.x = two ? lerp(two.x, fx(zside * 4.6), 0.4) : fx(z.x * 0.7);
+          d.x = two ? lerp(two.x, fx(zside * 4.6 + this.ballX), 0.4) : fx(z.x * 0.7 + this.ballX * 0.6);
           d.y = fy(two ? 5 : 6);
         } else if (!z.deep && d.kind === 'lb') {
-          d.x = fx(DEF_BASE[d.id as DefId].x + strength * 1.5); // slide toward the strength
+          d.x = fx(DEF_BASE[d.id as DefId].x + strength * 1.5 + this.ballX); // slide toward the strength
         }
       }
       if (d.id === 'FS' || d.id === 'SS') this.alignSafety(d, shown, strength);
@@ -364,12 +389,14 @@ export class Sim {
   /** Where a safety stands before the snap for the shell being shown. */
   private alignSafety(d: Actor, shell: Shell, strength: number): void {
     const fsSide = d.id === 'FS' ? -1 : 1;
-    if (shell === 'two') { d.x = fx(fsSide * rand(8, 11)); d.y = fy(rand(11, 13)); return; }
-    if (shell === 'one' && d.id === 'FS') { d.x = fx(rand(-2, 2)); d.y = fy(rand(12, 14)); return; }
+    const bx = this.ballX * 0.4;
+    if (shell === 'two') { d.x = fx(fsSide * rand(8, 11) + bx); d.y = fy(rand(11, 13)); return; }
+    if (shell === 'one' && d.id === 'FS') { d.x = fx(rand(-2, 2) + bx); d.y = fy(rand(12, 14)); return; }
     // down safety (SS in one-high, both in zero): over the slot to the strength, or in the box
     const side = shell === 'zero' ? fsSide : (strength || 1);
-    const slot = this.receivers.filter((r) => (r.x - CX) * side > 0).sort((p, q) => Math.abs(p.x - CX) - Math.abs(q.x - CX))[0];
-    d.x = slot ? lerp(slot.x, fx(side * 4.6), 0.3) : fx(side * 6);
+    const bp = fx(this.ballX);
+    const slot = this.receivers.filter((r) => (r.x - bp) * side > 0).sort((p, q) => Math.abs(p.x - bp) - Math.abs(q.x - bp))[0];
+    d.x = slot ? lerp(slot.x, fx(side * 4.6 + this.ballX), 0.3) : fx(side * 6 + this.ballX);
     d.y = fy(rand(6, 8));
   }
 
@@ -524,7 +551,7 @@ export class Sim {
     if (!sc || this.released || this.t < sc.at) return;
     this.released = true;
     for (const i of sc.release) {
-      const b = this.actors.find((x) => x.id === `OL${i}`);
+      const b = this.actors.find((x) => x.id === `OL${this.mirror ? 4 - i : i}`);
       if (!b || b.job !== 'block') continue;
       if (b.engaged && b.engaged.engagedBy === b) {
         b.engaged.engagedBy = null;
@@ -697,12 +724,15 @@ export class Sim {
           // Mirror the receiver using a lagging read of where he's heading:
           // straight routes stay covered; sharp cuts buy separation.
           const m = d.man;
-          const f = Math.min(1, 3 * dt); // lower = slower to read cuts
+          const onBack = m.kind === 'rb';
+          const f = Math.min(1, (onBack ? 1.2 : 3) * dt); // lower = slower to read cuts (backs are hard to stay with)
           d.read = { x: lerp(d.read.x, m.vel.x, f), y: lerp(d.read.y, m.vel.y, f) };
-          const side = (m.x < CX ? 1 : -1) * d.leverage;
+          const side = (m.x < fx(this.ballX) ? 1 : -1) * d.leverage; // leverage is inside/outside relative to the ball
           // keep his leverage; an off cushion closes as the route develops
           const cush = 0.3 + Math.max(0, d.cushion - 0.3) * Math.max(0, 1 - this.t / 2.2);
           raw = { x: m.x + d.read.x * 0.15 + side * 0.6 * YD, y: m.y + d.read.y * 0.15 - cush * YD };
+          if (onBack) raw.y -= 1.5 * YD; // plays the back from depth (protecting against the deep release)
+          if (onBack && this.t < d.keyDelay) raw = { x: d.x, y: d.y }; // still reading the back
           k = 10;
         } else {
           raw = this.zoneTarget(d.zone!);
@@ -719,9 +749,10 @@ export class Sim {
 
   private zoneTarget(z: ZoneDef): Vec {
     if (z.spy) return { x: this.qb.x, y: Math.min(this.qb.y - 6 * YD, LOS_Y - 2 * YD) }; // mirror the QB from 6 yards
-    const x0 = fx(z.x - z.wx), x1 = fx(z.x + z.wx);
+    const shift = this.ballX * (z.deep || z.wide ? 0.35 : 0.9); // zones slide toward the ball (deep and flat ones less)
+    const x0 = fx(z.x - z.wx + shift), x1 = fx(z.x + z.wx + shift);
     const top = fy(z.dmax), bottom = fy(z.dmin);
-    const land = { x: fx(z.x), y: fy(z.d) };
+    const land = { x: fx(z.x + shift), y: fy(z.d) };
     const inLane = this.receivers.filter((r) => r.x > x0 - 4 && r.x < x1 + 4);
     const threats = inLane.filter((r) => r.y > top && r.y < bottom + 6);
     if (z.deep) {

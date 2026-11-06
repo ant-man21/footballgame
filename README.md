@@ -18,6 +18,9 @@ A full game against the CPU: **4 quarters of 3 minutes**, passing only, no kicks
 - **Timeouts:** 3 per team per half (pips under the score). Call yours from the pause menu; the CPU uses its own late when it's behind.
 - **Pause** (top right): resume, timeout, settings, restart game.
 
+### Hashes
+The ball is spotted where the last play ended: on the nearest hash if it ended outside the hashes, in between otherwise (incompletions keep the spot; touchdowns and turnovers start in the middle). Inside players and the box move with the ball while wide receivers stay near the numbers, so the short side isn't jammed. Plays automatically point their strong side to the field (the wide side); **FLIP** at the line mirrors the play.
+
 ### Your offense
 - Pick a play from the **playbook** (opens on launch; **PLAYS** between snaps). Plays stay picked so you can rep them.
 - **One touch does it all:** touching the screen snaps the ball and starts the aim; drag to draw the throw arc, release to throw.

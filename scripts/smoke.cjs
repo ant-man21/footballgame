@@ -124,6 +124,29 @@ const OUT = process.env.SHOT_DIR || '.';
   check(yac.ran && yac.phase === 'done', `run after catch: ${yac.result}, ${yac.yac.toFixed(1)} yds after the catch`);
   await G(() => window.__game.startHuddle());
 
+  // 5b. Hashes: a play that ends wide spots the next snap on the hash; strength goes to the field; FLIP mirrors it.
+  const hashes = await G(() => {
+    const g = window.__game; g.paused = true; const sim = g.sim;
+    g.match.offense = 'you'; g.match.drive.down = 1; g.match.drive.ballOn = 30; g.match.drive.ballX = 0;
+    g.startHuddle(); g.pickPlay(window.__plays.find((x) => x.id === 'flood')); sim.snap();
+    for (let i = 0; i < 30; i++) sim.update(1 / 60);
+    const r = sim.receivers.find((x) => x.id === 'Y');
+    r.x = 90 + 22 * 3.15; // catch it out wide on the right
+    sim.throwTo({ x: r.x, y: r.y }, true); sim.ball.to = { x: r.x, y: r.y }; sim.ball.t = sim.ball.dur;
+    g.paused = false;
+    for (let i = 0; i < 3000 && g.screen !== 'banner'; i++) g.update(1 / 60); // the game sees the play end
+    const spot = g.match.offense === 'you' ? g.match.drive.ballX : null;
+    g.match.offense = 'you'; g.match.drive.ballX = 6.67; g.startHuddle(); g.pickPlay(window.__plays.find((x) => x.id === 'flood'));
+    const toField = g.sim.mirror, call = g.sim.call.id, qbX = Math.round((g.sim.qb.x - 90) / 3.15 * 10) / 10;
+    return { spot, toField, call, qbX };
+  });
+  check(hashes.spot === 6.67, `a catch out wide spots the next snap on the hash (${hashes.spot})`);
+  check(hashes.toField && hashes.qbX === 6.7, `on the right hash the QB lines up there and Flood goes to the field (mirrored=${hashes.toField})`);
+  const fb = await G(() => window.__game.flipButton);
+  await tap({ x: fb.x + fb.w / 2, y: fb.y + fb.h / 2 });
+  check(await G((c) => !window.__game.sim.mirror && window.__game.flipped && window.__game.sim.call.id === c, hashes.call), 'FLIP mirrors the play at the line (same defensive look)');
+  await G(new Function(offense + ' g.match.drive.ballX = 0; g.startHuddle();'));
+
   // 6. Hold the ball against an all-out blitz: should get sacked (a tap with no drag just snaps).
   const sacksBefore = await G(() => window.__game.match.stats.you.sacks);
   await G(new Function(offense + " g.mode = 'pull'; g.sim.forceCall = 'c0'; g.startHuddle(); g.pickPlay(g.play);"));

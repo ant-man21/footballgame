@@ -1,7 +1,7 @@
 // Ties everything together: a full game (Match), the huddle (calling plays on
 // both sides of the ball), the clock between plays, timeouts, pause, input,
 // aiming, the CPU quarterback when you're on defense, and drawing.
-import { C, FIELD_LEFT, FIELD_RIGHT, LOS_Y, MAX_THROW, PULL_POWER, RESULT_TIME, TIME_SCALE, W, YD } from './config';
+import { C, CX, FIELD_LEFT, FIELD_RIGHT, LOS_Y, MAX_THROW, PULL_POWER, RESULT_TIME, TIME_SCALE, W, YD, fx } from './config';
 import { CpuQb, callPlay, cpuGoesForIt } from './cpu';
 import { type Call, DEF_BASE, beats, rushLabel } from './defense/calls';
 import { drawText, textWidth } from './font';
@@ -9,7 +9,7 @@ import { type Banner, Match, PLAY_CLOCK } from './match';
 import { Menu, type MenuAction } from './menu';
 import { PLAYS, type Play } from './playbook/plays';
 import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
-import { Sim, arcHeight, flightFor, throwSpread } from './sim';
+import { HASH_YD, Sim, arcHeight, flightFor, throwSpread } from './sim';
 import { ballSprite, drawCentered, playerSprite } from './sprites';
 import { type Vec, clamp, dist, lerp, rand } from './util';
 import { PORTRAIT, type View } from './view';
@@ -41,6 +41,7 @@ export class Game {
   sim = new Sim();
   match = new Match('you');
   play: Play = PLAYS[0]; // your current offensive call
+  flipped = false; // you flipped the play at the line (the strong side otherwise goes to the field)
   lastPlayId: string | null = null; // for SAME PLAY
   defCall: Call | null = null; // your defensive call (null = let the coordinator pick)
   lastCallId: string | null = null;
@@ -127,6 +128,10 @@ export class Game {
     const v = this.view;
     return v.landscape ? { x: v.w - v.panel + 3, y: v.h - 16, w: v.panel - 6, h: 13 } : { x: v.w - 62, y: v.h - 16, w: 58, h: 12 };
   }
+  get flipButton(): Rect {
+    const v = this.view;
+    return v.landscape ? { x: 3, y: v.h - 50, w: v.panel - 6, h: 13 } : { x: 4, y: v.h - 30, w: 40, h: 12 };
+  }
   get pauseButton(): Rect {
     const v = this.view;
     return v.landscape ? { x: v.w - v.panel + 3, y: 3, w: v.panel - 6, h: 13 } : { x: v.w - 17, y: 2, w: 15, h: 15 };
@@ -204,10 +209,12 @@ export class Game {
   }
 
   /** Lines everyone up for the snap with the calls made in the huddle. */
-  private setupSnap(): void {
+  private setupSnap(keepCall = false): void {
     const d = this.match.drive;
     this.menu = null;
     this.screen = 'play';
+    // Plays point their strong side to the field (the wide side of a hash); FLIP mirrors that.
+    const toField = d.ballX > 0.5;
     if (this.onOffense) {
       // The defense adapts: the more you lean on a play, the more it calls
       // coverages that beat it, and the quicker it jumps it.
@@ -218,6 +225,8 @@ export class Game {
         cpuTeam: 'def', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
         callBias: reps >= 2 ? (c) => (beats(vs, c) ? 1 / (1 + reps * 0.8) : 1) : undefined,
         recognition: clamp((reps - 1) / 4, 0, 1),
+        ballX: d.ballX, mirror: toField !== this.flipped,
+        call: keepCall ? this.sim.call : undefined,
       });
     } else {
       this.sim.reset(callPlay(d), d.goalY, {
@@ -225,6 +234,7 @@ export class Game {
         ratings: { ...pick(this.ratings.cpu, 'off:'), ...pick(this.ratings.you, 'def:') },
         cpuTeam: 'off', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
         call: this.defCall ?? undefined,
+        ballX: d.ballX, mirror: toField !== (Math.random() < 0.2),
       });
       this.snapAt = this.clock + DEF_PRESNAP;
     }
@@ -241,6 +251,7 @@ export class Game {
   /** Pick a play from code (tests) or the huddle. */
   pickPlay(play: Play): void {
     this.play = play;
+    this.flipped = false;
     this.lastPlayId = play.id;
     if (this.onOffense && (this.screen === 'huddle' || (this.screen === 'play' && this.sim.phase === 'presnap'))) this.setupSnap();
   }
@@ -318,6 +329,7 @@ export class Game {
       if (phase === 'presnap') this.startHuddle();
       return;
     }
+    if (phase === 'presnap' && hit(this.flipButton, p)) { this.flipped = !this.flipped; this.setupSnap(true); return; }
     // One touch does it all: the touch snaps the ball and starts the aim.
     if (phase === 'presnap') this.snap();
     if (this.sim.phase === 'live') this.drag = { start: p, cur: p };
@@ -418,7 +430,17 @@ export class Game {
     if (sim.phase !== 'live') { this.drag = null; this.queuedThrow = null; } // sacked mid-drag
     if (!wasDone && sim.phase === 'done') {
       const q = this.match.quarter;
+      const offenseBefore = this.match.offense;
+      const spot = this.spotAfter(sim);
       const b = this.match.afterPlay(sim, sim.t / TIME_SCALE);
+      // next snap: where the play ended (on the hash if it ended outside it); the middle after a change of possession,
+      // except an interception or turnover on downs, spotted from the other side's view
+      const halftime = q === 2 && this.match.quarter === 3;
+      if (!halftime) {
+        if (this.match.offense === offenseBefore) this.match.drive.ballX = spot;
+        else if (sim.result === 'int' || b.headline === 'TURNOVER ON DOWNS') this.match.drive.ballX = -spot; // their view is flipped
+        // (after a touchdown the new drive starts in the middle)
+      }
       if (this.match.over) b.note = 'FINAL';
       else if (this.match.quarter !== q) b.note = q === 2 ? 'HALFTIME' : `END OF Q${q}`;
       this.banner = { ...b, kind: 'play' };
@@ -435,6 +457,16 @@ export class Game {
       const want = Math.min(Math.max(this.camY, this.view.camAnchor - focus, this.camBase()), this.camLimit());
       this.camY = lerp(this.camY, want, Math.min(1, dt * 6));
     }
+  }
+
+  /** Where (across the field) the next snap goes after this play: the hash rule. */
+  private spotAfter(sim: Sim): number {
+    let px: number | null = null;
+    if (sim.result === 'catch' || sim.result === 'int') px = sim.ball?.carrier?.x ?? null;
+    else if (sim.result === 'sack') px = sim.qb.x;
+    if (px === null) return this.match.drive.ballX; // incomplete: same spot
+    const x = (px - CX) / YD;
+    return Math.abs(x) > HASH_YD ? Math.sign(x) * HASH_YD : Math.round(x * 10) / 10;
   }
 
   /** The clock ran out while you were huddling: end of the quarter (or half, or game). */
@@ -711,6 +743,7 @@ export class Game {
         drawText(ctx, 'PLAY', lx, v.h - 34, { color: C.grey });
         drawText(ctx, this.play.name, lx, v.h - 26, { color: C.yellow });
         button(ctx, this.playsButton, 'PLAYS', live ? C.darkGrey : C.white);
+        if (sim.phase === 'presnap') button(ctx, this.flipButton, this.flipped ? 'FLIPPED' : 'FLIP', this.flipped ? C.yellow : C.white);
         drawText(ctx, 'MODE', v.w - v.panel / 2, v.h - 26, { align: 'center', color: C.grey });
         button(ctx, this.modeButton, this.mode.toUpperCase(), C.white);
       } else {
@@ -733,6 +766,7 @@ export class Game {
       }
       if (offense) {
         button(ctx, this.playsButton, 'PLAYS', live ? C.darkGrey : C.white);
+        if (sim.phase === 'presnap') button(ctx, this.flipButton, this.flipped ? 'FLIPPED' : 'FLIP', this.flipped ? C.yellow : C.white);
         button(ctx, this.modeButton, `MODE ${this.mode.toUpperCase()}`, C.white);
         drawText(ctx, this.play.name, (this.playsButton.x + this.playsButton.w + this.modeButton.x) / 2, v.h - 12,
           { align: 'center', color: C.yellow, shadow: '#000' });
@@ -859,7 +893,7 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
       ctx.fillStyle = C.white;
     }
   }
-  const hashL = Math.round(g.sx(66)), hashR = Math.round(g.sx(112));
+  const hashL = Math.round(g.sx(fx(-HASH_YD))) - 1, hashR = Math.round(g.sx(fx(HASH_YD)));
   for (let yard = 1; yard < 100; yard++) {
     if (yard % 5 === 0) continue;
     const y = yOf(yard);
