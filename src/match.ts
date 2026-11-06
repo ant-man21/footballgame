@@ -1,6 +1,12 @@
-// A full game: 4 quarters, score, clock, and possession. Passing only, no
-// kicks: a touchdown is worth 7, the other team then starts at its 25. On 4th
-// down a team can punt (simulated).
+// A full game: 4 quarters, score, clock, possession, and timeouts. Passing
+// only, no kicks: a touchdown is worth 7, the other team then starts at its
+// 25. On 4th down a team can punt (simulated).
+//
+// Clock: it runs during plays. After a catch in bounds or a sack it keeps
+// running between plays (the game ticks it while you huddle, up to a 25-second
+// play clock), so hurrying up saves time. Incompletions, out of bounds, scores
+// and turnovers stop it. It stops at the two-minute warning in Q2 and Q4, and
+// a timeout stops it.
 import { C } from './config';
 import { Drive, START_YARD, type TeamStats, newStats } from './drive';
 import type { Sim } from './sim';
@@ -8,8 +14,9 @@ import { clamp, rand } from './util';
 
 export type Side = 'you' | 'cpu';
 export const QUARTER_SECONDS = 180;
-const RUNOFF = 15; // seconds that run off between plays when the clock keeps going
+export const PLAY_CLOCK = 25; // most seconds that can run off between plays
 const TD_POINTS = 7;
+const TIMEOUTS = 3; // per team, per half
 
 /** A result banner, written from your point of view (green/yellow = good for you). */
 export interface Banner { headline: string; color: string; detail: string; note?: string }
@@ -25,6 +32,9 @@ export class Match {
   offense: Side;
   drive = new Drive();
   over = false;
+  clockRunning = false; // is the clock running between plays?
+  timeouts: Record<Side, number> = { you: TIMEOUTS, cpu: TIMEOUTS };
+  private warned = new Set<number>(); // quarters that have had their two-minute warning
   private firstOffense: Side;
 
   constructor(first: Side = 'you') {
@@ -77,7 +87,10 @@ export class Match {
         b = { headline, color, detail: `${yds}${o.firstDown ? ' - FIRST DOWN' : o.outOfBounds ? ' - OUT' : ''}` };
       }
     }
-    this.tick(playSeconds + (running ? RUNOFF : 0));
+    const q = this.quarter;
+    const warning = this.tick(playSeconds);
+    this.clockRunning = running && this.quarter === q && !warning;
+    if (warning) b.note = 'TWO-MINUTE WARNING';
     return b;
   }
 
@@ -89,7 +102,8 @@ export class Match {
     const lands = from + dist;
     const spot = lands >= 100 ? 20 : Math.round(100 - lands); // into the end zone: touchback
     this.changePossession(spot);
-    this.tick(8);
+    this.tick(6);
+    this.clockRunning = false;
     const receiver = this.offense;
     return {
       headline: kicker === 'you' ? 'YOU PUNT' : 'CPU PUNTS', color: C.grey,
@@ -103,15 +117,46 @@ export class Match {
     this.drive = new Drive(newBallOn);
   }
 
-  private tick(seconds: number): void {
+  /**
+   * Time running off between plays (only while the clock is running).
+   * Returns what happened, if anything: the two-minute warning or the end of a quarter.
+   */
+  tickBetween(seconds: number): 'warning' | 'quarter' | null {
+    if (!this.clockRunning || this.over) return null;
+    const q = this.quarter;
+    const warning = this.tick(seconds, true);
+    if (this.quarter !== q || this.over) { this.clockRunning = false; return 'quarter'; }
+    if (warning) { this.clockRunning = false; return 'warning'; }
+    return null;
+  }
+
+  /** Calls a timeout (between plays). Returns false if the team has none left. */
+  timeout(side: Side): boolean {
+    if (this.timeouts[side] <= 0 || this.over) return false;
+    this.timeouts[side]--;
+    this.clockRunning = false;
+    return true;
+  }
+
+  /** Runs the clock; true if that crossed the two-minute warning. */
+  private tick(seconds: number, stopAtWarning = false): boolean {
+    const before = this.clock;
     this.clock -= seconds;
-    if (this.clock > 0) return;
-    if (this.quarter === 4) { this.clock = 0; this.over = true; return; }
+    let warning = false;
+    if ((this.quarter === 2 || this.quarter === 4) && before > 120 && this.clock <= 120 && !this.warned.has(this.quarter)) {
+      this.warned.add(this.quarter);
+      warning = true;
+      if (stopAtWarning) this.clock = 120; // between plays the clock stops right at 2:00
+    }
+    if (this.clock > 0) return warning;
+    if (this.quarter === 4) { this.clock = 0; this.over = true; return false; }
     this.quarter++;
     this.clock = QUARTER_SECONDS;
-    if (this.quarter === 3) { // halftime: the other team gets the ball first
+    if (this.quarter === 3) { // halftime: the other team gets the ball first, timeouts reset
       this.offense = other(this.firstOffense);
       this.drive = new Drive(START_YARD);
+      this.timeouts = { you: TIMEOUTS, cpu: TIMEOUTS };
     }
+    return false;
   }
 }

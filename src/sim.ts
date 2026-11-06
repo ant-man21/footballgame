@@ -94,6 +94,7 @@ export interface ResetOptions {
   tuning?: { speed: number; react: number; catchBonus: number };
   callBias?: (c: Call) => number; // weight the defensive call (the defense adapting to you)
   recognition?: number; // 0..1: how well the defense has your play scouted
+  call?: Call; // a defensive call you picked (otherwise one is chosen)
 }
 const NO_TUNING = { speed: 1, react: 0, catchBonus: 0 };
 
@@ -166,7 +167,7 @@ export class Sim {
   get passRushers(): Actor[] {
     const u = this.user;
     const r = this.rushers;
-    return u && u.job !== 'rush' && u.y > LOS_Y - 1.5 * YD ? [...r, u] : r;
+    return u && u.job !== 'rush' && u.y > LOS_Y - 2.5 * YD ? [...r, u] : r; // the line sees him coming
   }
   /** Joystick input for your defender: direction times strength (0..1). */
   userMove: Vec = { x: 0, y: 0 };
@@ -187,7 +188,7 @@ export class Sim {
     this.runT = 0;
     this.touchdown = false;
     this.outOfBounds = false;
-    this.call = CALLS.find((c) => c.id === this.forceCall) ?? pickCall(callBias);
+    this.call = CALLS.find((c) => c.id === this.forceCall) ?? opts.call ?? pickCall(callBias);
     this.phase = 'presnap';
     this.t = 0;
     this.airT = 0;
@@ -305,7 +306,7 @@ export class Sim {
           // inside leverage takes away slants, outside takes away outs; press
           // fights the release, off coverage gives up the short stuff.
           d.leverage = Math.random() < 0.55 ? 1 : -1;
-          const press = d.kind === 'db' && Math.random() < (call.id === 'c0' ? 0.75 : 0.45);
+          const press = d.kind === 'db' && Math.random() < (call.press ?? (call.id === 'c0' ? 0.75 : 0.45));
           d.cushion = d.kind === 'lb' ? 2.5 : press ? 1 : rand(4, 6);
           const side = (r.x < CX ? 1 : -1) * d.leverage;
           d.x = r.x + side * 0.8 * YD;
@@ -487,7 +488,8 @@ export class Sim {
     const u = this.user;
     if (!u || !this.userControl || u.engagedBy || this.t < u.stunUntil) return;
     const m = this.userMove;
-    const step = u.speed * USER_SPEED * dt;
+    const inTraffic = u.y > LOS_Y - 2 * YD; // no extra burst in the trenches
+    const step = u.speed * (inTraffic ? 0.95 : USER_SPEED) * dt;
     u.x = clamp(u.x + m.x * step, FIELD_LEFT + 2, FIELD_RIGHT - 2);
     u.y = Math.max(this.endLineY + 2, u.y + m.y * step);
     if (this.phase === 'presnap') u.y = Math.min(u.y, fy(1)); // stay on your side of the ball
@@ -515,12 +517,15 @@ export class Sim {
         const push = r.push * (helpers.length ? 0.35 : 1) * (b.kind === 'ol' ? 1 : 1.6);
         r.x += u.x * push * dt;
         r.y += u.y * push * dt;
-        b.x = r.x + u.x * 6;
-        b.y = r.y + u.y * 6;
+        // blockers slide into position in front of him (no snapping)
+        const slide = b.speed * 2.5 * dt;
+        moveToward(b, { x: r.x + u.x * 6, y: r.y + u.y * 6 }, slide);
         helpers.forEach((h, i) => {
           const ang = (i % 2 ? -1 : 1) * 0.8;
-          h.x = r.x + (u.x * Math.cos(ang) - u.y * Math.sin(ang)) * 6;
-          h.y = r.y + (u.x * Math.sin(ang) + u.y * Math.cos(ang)) * 6;
+          moveToward(h, {
+            x: r.x + (u.x * Math.cos(ang) - u.y * Math.sin(ang)) * 6,
+            y: r.y + (u.x * Math.sin(ang) + u.y * Math.cos(ang)) * 6,
+          }, slide);
         });
       } else {
         // Free (or not yet blocked): run at the QB, steering round bodies in the way.
@@ -542,12 +547,17 @@ export class Sim {
       }
     }
 
+    const load = (x: Actor) => blockers.filter((h) => h.engaged === x || h.assigned === x).length;
     for (const b of blockers) {
+      // a lineman helping on a double team peels off to pick up a free rusher coming at him
+      if (b.engaged && b.engaged.engagedBy !== b) {
+        const free = rushers.find((x) => !x.engagedBy && load(x) === 0 && !b.beatenBy.includes(x) && dist(x, b) < 24);
+        if (free) { b.engaged = null; b.assigned = free; }
+      }
       if (b.engaged) continue; // placed by the rusher above
       let r = b.assigned && !b.beatenBy.includes(b.assigned) ? b.assigned : null;
       if (!r) {
         // help: the nearby rusher with the fewest blockers on him
-        const load = (x: Actor) => blockers.filter((h) => h.engaged === x || h.assigned === x).length;
         r = rushers
           .filter((x) => !b.beatenBy.includes(x) && dist(x, b) < 40)
           .sort((p, q) => load(p) * 30 + dist(b, p) - (load(q) * 30 + dist(b, q)))[0] ?? null;

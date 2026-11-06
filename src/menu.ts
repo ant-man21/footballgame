@@ -1,10 +1,13 @@
-// The playbook menu: category tabs across the top, play cards with art below,
-// pages when a category has more plays than fit, and a settings panel.
+// The huddle: call your play (offense) or your defense before every snap.
+// Category tabs, cards with diagrams, pages when a tab has more than fit, quick
+// buttons (same play / auto / punt), and a settings panel (opened from pause).
 import { C } from './config';
+import { drawCallArt } from './defart';
+import { CALLS, type Call, DEF_CATEGORIES, callCategory, rushLabel } from './defense/calls';
 import { drawText } from './font';
 import { drawPlayArt } from './playart';
 import { FORMATIONS } from './playbook/formations';
-import { CATEGORIES, type CategoryId, PLAYS, type Play } from './playbook/plays';
+import { CATEGORIES, PLAYS, type Play } from './playbook/plays';
 import { DIFFICULTIES, SPEEDS, type Settings, cycle } from './settings';
 import type { Vec } from './util';
 import type { View } from './view';
@@ -12,7 +15,21 @@ import type { View } from './view';
 type Rect = { x: number; y: number; w: number; h: number };
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
-export type MenuAction = { type: 'pick'; play: Play } | { type: 'close' } | { type: 'settings' } | null;
+export type MenuAction =
+  | { type: 'pick'; play: Play }
+  | { type: 'pickCall'; call: Call }
+  | { type: 'same' } | { type: 'auto' } | { type: 'punt' }
+  | { type: 'close' } | { type: 'settings' }
+  | null;
+
+export interface MenuOptions {
+  kind: 'offense' | 'defense';
+  selectedId: string | null; // last call, highlighted
+  settings: Settings;
+  subtitle?: string; // e.g. "2ND & 7 - OWN 35 - Q2 1:48"
+  fourthDown?: boolean; // offense: show PUNT
+  settingsOnly?: boolean; // opened from pause: just the settings panel
+}
 
 function box(ctx: CanvasRenderingContext2D, r: Rect, fill: string, border: string): void {
   ctx.fillStyle = border;
@@ -28,40 +45,60 @@ const SETTING_ROWS: { key: keyof Settings; label: string; list: Option[] }[] = [
   { key: 'aim', label: 'AIM MODE', list: [{ id: 'pull', name: 'PULL' }, { id: 'aim', name: 'AIM' }] },
 ];
 
-export class Menu {
-  tab: CategoryId;
-  page = 0;
-  showSettings = false;
+type Item = { id: string; cat: string; play?: Play; call?: Call };
 
-  constructor(public selectedId: string, private settings: Settings) {
-    this.tab = PLAYS.find((p) => p.id === selectedId)?.category ?? CATEGORIES[0].id;
-    const inTab = PLAYS.filter((p) => p.category === this.tab);
-    this.page = Math.max(0, Math.floor(inTab.findIndex((p) => p.id === selectedId) / 6));
+export class Menu {
+  tab: string;
+  page = 0;
+  showSettings: boolean;
+  private items: Item[];
+  private cats: readonly { id: string; name: string }[];
+
+  constructor(private o: MenuOptions) {
+    this.showSettings = !!o.settingsOnly;
+    if (o.kind === 'offense') {
+      this.cats = CATEGORIES;
+      this.items = PLAYS.map((p) => ({ id: p.id, cat: p.category, play: p }));
+    } else {
+      this.cats = DEF_CATEGORIES;
+      this.items = CALLS.map((c) => ({ id: c.id, cat: callCategory(c), call: c }));
+    }
+    this.tab = this.items.find((it) => it.id === o.selectedId)?.cat ?? this.cats[0].id;
+    const inTab = this.items.filter((it) => it.cat === this.tab);
+    this.page = Math.max(0, Math.floor(inTab.findIndex((it) => it.id === o.selectedId) / 6));
   }
+
+  get selectedId(): string | null { return this.o.selectedId; }
 
   /** Card grid: 2 columns x 3 rows in portrait, 3 x 2 in landscape; pages beyond that. */
   layout(v: View) {
     const gap = 3;
     const cols = v.landscape ? 3 : 2, rows = v.landscape ? 2 : 3, per = cols * rows;
-    const tabY = v.landscape ? 18 : 28, tabH = v.landscape ? 12 : 13;
-    const tabW = Math.floor(((v.landscape ? 240 : v.w - 8) - gap * (CATEGORIES.length - 1)) / CATEGORIES.length);
-    const tabX0 = Math.round((v.w - (tabW * CATEGORIES.length + gap * (CATEGORIES.length - 1))) / 2);
-    const tabs = CATEGORIES.map((c, i) => ({ cat: c, r: { x: tabX0 + i * (tabW + gap), y: tabY, w: tabW, h: tabH } }));
-    const top = tabY + tabH + 5, bottom = v.h - 22;
+    const tabY = v.landscape ? 20 : 30, tabH = v.landscape ? 12 : 13;
+    const n = this.cats.length;
+    const tabW = Math.floor(((v.landscape ? 240 : v.w - 8) - gap * (n - 1)) / n);
+    const tabX0 = Math.round((v.w - (tabW * n + gap * (n - 1))) / 2);
+    const tabs = this.cats.map((c, i) => ({ cat: c, r: { x: tabX0 + i * (tabW + gap), y: tabY, w: tabW, h: tabH } }));
+    const top = tabY + tabH + 4, bottom = v.h - 22;
     const cw = Math.floor((v.w - 8 - 4 * (cols - 1)) / cols);
     const ch = Math.floor((bottom - top - 4 * (rows - 1)) / rows);
-    const all = PLAYS.filter((p) => p.category === this.tab);
+    const all = this.items.filter((it) => it.cat === this.tab);
     const pages = Math.max(1, Math.ceil(all.length / per));
     const page = Math.min(this.page, pages - 1);
-    const cards = all.slice(page * per, page * per + per).map((play, i) => ({
-      play, r: { x: 4 + (i % cols) * (cw + 4), y: top + Math.floor(i / cols) * (ch + 4), w: cw, h: ch },
+    const cards = all.slice(page * per, page * per + per).map((it, i) => ({
+      it, r: { x: 4 + (i % cols) * (cw + 4), y: top + Math.floor(i / cols) * (ch + 4), w: cw, h: ch },
     }));
+    // quick buttons along the bottom
     const by = v.h - 18;
-    const back = { x: Math.round(v.w / 2 - 62), y: by, w: 58, h: 14 };
-    const settings = { x: Math.round(v.w / 2 + 4), y: by, w: 58, h: 14 };
+    const labels: { type: 'same' | 'auto' | 'punt'; label: string }[] = [];
+    if (this.o.kind === 'defense') labels.push({ type: 'auto', label: 'AUTO' });
+    if (this.o.selectedId) labels.push({ type: 'same', label: this.o.kind === 'offense' ? 'SAME PLAY' : 'SAME CALL' });
+    if (this.o.fourthDown) labels.push({ type: 'punt', label: 'PUNT' });
+    const bw = 52, total = labels.length * bw + (labels.length - 1) * 4;
+    const quick = labels.map((l, i) => ({ ...l, r: { x: Math.round(v.w / 2 - total / 2 + i * (bw + 4)), y: by, w: bw, h: 14 } }));
     const prev = pages > 1 ? { x: 4, y: by, w: 22, h: 14 } : null;
     const next = pages > 1 ? { x: v.w - 26, y: by, w: 22, h: 14 } : null;
-    return { tabs, cards, back, settings, prev, next, page, pages };
+    return { tabs, cards, quick, prev, next, page, pages };
   }
 
   /** Settings panel rows: label plus < value > arrows. */
@@ -82,20 +119,26 @@ export class Menu {
       for (const r of rows) {
         const dir = hit(r.left, p) ? -1 : hit(r.right, p) ? 1 : 0;
         if (!dir) continue;
-        const s = this.settings as unknown as Record<string, string>;
+        const s = this.o.settings as unknown as Record<string, string>;
         s[r.row.key] = cycle(r.row.list, s[r.row.key], dir);
         return { type: 'settings' };
       }
-      if (hit(done, p)) this.showSettings = false;
+      if (hit(done, p)) {
+        if (this.o.settingsOnly) return { type: 'close' };
+        this.showSettings = false;
+      }
       return null;
     }
-    const { tabs, cards, back, settings, prev, next, page, pages } = this.layout(v);
+    const { tabs, cards, quick, prev, next, page, pages } = this.layout(v);
     for (const t of tabs) if (hit(t.r, p)) { this.tab = t.cat.id; this.page = 0; return null; }
-    for (const c of cards) if (hit(c.r, p)) { this.selectedId = c.play.id; return { type: 'pick', play: c.play }; }
+    for (const c of cards) {
+      if (!hit(c.r, p)) continue;
+      this.o.selectedId = c.it.id;
+      return c.it.play ? { type: 'pick', play: c.it.play } : { type: 'pickCall', call: c.it.call! };
+    }
     if (prev && hit(prev, p)) { this.page = (page - 1 + pages) % pages; return null; }
     if (next && hit(next, p)) { this.page = (page + 1) % pages; return null; }
-    if (hit(settings, p)) { this.showSettings = true; return null; }
-    if (hit(back, p)) return { type: 'close' };
+    for (const q of quick) if (hit(q.r, p)) return { type: q.type };
     return null;
   }
 
@@ -103,47 +146,57 @@ export class Menu {
     ctx.fillStyle = 'rgba(17,29,43,0.96)';
     ctx.fillRect(0, 0, v.w, v.h);
     if (this.showSettings) { this.renderSettings(ctx, v); return; }
-    drawText(ctx, 'PLAYBOOK', v.w / 2, v.landscape ? 4 : 8, { scale: 2, color: C.yellow, shadow: C.navy, align: 'center' });
+    const offense = this.o.kind === 'offense';
+    drawText(ctx, offense ? 'CALL A PLAY' : 'CALL A DEFENSE', v.w / 2, v.landscape ? 3 : 6, { scale: 2, color: offense ? C.yellow : C.red, shadow: C.navy, align: 'center' });
+    if (this.o.subtitle) drawText(ctx, this.o.subtitle, v.w / 2, v.landscape ? 14 : 21, { align: 'center', color: C.grey });
 
-    const { tabs, cards, back, settings, prev, next, page, pages } = this.layout(v);
+    const { tabs, cards, quick, prev, next, page, pages } = this.layout(v);
     for (const t of tabs) {
       const on = t.cat.id === this.tab;
       box(ctx, t.r, on ? C.yellow : C.ink, on ? C.yellow : C.grey);
       drawText(ctx, t.cat.name, t.r.x + t.r.w / 2, t.r.y + Math.floor((t.r.h - 5) / 2), { align: 'center', color: on ? C.ink : C.grey });
     }
 
-    for (const { play, r } of cards) {
-      const picked = play.id === this.selectedId;
+    for (const { it, r } of cards) {
+      const picked = it.id === this.o.selectedId;
       box(ctx, r, C.navy, picked ? C.yellow : '#3b4a6b');
-      if (picked) { // double border so the pick stands out
+      if (picked) { // double border so the last call stands out
         ctx.fillStyle = C.yellow;
         ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, 1);
         ctx.fillRect(r.x + 1, r.y + r.h - 2, r.w - 2, 1);
       }
       const artH = r.h - 28;
-      drawPlayArt(ctx, play, r.x + 3, r.y + 3, r.w - 6, artH);
-      drawText(ctx, play.name, r.x + r.w / 2, r.y + artH + 7, { align: 'center' });
-      drawText(ctx, play.vs, r.x + 4, r.y + artH + 18, { color: C.yellow });
-      drawText(ctx, FORMATIONS[play.formation].name, r.x + r.w - 4, r.y + artH + 18, { align: 'right', color: C.grey });
+      if (it.play) {
+        drawPlayArt(ctx, it.play, r.x + 3, r.y + 3, r.w - 6, artH);
+        drawText(ctx, it.play.name, r.x + r.w / 2, r.y + artH + 7, { align: 'center' });
+        drawText(ctx, it.play.vs, r.x + 4, r.y + artH + 18, { color: C.yellow });
+        drawText(ctx, FORMATIONS[it.play.formation].name, r.x + r.w - 4, r.y + artH + 18, { align: 'right', color: C.grey });
+      } else if (it.call) {
+        drawCallArt(ctx, it.call, r.x + 3, r.y + 3, r.w - 6, artH);
+        drawText(ctx, it.call.name, r.x + r.w / 2, r.y + artH + 7, { align: 'center' });
+        drawText(ctx, rushLabel(it.call), r.x + 4, r.y + artH + 18, { color: it.call.rush.length >= 5 ? C.orange : C.yellow });
+        drawText(ctx, it.call.family === 'man' ? 'MAN' : 'ZONE', r.x + r.w - 4, r.y + artH + 18, { align: 'right', color: C.grey });
+      }
     }
 
-    box(ctx, back, C.ink, C.white);
-    drawText(ctx, 'BACK', back.x + back.w / 2, back.y + 5, { align: 'center' });
-    box(ctx, settings, C.ink, C.grey);
-    drawText(ctx, 'SETTINGS', settings.x + settings.w / 2, settings.y + 5, { align: 'center', color: C.grey });
+    for (const q of quick) {
+      const color = q.type === 'punt' ? C.white : C.green;
+      box(ctx, q.r, C.ink, color);
+      drawText(ctx, q.label, q.r.x + q.r.w / 2, q.r.y + 5, { align: 'center', color });
+    }
     if (prev && next) {
       box(ctx, prev, C.ink, C.yellow);
       drawText(ctx, '<', prev.x + prev.w / 2, prev.y + 5, { align: 'center', color: C.yellow });
       box(ctx, next, C.ink, C.yellow);
       drawText(ctx, '>', next.x + next.w / 2, next.y + 5, { align: 'center', color: C.yellow });
-      drawText(ctx, `PAGE ${page + 1}/${pages}`, v.w - 6, v.landscape ? 6 : 12, { align: 'right', color: C.yellow });
+      drawText(ctx, `${page + 1}/${pages}`, v.w - 6, v.landscape ? 14 : 21, { align: 'right', color: C.yellow });
     }
   }
 
   private renderSettings(ctx: CanvasRenderingContext2D, v: View): void {
     drawText(ctx, 'SETTINGS', v.w / 2, v.landscape ? 6 : 20, { scale: 2, color: C.yellow, shadow: C.navy, align: 'center' });
     const { rows, done } = this.settingsLayout(v);
-    const s = this.settings as unknown as Record<string, string>;
+    const s = this.o.settings as unknown as Record<string, string>;
     for (const r of rows) {
       drawText(ctx, r.row.label, r.mid, r.y, { align: 'center', color: C.grey });
       const cur = r.row.list.find((x) => x.id === s[r.row.key]);
@@ -153,8 +206,8 @@ export class Menu {
       drawText(ctx, '>', r.right.x + r.right.w / 2, r.right.y + 6, { align: 'center', color: C.yellow });
       drawText(ctx, cur?.name ?? '', r.mid, r.left.y + 3, { scale: 2, align: 'center' });
     }
-    const note = this.settings.difficulty === 'rookie' ? 'SLOWER DEFENDERS, MORE CATCHES'
-      : this.settings.difficulty === 'pro' ? 'A LITTLE HELP' : 'NO HELP';
+    const note = this.o.settings.difficulty === 'rookie' ? 'SLOWER DEFENDERS, MORE CATCHES'
+      : this.o.settings.difficulty === 'pro' ? 'A LITTLE HELP' : 'NO HELP';
     drawText(ctx, note, v.w / 2, rows[0].y + 28, { align: 'center', color: C.grey });
     box(ctx, done, C.ink, C.white);
     drawText(ctx, 'DONE', done.x + done.w / 2, done.y + 5, { align: 'center' });

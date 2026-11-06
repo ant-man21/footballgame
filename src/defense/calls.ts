@@ -58,9 +58,11 @@ export type ZoneKey = keyof typeof ZONES;
 
 export interface Call {
   id: string;
+  name: string; // what it's called in the defensive playbook
   coverage: string; // e.g. 'COVER 3'
   family: 'man' | 'zone';
   shell: 'one' | 'two' | 'zero'; // safeties' true look (they may disguise it)
+  press?: number; // chance each man corner presses (default 0.45)
   weight: number; // how often it gets picked
   rush: DefId[];
   man: DefId[]; // man-to-man defenders, matched to receivers at the snap
@@ -71,62 +73,92 @@ const DL: DefId[] = ['DE_L', 'DT_L', 'DT_R', 'DE_R'];
 
 export const CALLS: Call[] = [
   {
-    id: 'c0', coverage: 'COVER 0', family: 'man', shell: 'zero', weight: 0.8,
+    id: 'c0', name: 'ZERO BLITZ', coverage: 'COVER 0', family: 'man', shell: 'zero', weight: 0.8,
     rush: [...DL, 'MIKE', 'WILL'], man: ['CB_L', 'CB_R', 'SS', 'FS', 'SAM'], zones: {},
   },
   {
-    id: 'c1-blitz', coverage: 'COVER 1', family: 'man', shell: 'one', weight: 1.1,
+    id: 'c1-blitz', name: 'COVER 1 BLITZ', coverage: 'COVER 1', family: 'man', shell: 'one', weight: 1.1,
     rush: [...DL, 'MIKE'], man: ['CB_L', 'CB_R', 'SS', 'SAM', 'WILL'], zones: { FS: 'deepMiddle' },
   },
   {
-    id: 'c1', coverage: 'COVER 1', family: 'man', shell: 'one', weight: 1.1,
+    id: 'c1', name: 'COVER 1 ROBBER', coverage: 'COVER 1', family: 'man', shell: 'one', weight: 1.1,
     rush: [...DL], man: ['CB_L', 'CB_R', 'SS', 'SAM', 'WILL'], zones: { FS: 'deepMiddle', MIKE: 'robber' },
   },
   {
-    id: 'c2', coverage: 'COVER 2', family: 'zone', shell: 'two', weight: 1.2,
+    id: 'c2', name: 'COVER 2', coverage: 'COVER 2', family: 'zone', shell: 'two', weight: 1.2,
     rush: [...DL], man: [],
     zones: { FS: 'deepHalfL', SS: 'deepHalfR', CB_L: 'flatL', CB_R: 'flatR', WILL: 'hookL', MIKE: 'midHook', SAM: 'hookR' },
   },
   {
-    id: 'c2-drop', coverage: 'COVER 2', family: 'zone', shell: 'two', weight: 0.5,
+    id: 'c2-drop', name: 'COVER 2 DROP 8', coverage: 'COVER 2', family: 'zone', shell: 'two', weight: 0.5,
     rush: ['DE_L', 'DT_R', 'DE_R'], man: [],
     zones: { FS: 'deepHalfL', SS: 'deepHalfR', CB_L: 'flatL', CB_R: 'flatR', WILL: 'hookL', MIKE: 'midHook', SAM: 'hookR', DT_L: 'robber' },
   },
   {
-    id: 'c3', coverage: 'COVER 3', family: 'zone', shell: 'one', weight: 1.4,
+    id: 'c3', name: 'COVER 3', coverage: 'COVER 3', family: 'zone', shell: 'one', weight: 1.4,
     rush: [...DL], man: [],
     zones: { CB_L: 'deep3L', FS: 'deep3M', CB_R: 'deep3R', WILL: 'curlFlatL', MIKE: 'hookL', SAM: 'hookR', SS: 'curlFlatR' },
   },
   {
-    id: 'c3-fire', coverage: 'COVER 3', family: 'zone', shell: 'one', weight: 0.9,
+    id: 'c3-fire', name: 'FIRE ZONE', coverage: 'COVER 3', family: 'zone', shell: 'one', weight: 0.9,
     rush: [...DL, 'MIKE'], man: [],
     zones: { CB_L: 'deep3L', FS: 'deep3M', CB_R: 'deep3R', WILL: 'curlFlatL', SAM: 'midHook', SS: 'curlFlatR' },
   },
   {
-    id: 'c4', coverage: 'COVER 4', family: 'zone', shell: 'two', weight: 1,
+    id: 'c4', name: 'QUARTERS', coverage: 'COVER 4', family: 'zone', shell: 'two', weight: 1,
     rush: [...DL], man: [],
     zones: { CB_L: 'deep4L1', FS: 'deep4L2', SS: 'deep4R2', CB_R: 'deep4R1', WILL: 'curlFlatL', MIKE: 'midHook', SAM: 'curlFlatR' },
   },
   {
-    id: 'c4-drop', coverage: 'COVER 4', family: 'zone', shell: 'two', weight: 0.7,
+    id: 'c4-drop', name: 'QUARTERS DROP 8', coverage: 'COVER 4', family: 'zone', shell: 'two', weight: 0.7,
     rush: ['DE_L', 'DT_L', 'DT_R'], man: [],
     zones: { CB_L: 'deep4L1', FS: 'deep4L2', SS: 'deep4R2', CB_R: 'deep4R1', WILL: 'curlFlatL', MIKE: 'hookL', SAM: 'curlFlatR', DE_R: 'hookR' },
   },
   {
-    id: 'c2-man', coverage: 'COVER 2 MAN', family: 'man', shell: 'two', weight: 0.9,
+    id: 'c2-man', name: '2 MAN UNDER', coverage: 'COVER 2 MAN', family: 'man', shell: 'two', weight: 0.9,
     rush: [...DL], man: ['CB_L', 'CB_R', 'SAM', 'WILL', 'MIKE'], zones: { FS: 'deepHalfL', SS: 'deepHalfR' },
   },
   {
-    id: 'c6', coverage: 'COVER 6', family: 'zone', shell: 'two', weight: 0.8,
+    id: 'c6', name: 'COVER 6', coverage: 'COVER 6', family: 'zone', shell: 'two', weight: 0.8,
     rush: [...DL], man: [],
     zones: { CB_L: 'deep4L1', FS: 'deep4L2', SS: 'deepHalfR', CB_R: 'flatR', WILL: 'curlFlatL', MIKE: 'midHook', SAM: 'hookR' },
   },
   {
-    id: 'tampa2', coverage: 'TAMPA 2', family: 'zone', shell: 'two', weight: 0.7,
+    id: 'tampa2', name: 'TAMPA 2', coverage: 'TAMPA 2', family: 'zone', shell: 'two', weight: 0.7,
     rush: [...DL], man: [],
     zones: { FS: 'deepHalfL', SS: 'deepHalfR', MIKE: 'tampaMiddle', CB_L: 'flatL', CB_R: 'flatR', WILL: 'hookL', SAM: 'hookR' },
   },
+  {
+    id: 'c1-press', name: 'COVER 1 PRESS', coverage: 'COVER 1', family: 'man', shell: 'one', weight: 0.7, press: 0.95,
+    rush: [...DL], man: ['CB_L', 'CB_R', 'SS', 'SAM', 'WILL'], zones: { FS: 'deepMiddle', MIKE: 'robber' },
+  },
+  {
+    id: 'c1-lurk', name: 'COVER 1 LURK', coverage: 'COVER 1', family: 'man', shell: 'one', weight: 0.6,
+    rush: [...DL], man: ['CB_L', 'CB_R', 'SAM', 'WILL', 'MIKE'], zones: { FS: 'deepMiddle', SS: 'robber' },
+  },
+  {
+    id: 'c3-buzz', name: 'COVER 3 BUZZ', coverage: 'COVER 3', family: 'zone', shell: 'one', weight: 0.8,
+    rush: [...DL], man: [],
+    zones: { CB_L: 'deep3L', FS: 'deep3M', CB_R: 'deep3R', SS: 'hookR', SAM: 'curlFlatR', MIKE: 'hookL', WILL: 'curlFlatL' },
+  },
+  {
+    id: 'nickel-fire', name: 'NICKEL FIRE', coverage: 'COVER 3', family: 'zone', shell: 'one', weight: 0.7,
+    rush: [...DL, 'SAM'], man: [],
+    zones: { CB_L: 'deep3L', FS: 'deep3M', CB_R: 'deep3R', SS: 'curlFlatR', WILL: 'curlFlatL', MIKE: 'midHook' },
+  },
+  {
+    id: 'c4-blitz', name: 'QUARTERS BLITZ', coverage: 'COVER 4', family: 'zone', shell: 'two', weight: 0.6,
+    rush: [...DL, 'WILL'], man: [],
+    zones: { CB_L: 'deep4L1', FS: 'deep4L2', SS: 'deep4R2', CB_R: 'deep4R1', MIKE: 'midHook', SAM: 'curlFlatR' },
+  },
 ];
+
+/** Defensive playbook categories. */
+export const DEF_CATEGORIES = [
+  { id: 'zone', name: 'ZONE' }, { id: 'man', name: 'MAN' }, { id: 'blitz', name: 'BLITZ' },
+] as const;
+export type DefCategory = (typeof DEF_CATEGORIES)[number]['id'];
+export const callCategory = (c: Call): DefCategory => (c.rush.length >= 5 ? 'blitz' : c.family);
 
 /** Picks a call at random; bias (if given) re-weights calls, e.g. to counter a play you keep running. */
 export function pickCall(bias?: (c: Call) => number): Call {

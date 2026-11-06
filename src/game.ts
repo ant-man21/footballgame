@@ -1,23 +1,25 @@
-// Ties everything together: a full game (Match), input, aiming, the CPU
-// quarterback when you're on defense, the playbook menu, and drawing.
+// Ties everything together: a full game (Match), the huddle (calling plays on
+// both sides of the ball), the clock between plays, timeouts, pause, input,
+// aiming, the CPU quarterback when you're on defense, and drawing.
 import { C, FIELD_LEFT, FIELD_RIGHT, LOS_Y, MAX_THROW, PULL_POWER, RESULT_TIME, TIME_SCALE, W, YD } from './config';
 import { CpuQb, callPlay, cpuGoesForIt } from './cpu';
-import { DEF_BASE, beats, rushLabel } from './defense/calls';
+import { type Call, DEF_BASE, beats, rushLabel } from './defense/calls';
 import { drawText, textWidth } from './font';
-import { type Banner, Match } from './match';
-import { Menu } from './menu';
+import { type Banner, Match, PLAY_CLOCK } from './match';
+import { Menu, type MenuAction } from './menu';
 import { PLAYS, type Play } from './playbook/plays';
+import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
 import { Sim, arcHeight, flightFor, throwSpread } from './sim';
 import { ballSprite, drawCentered, playerSprite } from './sprites';
 import { type Vec, clamp, dist, lerp, rand } from './util';
-import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
 import { PORTRAIT, type View } from './view';
 
 export type AimMode = 'pull' | 'aim';
 const SNAP_CATCH = 0.3; // sim seconds for the QB to catch the shotgun snap
 const AIM_OFFSET = 10; // AIM mode: the landing spot sits this far above your finger (screen px)
-const DEF_PRESNAP = 2.6; // seconds before the CPU snaps the ball when you're on defense
+const DEF_PRESNAP = 2.2; // seconds after you call your defense before the CPU snaps
 const STICK_RANGE = 22; // joystick: drag this far (screen px) for full speed
+const BETWEEN_RATE = 5; // game seconds that run off per real second between plays (clock running)
 const USER_DEFENDER = 'MIKE';
 type Rect = { x: number; y: number; w: number; h: number };
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
@@ -32,37 +34,45 @@ function makeRatings(): Record<string, number> {
 const pick = (r: Record<string, number>, prefix: string) =>
   Object.fromEntries(Object.entries(r).filter(([k]) => k.startsWith(prefix)));
 
+type Screen = 'huddle' | 'play' | 'banner' | 'final';
+
 export class Game {
   settings = loadSettings();
   sim = new Sim();
   match = new Match('you');
-  play: Play = PLAYS[0]; // your selected play
-  menu = new Menu(this.play.id, this.settings);
-  menuOpen = true; // start on the playbook
+  play: Play = PLAYS[0]; // your current offensive call
+  lastPlayId: string | null = null; // for SAME PLAY
+  defCall: Call | null = null; // your defensive call (null = let the coordinator pick)
+  lastCallId: string | null = null;
+  menu: Menu | null = null; // the huddle, or settings from pause
+  private huddleMenu: Menu | null = null; // remembered while settings are open
   mode: AimMode = this.settings.aim;
   ratings = { you: makeRatings(), cpu: makeRatings() };
   history: string[] = []; // your recent play calls: the defense notices repeats
   view: View = PORTRAIT;
   clock = 0;
   paused = false; // tests step the sim by hand
-  autoplay = false; // tests: the CPU brain plays your offense too
-  screen: 'play' | 'banner' | 'final' = 'play';
-  banner: (Banner & { kind: 'play' | 'punt' }) | null = null;
+  pauseOpen = false; // the pause menu
+  private confirmRestart = false;
+  autoplay = false; // tests: the CPU brain plays your side too
+  screen: Screen = 'huddle';
+  banner: (Banner & { kind: 'play' | 'punt' | 'note' }) | null = null;
   private bannerAt = 0;
+  toast: { text: string; color: string; until: number } | null = null;
   drag: { start: Vec; cur: Vec } | null = null; // offense: throw gesture (screen coordinates)
   stick: { origin: Vec; cur: Vec } | null = null; // defense: joystick (screen coordinates)
   cpuQb: CpuQb | null = null;
-  fourth: 'ask' | 'go' | null = null; // your 4th-down decision
   private snapAt = 0;
   private queuedThrow: Vec | null = null; // released before the QB had the snap
+  runoff = 0; // game seconds run off since the last play ended (the play clock)
   camY = 0; // how far (world px) the view has scrolled upfield to follow the ball
 
-  // Field state captured at the snap, so the field doesn't jump while the banner is up.
+  // Field state captured for the coming snap, so the field doesn't jump while a banner is up.
   private fieldBallOn = 25;
   private lineToGain = 35;
   private attackingYours = false; // is the top end zone yours (CPU on offense)?
 
-  constructor() { this.applySettings(); this.nextPlay(); }
+  constructor() { this.applySettings(); this.startHuddle(); }
 
   applySettings(): void {
     this.mode = this.settings.aim;
@@ -74,6 +84,8 @@ export class Game {
   repeats(play: Play): number { return this.history.filter((id) => id === play.id).length; }
 
   get onOffense(): boolean { return this.match.offense === 'you'; }
+  /** Kept for tests and older callers: the huddle menu is the "playbook". */
+  get menuOpen(): boolean { return this.screen === 'huddle' || !!(this.menu && this.menu.showSettings); }
 
   setView(v: View): void { this.view = v; this.drag = null; this.stick = null; }
 
@@ -90,23 +102,41 @@ export class Game {
     const v = this.view;
     return v.landscape ? { x: v.w - v.panel + 3, y: v.h - 16, w: v.panel - 6, h: 13 } : { x: v.w - 62, y: v.h - 16, w: 58, h: 12 };
   }
-  /** 4th-down buttons, centred over the field. */
-  get fourthButtons(): { go: Rect; punt: Rect } {
-    const mid = this.view.landscape ? this.view.w / 2 : W / 2;
-    const y = this.view.landscape ? 60 : 120;
-    return { go: { x: Math.round(mid - 62), y, w: 58, h: 16 }, punt: { x: Math.round(mid + 4), y, w: 58, h: 16 } };
+  get pauseButton(): Rect {
+    const v = this.view;
+    return v.landscape ? { x: v.w - v.panel + 3, y: 3, w: v.panel - 6, h: 13 } : { x: v.w - 17, y: 2, w: 15, h: 15 };
+  }
+  /** Pause menu buttons. */
+  get pauseButtons(): { resume: Rect; timeout: Rect; settings: Rect; restart: Rect } {
+    const v = this.view, w = 96, x = Math.round(v.w / 2 - w / 2);
+    const y0 = v.landscape ? 40 : 110, gap = v.landscape ? 22 : 26;
+    const r = (i: number) => ({ x, y: y0 + i * gap, w, h: 16 });
+    return { resume: r(0), timeout: r(1), settings: r(2), restart: r(3) };
   }
 
   newGame(): void {
     this.match = new Match('you');
     this.ratings = { you: makeRatings(), cpu: makeRatings() };
     this.history = [];
-    this.screen = 'play';
-    this.nextPlay();
+    this.lastPlayId = null;
+    this.lastCallId = null;
+    this.runoff = 0;
+    this.pauseOpen = false;
+    this.startHuddle();
   }
 
-  /** Sets up the next snap (or a CPU punt). */
-  nextPlay(): void {
+  private situation(): string {
+    const m = this.match, d = m.drive;
+    const spot = this.onOffense ? d.spotText : flipSpot(d.spotText);
+    return `${d.downText} - ${spot} - Q${m.quarter} ${m.clockText}`;
+  }
+
+  private showToast(text: string, color: string = C.yellow): void {
+    this.toast = { text, color, until: this.clock + 1.8 };
+  }
+
+  /** Between plays: call your play (offense) or your defense (defense). */
+  startHuddle(): void {
     this.banner = null;
     this.queuedThrow = null;
     this.cpuQb = null;
@@ -114,15 +144,45 @@ export class Game {
     this.stick = null;
     this.camY = 0;
     const m = this.match;
-    if (m.over) { this.screen = 'final'; return; }
-    this.screen = 'play';
+    if (m.over) { this.screen = 'final'; this.menu = null; return; }
     const d = m.drive;
     this.fieldBallOn = d.ballOn;
     this.lineToGain = d.ballOn + d.toGo;
     this.attackingYours = !this.onOffense;
+    this.cpuTimeout();
+
     if (this.onOffense) {
-      this.fourth = d.down === 4 ? 'ask' : null;
-      if (this.autoplay) this.play = callPlay(d); // tests: call plays like the CPU does
+      if (this.autoplay) {
+        if (d.down === 4 && !cpuGoesForIt(d, m.score.you - m.score.cpu, m.quarter, m.clock)) { this.showPunt(); return; }
+        this.play = callPlay(d);
+        this.setupSnap();
+        return;
+      }
+      this.menu = new Menu({ kind: 'offense', selectedId: this.lastPlayId, settings: this.settings, subtitle: this.situation(), fourthDown: d.down === 4 });
+    } else {
+      if (d.down === 4 && !cpuGoesForIt(d, m.score.cpu - m.score.you, m.quarter, m.clock)) { this.showPunt(); return; }
+      if (this.autoplay) { this.defCall = null; this.setupSnap(); return; }
+      this.menu = new Menu({ kind: 'defense', selectedId: this.lastCallId, settings: this.settings, subtitle: this.situation() });
+    }
+    this.screen = 'huddle';
+  }
+
+  /** Late in a half, a trailing CPU uses its timeouts to save the clock. */
+  private cpuTimeout(): void {
+    const m = this.match;
+    const late = (m.quarter === 2 || m.quarter === 4) && m.clock < 120 && m.clockRunning;
+    const trailing = m.quarter === 4 ? m.score.cpu < m.score.you : !this.onOffense; // before half: only to drive
+    if (late && trailing && m.timeouts.cpu > 0 && m.timeout('cpu')) {
+      this.showToast(`CPU TIMEOUT (${m.timeouts.cpu} LEFT)`, C.red);
+    }
+  }
+
+  /** Lines everyone up for the snap with the calls made in the huddle. */
+  private setupSnap(): void {
+    const d = this.match.drive;
+    this.menu = null;
+    this.screen = 'play';
+    if (this.onOffense) {
       // The defense adapts: the more you lean on a play, the more it calls
       // coverages that beat it, and the quicker it jumps it.
       const reps = this.repeats(this.play);
@@ -134,28 +194,43 @@ export class Game {
         recognition: clamp((reps - 1) / 4, 0, 1),
       });
     } else {
-      this.fourth = null;
-      if (d.down === 4 && !cpuGoesForIt(d, m.score.cpu - m.score.you, m.quarter, m.clock)) { this.showPunt(); return; }
       this.sim.reset(callPlay(d), d.goalY, {
         userDefender: USER_DEFENDER,
         ratings: { ...pick(this.ratings.cpu, 'off:'), ...pick(this.ratings.you, 'def:') },
         cpuTeam: 'off', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
+        call: this.defCall ?? undefined,
       });
       this.snapAt = this.clock + DEF_PRESNAP;
     }
   }
 
   private showPunt(): void {
+    this.menu = null;
     this.banner = { ...this.match.punt(), kind: 'punt' };
     this.screen = 'banner';
     this.bannerAt = this.clock;
+    this.runoff = 0;
   }
 
+  /** Pick a play from code (tests) or the huddle. */
   pickPlay(play: Play): void {
     this.play = play;
-    this.menu.selectedId = play.id;
-    this.menuOpen = false;
-    if (this.onOffense && this.screen === 'play' && this.sim.phase === 'presnap') this.nextPlay();
+    this.lastPlayId = play.id;
+    if (this.onOffense && (this.screen === 'huddle' || (this.screen === 'play' && this.sim.phase === 'presnap'))) this.setupSnap();
+  }
+
+  private huddleAction(a: MenuAction): void {
+    if (!a) return;
+    switch (a.type) {
+      case 'pick': this.pickPlay(a.play); break;
+      case 'pickCall': this.defCall = a.call; this.lastCallId = a.call.id; this.setupSnap(); break;
+      case 'auto': this.defCall = null; this.setupSnap(); break;
+      case 'same':
+        if (this.onOffense) { const p = PLAYS.find((x) => x.id === this.lastPlayId); if (p) this.pickPlay(p); }
+        else this.setupSnap(); // keeps the last defensive call
+        break;
+      case 'punt': this.showPunt(); break;
+    }
   }
 
   // ---------- input ----------
@@ -183,34 +258,55 @@ export class Game {
     return t;
   }
 
+  private canTimeout(): boolean {
+    const live = this.sim.phase === 'live' || this.sim.phase === 'air' || this.sim.phase === 'run';
+    return !(this.screen === 'play' && live) && this.screen !== 'final' && this.match.timeouts.you > 0;
+  }
+
   pointerDown(p: Vec): void {
-    if (this.menuOpen) {
+    // settings opened from the pause menu
+    if (this.menu?.showSettings) {
       const a = this.menu.tap(p, this.view);
-      if (a?.type === 'pick') this.pickPlay(a.play);
-      else if (a?.type === 'close') this.menuOpen = false;
-      else if (a?.type === 'settings') this.applySettings();
+      if (a?.type === 'settings') this.applySettings();
+      if (a?.type === 'close') { this.menu = this.huddleMenu; this.huddleMenu = null; }
       return;
     }
+    if (this.pauseOpen) { this.pauseTap(p); return; }
+    if (this.screen !== 'final' && hit(this.pauseButton, p)) { this.pauseOpen = true; this.confirmRestart = false; return; }
+
+    if (this.screen === 'huddle' && this.menu) { this.huddleAction(this.menu.tap(p, this.view)); return; }
     if (this.screen === 'final') { this.newGame(); return; }
-    if (this.screen === 'banner') { this.nextPlay(); return; }
+    if (this.screen === 'banner') { this.afterBanner(); return; }
 
     const phase = this.sim.phase;
     if (!this.onOffense) { this.stick = { origin: p, cur: p }; return; } // defense: joystick anywhere
 
     if (hit(this.modeButton, p)) { this.settings.aim = this.mode === 'pull' ? 'aim' : 'pull'; this.applySettings(); return; }
-    if (hit(this.playsButton, p)) {
-      if (phase === 'presnap') { this.menuOpen = true; this.menu = new Menu(this.play.id, this.settings); }
-      return;
-    }
-    if (this.fourth === 'ask') {
-      const b = this.fourthButtons;
-      if (hit(b.go, p)) this.fourth = 'go';
-      else if (hit(b.punt, p)) this.showPunt();
+    if (hit(this.playsButton, p)) { // back to the huddle to change the call
+      if (phase === 'presnap') this.startHuddle();
       return;
     }
     // One touch does it all: the touch snaps the ball and starts the aim.
     if (phase === 'presnap') this.snap();
     if (this.sim.phase === 'live') this.drag = { start: p, cur: p };
+  }
+
+  private pauseTap(p: Vec): void {
+    const b = this.pauseButtons;
+    if (hit(b.resume, p)) this.pauseOpen = false;
+    else if (hit(b.timeout, p) && this.canTimeout()) {
+      this.match.timeout('you');
+      this.runoff = 0;
+      this.showToast(`TIMEOUT (${this.match.timeouts.you} LEFT)`, C.blue);
+      this.pauseOpen = false;
+    } else if (hit(b.settings, p)) {
+      this.huddleMenu = this.menu;
+      this.menu = new Menu({ kind: 'offense', selectedId: null, settings: this.settings, settingsOnly: true });
+      this.pauseOpen = false;
+    } else if (hit(b.restart, p)) {
+      if (this.confirmRestart) this.newGame();
+      else this.confirmRestart = true;
+    }
   }
 
   pointerMove(p: Vec): void {
@@ -231,33 +327,44 @@ export class Game {
 
   private snap(): void {
     this.sim.snap();
+    this.runoff = 0;
     if (this.onOffense) this.history = [...this.history, this.play.id].slice(-8);
     if (!this.onOffense) this.cpuQb = new CpuQb(this.sim, DIFFICULTY_TUNING[this.settings.difficulty].qbPicky);
     else if (this.autoplay) this.cpuQb = new CpuQb(this.sim);
+  }
+
+  private afterBanner(): void {
+    if (this.match.over) { this.screen = 'final'; this.banner = null; return; }
+    this.startHuddle();
   }
 
   // ---------- loop ----------
 
   update(dt: number): void {
     this.clock += dt;
-    if (this.menuOpen || this.paused) return;
+    if (this.paused || this.pauseOpen || this.menu?.showSettings) return;
+    if (this.screen === 'final') return;
+    const sim = this.sim;
+
+    // Between plays the clock keeps running (if it's running), up to the play clock.
+    const between = this.screen === 'huddle' || this.screen === 'banner' || (this.screen === 'play' && sim.phase === 'presnap');
+    if (between && this.match.clockRunning && this.runoff < PLAY_CLOCK) {
+      const step = Math.min(dt * BETWEEN_RATE, PLAY_CLOCK - this.runoff);
+      this.runoff += step;
+      const ev = this.match.tickBetween(step);
+      if (ev === 'warning') this.showToast('TWO-MINUTE WARNING');
+      if (ev === 'quarter') this.quarterEndedBetweenPlays();
+    }
+
     if (this.screen === 'banner') {
-      if (this.clock - this.bannerAt > RESULT_TIME) this.nextPlay();
+      if (this.clock - this.bannerAt > RESULT_TIME) this.afterBanner();
       return;
     }
-    if (this.screen === 'final') return;
+    if (this.screen !== 'play') return;
 
-    const sim = this.sim;
     if (sim.phase === 'presnap') {
       if (!this.onOffense && this.clock >= this.snapAt) this.snap();
-      if (this.onOffense && this.autoplay) {
-        if (this.fourth === 'ask') {
-          const m = this.match;
-          if (cpuGoesForIt(m.drive, m.score.you - m.score.cpu, m.quarter, m.clock)) this.fourth = 'go';
-          else { this.showPunt(); return; }
-        }
-        this.snap();
-      }
+      if (this.onOffense && this.autoplay) this.snap();
     }
 
     // your linebacker follows the joystick
@@ -285,6 +392,7 @@ export class Game {
       this.banner = { ...b, kind: 'play' };
       this.screen = 'banner';
       this.bannerAt = this.clock;
+      this.runoff = 0;
     }
 
     // camera follows the ball upfield: the runner, or a deep ball in the air
@@ -297,11 +405,30 @@ export class Game {
     }
   }
 
+  /** The clock ran out while you were huddling: end of the quarter (or half, or game). */
+  private quarterEndedBetweenPlays(): void {
+    const m = this.match;
+    const q = m.over ? 4 : m.quarter - 1;
+    const headline = m.over ? 'FINAL' : q === 2 ? 'HALFTIME' : `END OF Q${q}`;
+    this.menu = null;
+    this.banner = { headline, color: C.yellow, detail: `YOU ${m.score.you} - CPU ${m.score.cpu}`, kind: 'note' };
+    this.screen = 'banner';
+    this.bannerAt = this.clock;
+    this.runoff = 0;
+  }
+
   // ---------- drawing ----------
 
   render(ctx: CanvasRenderingContext2D): void {
+    if (this.screen === 'huddle' && this.menu) {
+      this.menu.render(ctx, this.view);
+      this.renderPauseButton(ctx);
+      this.renderToast(ctx);
+      if (this.pauseOpen) this.renderPause(ctx);
+      return;
+    }
     drawField(ctx, this, this.fieldBallOn, this.lineToGain, this.attackingYours);
-    if (this.screen !== 'banner' || this.banner?.kind === 'play') {
+    if (this.screen === 'play' || this.banner?.kind === 'play') {
       if (this.onOffense || this.screen === 'banner') this.renderRoutes(ctx);
       this.renderPlayers(ctx);
       this.renderEyes(ctx);
@@ -311,8 +438,43 @@ export class Game {
     }
     this.renderHud(ctx);
     this.renderStick(ctx);
+    this.renderToast(ctx);
     if (this.screen === 'final') this.renderFinal(ctx);
-    if (this.menuOpen) this.menu.render(ctx, this.view);
+    if (this.pauseOpen) this.renderPause(ctx);
+    if (this.menu?.showSettings) this.menu.render(ctx, this.view);
+  }
+
+  private renderPauseButton(ctx: CanvasRenderingContext2D): void {
+    const b = this.pauseButton;
+    if (this.view.landscape) { button(ctx, b, 'PAUSE', C.white); return; }
+    ctx.fillStyle = 'rgba(17,29,43,0.9)';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = C.white;
+    ctx.fillRect(b.x + 4, b.y + 4, 2, 7); // "II"
+    ctx.fillRect(b.x + 9, b.y + 4, 2, 7);
+  }
+
+  private renderToast(ctx: CanvasRenderingContext2D): void {
+    const t = this.toast;
+    if (!t || this.clock > t.until) return;
+    const v = this.view, mid = v.landscape ? v.w / 2 : W / 2, y = v.landscape ? 16 : 34;
+    const tw = textWidth(t.text) + 10;
+    ctx.fillStyle = 'rgba(17,29,43,0.92)';
+    ctx.fillRect(Math.round(mid - tw / 2), y - 3, tw, 11);
+    drawText(ctx, t.text, mid, y, { align: 'center', color: t.color });
+  }
+
+  private renderPause(ctx: CanvasRenderingContext2D): void {
+    const v = this.view, m = this.match;
+    ctx.fillStyle = 'rgba(17,29,43,0.93)';
+    ctx.fillRect(0, 0, v.w, v.h);
+    drawText(ctx, 'PAUSED', v.w / 2, v.landscape ? 10 : 60, { scale: 2, color: C.yellow, align: 'center' });
+    drawText(ctx, `YOU ${m.score.you} - CPU ${m.score.cpu}   Q${m.quarter} ${m.clockText}`, v.w / 2, v.landscape ? 26 : 80, { align: 'center', color: C.grey });
+    const b = this.pauseButtons;
+    button(ctx, b.resume, 'RESUME', C.green);
+    button(ctx, b.timeout, `TIMEOUT (${m.timeouts.you} LEFT)`, this.canTimeout() ? C.white : C.darkGrey);
+    button(ctx, b.settings, 'SETTINGS', C.white);
+    button(ctx, b.restart, this.confirmRestart ? 'TAP AGAIN TO RESTART' : 'RESTART GAME', this.confirmRestart ? C.orange : C.white);
   }
 
   private renderPlayers(ctx: CanvasRenderingContext2D): void {
@@ -337,18 +499,16 @@ export class Game {
     }
   }
 
-  /** Defense: where the CPU quarterback is looking. */
+  /** Defense: where the CPU quarterback is looking. Turns orange when he's about to throw. */
   private renderEyes(ctx: CanvasRenderingContext2D): void {
     const sim = this.sim;
-    const eyes = this.cpuQb?.eyes;
-    if (this.onOffense || !eyes || sim.phase !== 'live') return;
+    const qb = this.cpuQb;
+    if (this.onOffense || !qb?.eyes || sim.phase !== 'live') return;
     const qx = this.sx(sim.qb.x), qy = this.sy(sim.qb.y);
-    const ex = this.sx(eyes.x), ey = this.sy(eyes.y);
-    const d = Math.hypot(ex - qx, ey - qy) || 1;
-    const ux = (ex - qx) / d, uy = (ey - qy) / d;
-    const len = Math.min(26, d - 4);
-    ctx.fillStyle = C.yellow;
-    for (let i = 5; i < len; i += 2) ctx.fillRect(Math.round(qx + ux * i), Math.round(qy + uy * i), 1, 1);
+    const ux = Math.cos(qb.eyeAngle), uy = Math.sin(qb.eyeAngle);
+    const len = 26;
+    ctx.fillStyle = qb.windup ? C.orange : C.yellow;
+    for (let i = 5; i < len; i += qb.windup ? 1 : 2) ctx.fillRect(Math.round(qx + ux * i), Math.round(qy + uy * i), 1, 1);
     const tx = qx + ux * len, ty = qy + uy * len;
     for (const side of [-1, 1]) {
       for (let k = 1; k <= 3; k++) {
@@ -488,6 +648,10 @@ export class Game {
     const fieldMid = v.landscape ? v.w / 2 : W / 2;
     const live = sim.phase === 'live' || sim.phase === 'air' || sim.phase === 'run';
     const q = m.over ? 'FINAL' : `Q${m.quarter} ${m.clockText}`;
+    const playClock = m.clockRunning && this.screen !== 'final' ? Math.max(0, Math.ceil(PLAY_CLOCK - this.runoff)) : null;
+    const pips = (x: number, y: number, n: number, color: string) => {
+      for (let i = 0; i < 3; i++) { ctx.fillStyle = i < n ? color : C.darkGrey; ctx.fillRect(x + i * 4, y, 3, 2); }
+    };
 
     if (v.landscape) {
       ctx.fillStyle = C.ink;
@@ -495,17 +659,20 @@ export class Game {
       ctx.fillRect(v.w - v.panel, 0, v.panel, v.h);
       const lx = 3;
       drawText(ctx, `YOU ${m.score.you}`, lx, 5, { color: C.blue });
+      pips(lx + 30, 7, m.timeouts.you, C.blue);
       drawText(ctx, `CPU ${m.score.cpu}`, lx, 13, { color: C.red });
+      pips(lx + 30, 15, m.timeouts.cpu, C.red);
       drawText(ctx, q, lx, 23);
-      drawText(ctx, offense ? 'OFFENSE' : 'DEFENSE', lx, 37, { color: offense ? C.blue : C.red });
+      if (playClock !== null) drawText(ctx, `PLAY CLK ${playClock}`, lx, 31, { color: playClock <= 5 ? C.orange : C.grey });
+      drawText(ctx, offense ? 'OFFENSE' : 'DEFENSE', lx, 41, { color: offense ? C.blue : C.red });
       if (showDown) {
-        drawText(ctx, d.downText, lx, 45, { color: C.yellow });
-        drawText(ctx, offense ? d.spotText : flipSpot(d.spotText), lx, 53);
+        drawText(ctx, d.downText, lx, 49, { color: C.yellow });
+        drawText(ctx, offense ? d.spotText : flipSpot(d.spotText), lx, 57);
       }
       if (offense) {
         drawText(ctx, 'PLAY', lx, v.h - 34, { color: C.grey });
         drawText(ctx, this.play.name, lx, v.h - 26, { color: C.yellow });
-        button(ctx, this.playsButton, 'PLAYS', live || this.fourth === 'ask' ? C.darkGrey : C.white);
+        button(ctx, this.playsButton, 'PLAYS', live ? C.darkGrey : C.white);
         drawText(ctx, 'MODE', v.w - v.panel / 2, v.h - 26, { align: 'center', color: C.grey });
         button(ctx, this.modeButton, this.mode.toUpperCase(), C.white);
       } else {
@@ -517,15 +684,17 @@ export class Game {
       ctx.fillStyle = 'rgba(17,29,43,0.9)';
       ctx.fillRect(0, 0, v.w, 19);
       drawText(ctx, `YOU ${m.score.you}`, 5, 3, { color: C.blue });
+      pips(5, 9, m.timeouts.you, C.blue);
       drawText(ctx, `CPU ${m.score.cpu}`, 45, 3, { color: C.red });
-      drawText(ctx, q, v.w - 5, 3, { align: 'right' });
+      pips(45, 9, m.timeouts.cpu, C.red);
+      drawText(ctx, q, v.w - 21, 3, { align: 'right' });
+      if (playClock !== null) drawText(ctx, `:${String(playClock).padStart(2, '0')}`, v.w - 21, 11, { align: 'right', color: playClock <= 5 ? C.orange : C.grey });
       if (showDown) {
-        drawText(ctx, d.downText, 5, 11, { color: C.yellow });
-        drawText(ctx, offense ? d.spotText : flipSpot(d.spotText), 45, 11);
+        drawText(ctx, d.downText, 85, 3, { color: C.yellow });
+        drawText(ctx, offense ? d.spotText : flipSpot(d.spotText), 85, 11);
       }
-      drawText(ctx, offense ? 'OFFENSE' : 'DEFENSE', v.w - 5, 11, { align: 'right', color: offense ? C.blue : C.red });
       if (offense) {
-        button(ctx, this.playsButton, 'PLAYS', live || this.fourth === 'ask' ? C.darkGrey : C.white);
+        button(ctx, this.playsButton, 'PLAYS', live ? C.darkGrey : C.white);
         button(ctx, this.modeButton, `MODE ${this.mode.toUpperCase()}`, C.white);
         drawText(ctx, this.play.name, (this.playsButton.x + this.playsButton.w + this.modeButton.x) / 2, v.h - 12,
           { align: 'center', color: C.yellow, shadow: '#000' });
@@ -533,27 +702,19 @@ export class Game {
         drawText(ctx, 'YOU: MIKE LB - DRAG TO TAKE OVER', v.w / 2, v.h - 12, { align: 'center', color: C.yellow, shadow: '#000' });
       }
     }
+    if (this.screen !== 'final') this.renderPauseButton(ctx);
 
     // pre-snap prompts
-    if (this.screen === 'play' && sim.phase === 'presnap' && !this.menuOpen) {
+    if (this.screen === 'play' && sim.phase === 'presnap') {
       const y = v.landscape ? 4 : this.sy(LOS_Y) + 40;
-      if (offense && this.fourth === 'ask') {
-        const b = this.fourthButtons;
-        ctx.fillStyle = 'rgba(17,29,43,0.88)';
-        ctx.fillRect(b.go.x - 6, b.go.y - 16, b.punt.x + b.punt.w - b.go.x + 12, 38);
-        drawText(ctx, `4TH & ${d.toGo} - GO OR PUNT?`, fieldMid, b.go.y - 11, { align: 'center', color: C.yellow });
-        button(ctx, b.go, 'GO FOR IT', C.green);
-        button(ctx, b.punt, 'PUNT', C.white);
-      } else if (offense) {
+      if (offense) {
         if (Math.floor(this.clock * 2.5) % 2 === 0) drawText(ctx, 'TOUCH TO SNAP + THROW', fieldMid, y, { align: 'center', color: C.white, shadow: '#000' });
         if (this.repeats(this.play) >= 3) {
           drawText(ctx, "THEY'VE SEEN THIS PLAY", fieldMid, y + 9, { align: 'center', color: C.orange, shadow: '#000' });
         }
-      } else if (!offense) {
-        const left = Math.max(0, Math.ceil(this.snapAt - this.clock));
+      } else {
         const ty = v.landscape ? 4 : 24;
-        drawText(ctx, `${sim.call.coverage} - YOU: ${this.assignment()}`, fieldMid, ty, { align: 'center', color: C.yellow, shadow: '#000' });
-        drawText(ctx, `SNAP IN ${left}`, fieldMid, ty + 8, { align: 'center', color: C.white, shadow: '#000' });
+        drawText(ctx, `${sim.call.name} - YOU: ${this.assignment()}`, fieldMid, ty, { align: 'center', color: C.yellow, shadow: '#000' });
       }
     }
 
@@ -569,7 +730,7 @@ export class Game {
       let ly = y + 26;
       if (b.note) { drawText(ctx, b.note, fieldMid, ly, { align: 'center', color: C.yellow }); ly += 10; }
       if (b.kind === 'play') {
-        drawText(ctx, `${sim.call.coverage} - ${rushLabel(sim.call)}`, fieldMid, ly, { align: 'center', color: C.grey });
+        drawText(ctx, `${sim.call.name} - ${rushLabel(sim.call)}`, fieldMid, ly, { align: 'center', color: C.grey });
       }
     }
   }

@@ -9,6 +9,12 @@ A full game against the CPU: **4 quarters of 3 minutes**, passing only, no kicks
 - **4th down:** choose **GO FOR IT** or **PUNT** (punts are simulated: about 40 yards, touchback to the 20).
 - **Clock:** it runs during plays, and between plays after a tackle or sack in bounds. Incompletions, out of bounds, scores and turnovers stop it. Possession alternates at halftime, and the final screen shows both teams' stats.
 
+### Between plays
+- **The huddle:** before every snap you call your play (offense) or your defense. **SAME PLAY / SAME CALL** repeats the last one; on defense **AUTO** lets the coordinator call it; on 4th down the offensive huddle offers **PUNT** (pick a play to go for it).
+- **Clock:** after a catch in bounds or a sack the clock keeps running while you huddle (up to a 25-second play clock, shown on the scoreboard), so hurrying up saves time. Incompletions, out of bounds, scores and turnovers stop it. **Two-minute warning** in Q2 and Q4.
+- **Timeouts:** 3 per team per half (pips under the score). Call yours from the pause menu; the CPU uses its own late when it's behind.
+- **Pause** (top right): resume, timeout, settings, restart game.
+
 ### Your offense
 - Pick a play from the **playbook** (opens on launch; **PLAYS** between snaps). Plays stay picked so you can rep them.
 - **One touch does it all:** touching the screen snaps the ball and starts the aim; drag to draw the throw arc, release to throw.
@@ -20,7 +26,7 @@ A full game against the CPU: **4 quarters of 3 minutes**, passing only, no kicks
 - Two control schemes; tap **MODE** to switch: **PULL** (slingshot, finger never covers the target) and **AIM** (landing spot just above your finger).
 
 ### The defense you face
-- Twelve calls: Cover 0, Cover 1 (with and without a blitz or robber), Cover 2, Cover 2 Man, Tampa 2, Cover 3 (and a fire-zone blitz), Cover 4, Cover 6, with 3- to 6-man rushes.
+- Seventeen calls (you can call these yourself on defense): Cover 0, Cover 1 (with and without a blitz or robber), Cover 2, Cover 2 Man, Tampa 2, Cover 3 (and a fire-zone blitz), Cover 4, Cover 6, with 3- to 6-man rushes.
 - It lines up to your formation (flat defenders over the slot, linebackers sliding to the strength), and man defenders vary their technique snap to snap: inside or outside leverage, press or off. Read it before the snap: outside leverage leaves the slant, off coverage leaves the hitch.
 - The safeties show a shell (one-high, two-high, or both down) that is usually, not always, what they play; they rotate after the snap.
 - It adapts: lean on the same play and it starts calling coverages that beat it and jumps it quicker ("THEY'VE SEEN THIS PLAY").
@@ -30,7 +36,8 @@ A full game against the CPU: **4 quarters of 3 minutes**, passing only, no kicks
 From the playbook: **DIFFICULTY** (Rookie, Pro, All-Pro: how much the CPU side is slowed and how contested catches lean), **GAME SPEED** (slows or speeds up everything together, so timing feels the same), and **AIM MODE**. Saved on your device.
 
 ### Your defense
-- The CPU calls plays by down and distance and runs them with a quarterback that **reads its receivers one at a time** and throws to the first one open enough. A **yellow arrow from the QB shows who he's looking at.**
+- Call your defense in the huddle: a defensive playbook of 17 calls in ZONE / MAN / BLITZ tabs, each with a diagram (or AUTO).
+- The CPU calls plays by down and distance and runs them with a quarterback that **reads its receivers one at a time** and throws to the first one open enough. A **yellow arrow from the QB shows who he's looking at**; it sweeps between reads, and **turns orange for a beat when he's about to throw** (your cue to break on it).
 - You are the **MIKE linebacker** (yellow marker). He plays his assignment in the call on his own (shown before the snap, e.g. `COVER 3 - YOU: HOOK ZONE` or `BLITZ!`). **Touch and drag anywhere to take over** (a thumb joystick), and let go to hand him back. Jump the QB's read for a pick, break up passes, chase down a runner, or come through the line for a sack (the line will try to block you).
 - The other ten defenders play the randomly chosen coverage.
 
@@ -72,6 +79,12 @@ Picked at random each snap. Linemen block, rushers try to beat their block; spar
 | SHOTS | Out and Up | man |
 | SHOTS | Scissors | Cover 4 |
 | SHOTS | Hail Mary | last play |
+| QUICK | Hitch Seam | Cover 3 |
+| CORE | Mills | Cover 4 |
+| CROSSERS | Shallow | zone |
+| CROSSERS | Texas | man |
+| SHOTS | Corner Post | Cover 3 |
+| SHOTS | Deep Cross | Cover 1 |
 
 Against three or more wide receivers the defense subs a nickel back in for a linebacker.
 
@@ -103,7 +116,7 @@ Open the page on your phone, then *Add to Home Screen* for full-screen play.
 - `src/defense/calls.ts`: defensive alignment, zones, and the coverage/rush calls
 - `src/playbook/`: routes, formations, plays and categories
 - `src/game.ts`: input, aiming, camera, field/HUD drawing
-- `src/menu.ts`, `src/playart.ts`: the playbook menu and its play diagrams
+- `src/menu.ts`, `src/playart.ts`, `src/defart.ts`: the huddle (offensive and defensive playbooks, settings) and the play / coverage diagrams
 - `src/sprites.ts`, `src/font.ts`: pixel-art sprites and the 3x5 bitmap font
 - `src/view.ts`: portrait/landscape views (how the field maps onto the screen)
 - `src/settings.ts`: difficulty / game speed / aim mode, saved on the device

@@ -42,11 +42,16 @@ export function readReceiver(sim: Sim, r: Actor): { to: Vec; margin: number } {
 
 export class CpuQb {
   eyes: Actor | null = null;
+  /** Where he's looking, as an angle that turns smoothly (for the eyes arrow). */
+  eyeAngle = -Math.PI / 2;
+  /** Set once he's decided: he locks onto the receiver for a beat before letting it go. */
+  windup: { r: Actor; until: number } | null = null;
   private order: Actor[];
   private idx: number;
   private readStart = 0;
-  private readLen = rand(0.5, 0.8);
+  private readLen = rand(0.7, 1.0);
   private patience = rand(2.6, 3.6); // sim seconds before he just gets rid of it
+  private lastT = 0;
 
   /** picky: extra margin (px) he wants before throwing; higher = a more cautious, easier QB. */
   constructor(sim: Sim, private picky = 0) {
@@ -60,16 +65,29 @@ export class CpuQb {
   update(sim: Sim): Vec | null {
     if (sim.phase !== 'live' || !this.order.length) return null;
     const t = sim.t;
+    const dt = Math.max(0, t - this.lastT);
+    this.lastT = t;
+    this.turnEyes(sim, dt);
+
+    if (this.windup) { // locked on: throw when the windup is done, led to where he is now
+      this.eyes = this.windup.r;
+      if (t < this.windup.until) return null;
+      const to = readReceiver(sim, this.windup.r).to;
+      this.windup = null;
+      return this.aim(to);
+    }
+
     const r = this.order[this.idx];
     this.eyes = r;
     if (t < 0.7) return null; // catching the snap, settling his feet
+    const settled = t - this.readStart > 0.3; // he has to actually look at a man before throwing to him
     const read = readReceiver(sim, r);
     const need = (t < 1.6 ? 10 : t < 2.4 ? 5 : 1) + this.picky; // pickier early, less so as the pocket collapses
-    if (read.margin > need) return this.aim(read.to);
+    if (settled && read.margin > need) return this.commit(r, t);
     if (t - this.readStart > this.readLen) { // next read
       this.idx = (this.idx + 1) % this.order.length;
       this.readStart = t;
-      this.readLen = rand(0.45, 0.75);
+      this.readLen = rand(0.6, 0.9);
     }
     if ((sim.pressured && t > 1.2) || t > this.patience) {
       // out of time: best available
@@ -78,10 +96,26 @@ export class CpuQb {
         const rr = readReceiver(sim, o);
         if (rr.margin > best.margin) { best = rr; bestR = o; }
       }
-      this.eyes = bestR;
-      return this.aim(best.to);
+      return this.commit(bestR, t, sim.pressured ? 0.15 : 0.25);
     }
     return null;
+  }
+
+  private commit(r: Actor, t: number, wind = rand(0.28, 0.38)): null {
+    this.windup = { r, until: t + wind };
+    this.eyes = r;
+    return null;
+  }
+
+  /** The eyes arrow sweeps toward whoever he's reading, rather than jumping. */
+  private turnEyes(sim: Sim, dt: number): void {
+    if (!this.eyes) return;
+    const want = Math.atan2(this.eyes.y - sim.qb.y, this.eyes.x - sim.qb.x);
+    let d = want - this.eyeAngle;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    const step = (this.windup ? 14 : 5) * dt; // radians per sim-second
+    this.eyeAngle += clamp(d, -step, step);
   }
 
   private aim(to: Vec): Vec {

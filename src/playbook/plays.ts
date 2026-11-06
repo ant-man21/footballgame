@@ -189,6 +189,54 @@ export const PLAYS: Play[] = [
     ],
   },
   {
+    id: 'hitch-seam', name: 'HITCH SEAM', category: 'quick', formation: 'spread', vs: 'VS COVER 3',
+    routes: [
+      { who: 'X', route: 'hitch' }, { who: 'H', route: 'seam' },
+      { who: 'Y', route: 'seam' }, { who: 'Z', route: 'hitch' },
+      { who: 'RB', route: 'checkdown' },
+    ],
+  },
+  {
+    id: 'mills', name: 'MILLS', category: 'core', formation: 'spread', vs: 'VS COVER 4',
+    routes: [
+      { who: 'X', route: 'dig' }, { who: 'H', route: 'post' },
+      { who: 'Y', route: 'flat' }, { who: 'Z', route: 'curl' },
+      { who: 'RB', route: 'checkdown' },
+    ],
+  },
+  {
+    id: 'shallow', name: 'SHALLOW', category: 'crossers', formation: 'trips', vs: 'VS ZONE',
+    routes: [
+      { who: 'X', route: 'go' }, { who: 'Y', route: 'shallow' },
+      { who: 'H', route: 'dig' }, { who: 'Z', route: 'curl' },
+      { who: 'RB', route: 'checkdown' },
+    ],
+  },
+  {
+    id: 'texas', name: 'TEXAS', category: 'crossers', formation: 'ace', vs: 'VS MAN',
+    routes: [
+      { who: 'X', route: 'go' }, { who: 'Y', route: 'seam' },
+      { who: 'H', route: 'flat' }, { who: 'Z', route: 'dig' },
+      { who: 'RB', route: 'angle' },
+    ],
+  },
+  {
+    id: 'corner-post', name: 'CORNER POST', category: 'shots', formation: 'spread', vs: 'VS COVER 3',
+    routes: [
+      { who: 'X', route: 'cornerPost' }, { who: 'H', route: 'seam' },
+      { who: 'Y', route: 'flat' }, { who: 'Z', route: 'curl' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'deep-cross', name: 'DEEP CROSS', category: 'shots', formation: 'trips', vs: 'VS COVER 1',
+    routes: [
+      { who: 'X', route: 'post' }, { who: 'Y', route: 'deepOver' },
+      { who: 'H', route: 'flat' }, { who: 'Z', route: 'go' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
     id: 'four-verts', name: 'FOUR VERTS', category: 'shots', formation: 'spread', vs: 'VS COVER 3',
     routes: [
       { who: 'X', route: 'go' }, { who: 'H', route: 'seam' },
