@@ -38,6 +38,7 @@ export interface CareerGameSetup {
   opp: Roster;
   units: Record<Side, Units>; // quick-sim strength (simulated opponent drives)
   simDefense: boolean; // simulate the other team's drives instead of playing the MIKE
+  coachCalls: boolean; // the coach calls the plays; otherwise you call them in the huddle, as in an exhibition
   endAtHalf: boolean; // a two-minute drill: your stint ends at halftime
   label: string; // shown as you take the field
   onDone: (m: Match, stint?: TeamStats) => void; // stint: your team's stats when your part ended early
@@ -256,7 +257,7 @@ export class Game {
     this.camY = this.camBase();
     this.cpuTimeout();
 
-    if (cg && !this.autoplay) { this.careerHuddle(cg); return; }
+    if (cg && !this.autoplay && this.careerHuddle(cg)) return;
     if (this.onOffense) {
       if (this.autoplay) {
         if (d.down === 4 && !cpuGoesForIt(d, m.score.you - m.score.cpu, m.quarter, m.clock)) { this.showPunt(); return; }
@@ -273,11 +274,15 @@ export class Game {
     this.screen = 'huddle';
   }
 
-  /** Career games: the coach calls the plays (and the defense), or the other team's drive is simulated. */
-  private careerHuddle(cg: CareerGameSetup): void {
+  /**
+   * Career games: the coach calls the plays (and the defense), or the other team's drive is simulated.
+   * Returns false when you call your own plays: the normal huddle takes over.
+   */
+  private careerHuddle(cg: CareerGameSetup): boolean {
     const m = this.match, d = m.drive;
     if (this.onOffense) {
-      if (d.down === 4 && !cpuGoesForIt(d, m.score.you - m.score.cpu, m.quarter, m.clock)) { this.showPunt(); return; }
+      if (!cg.coachCalls) return false;
+      if (d.down === 4 && !cpuGoesForIt(d, m.score.you - m.score.cpu, m.quarter, m.clock)) { this.showPunt(); return true; }
       let play = callPlay(d);
       for (let i = 0; i < 3 && play.id === this.lastPlayId; i++) play = callPlay(d); // coach mixes it up
       this.play = play;
@@ -285,7 +290,7 @@ export class Game {
       this.lastPlayId = play.id;
       this.setupSnap();
       this.showToast(`COACH: ${play.name}`, C.white);
-      return;
+      return true;
     }
     if (cg.simDefense) {
       const before = m.score.cpu;
@@ -302,11 +307,13 @@ export class Game {
       this.screen = 'banner';
       this.bannerAt = this.clock;
       this.runoff = 0;
-      return;
+      return true;
     }
-    if (d.down === 4 && !cpuGoesForIt(d, m.score.cpu - m.score.you, m.quarter, m.clock)) { this.showPunt(); return; }
+    if (!cg.coachCalls) return false;
+    if (d.down === 4 && !cpuGoesForIt(d, m.score.cpu - m.score.you, m.quarter, m.clock)) { this.showPunt(); return true; }
     this.defCall = null; // the coordinator's call; you play the MIKE
     this.setupSnap();
+    return true;
   }
 
   /** Late in a half, a trailing CPU uses its timeouts to save the clock. */
@@ -446,7 +453,7 @@ export class Game {
     if (!this.onOffense) { this.stick = { origin: p, cur: p }; return; } // defense: joystick anywhere
 
     if (hit(this.modeButton, p)) { this.settings.aim = this.mode === 'pull' ? 'aim' : 'pull'; this.applySettings(); return; }
-    if (hit(this.playsButton, p) && !this.careerGame) { // back to the huddle to change the call
+    if (hit(this.playsButton, p) && !this.careerGame?.coachCalls) { // back to the huddle to change the call
       if (phase === 'presnap') this.startHuddle();
       return;
     }
@@ -883,7 +890,7 @@ export class Game {
       if (offense) {
         drawText(ctx, 'PLAY', lx, v.h - 34, { color: C.grey });
         drawText(ctx, this.play.name, lx, v.h - 26, { color: C.yellow });
-        button(ctx, this.playsButton, this.careerGame ? 'COACH' : 'PLAYS', live || this.careerGame ? C.darkGrey : C.white);
+        button(ctx, this.playsButton, this.careerGame?.coachCalls ? 'COACH' : 'PLAYS', live || this.careerGame?.coachCalls ? C.darkGrey : C.white);
         if (sim.phase === 'presnap') button(ctx, this.flipButton, this.flipped ? 'FLIPPED' : 'FLIP', this.flipped ? C.yellow : C.white);
         drawText(ctx, 'MODE', v.w - v.panel / 2, v.h - 26, { align: 'center', color: C.grey });
         button(ctx, this.modeButton, this.mode.toUpperCase(), C.white);
@@ -906,7 +913,7 @@ export class Game {
         drawText(ctx, offense ? d.spotText : flipSpot(d.spotText), 85, 11);
       }
       if (offense) {
-        button(ctx, this.playsButton, this.careerGame ? 'COACH' : 'PLAYS', live || this.careerGame ? C.darkGrey : C.white);
+        button(ctx, this.playsButton, this.careerGame?.coachCalls ? 'COACH' : 'PLAYS', live || this.careerGame?.coachCalls ? C.darkGrey : C.white);
         if (sim.phase === 'presnap') button(ctx, this.flipButton, this.flipped ? 'FLIPPED' : 'FLIP', this.flipped ? C.yellow : C.white);
         button(ctx, this.modeButton, `MODE ${this.mode.toUpperCase()}`, C.white);
         drawText(ctx, this.play.name, (this.playsButton.x + this.playsButton.w + this.modeButton.x) / 2, v.h - 12,

@@ -28,5 +28,6 @@ export function migrate(s: { v?: number } & Record<string, unknown>): CareerSave
   if (s.v !== CAREER_VERSION) return null;
   const c = s as unknown as CareerSave;
   if (!c.player || !Array.isArray(c.teams) || !Array.isArray(c.games)) return null;
+  if (c.calls !== 'you') c.calls = 'coach'; // added after v1 shipped
   return c;
 }

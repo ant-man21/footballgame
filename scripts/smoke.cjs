@@ -332,6 +332,29 @@ const OUT = process.env.SHOT_DIR || '.';
     return { ...out, scr: ui.screen };
   });
   check(simd.kind === 'full' && / DRIVE$/.test(simd.banner || '') && simd.scr === 'result', `DEFENSE: SIMULATED: ${simd.banner} (${simd.detail}); SIM REST OF GAME finishes it`);
+  // PLAYS: YOU CALL: a career game runs like an exhibition, with your own calls in the huddle on both sides
+  const ycl = await G(() => { const ui = window.__careerUI; ui.screen = 'hub'; window.__game.showCareer(ui); return ui.hubLayout(window.__game.view).calls; });
+  await tap({ x: ycl.x + ycl.w / 2, y: ycl.y + ycl.h / 2 });
+  check(await G(() => window.__careerUI.career.s.calls === 'you' && JSON.parse(localStorage.getItem('footballgame.career.v1')).calls === 'you'), 'PLAYS: YOU CALL toggles on the hub and saves');
+  const own = await G(() => {
+    const ui = window.__careerUI, g = window.__game, c = ui.career;
+    c.s.role = 'starter'; c.s.defense = 'play';
+    ui.gameDay(); ui.play();
+    g.match.offense = 'you'; g.startHuddle();
+    const offHuddle = g.screen === 'huddle' && g.menu && g.menu.layout(g.view).cards.length > 0;
+    const card = g.menu.layout(g.view).cards[1];
+    return { offHuddle, card: { x: card.r.x + card.r.w / 2, y: card.r.y + card.r.h / 2, id: card.it.play.id } };
+  });
+  check(own.offHuddle, 'with YOU CALL, a career game opens the huddle on offense');
+  await tap({ x: own.card.x, y: own.card.y });
+  const own2 = await G((id) => {
+    const g = window.__game; const ok = g.screen === 'play' && g.play.id === id && g.sim.phase === 'presnap';
+    g.match.offense = 'cpu'; g.match.drive.down = 1; g.startHuddle();
+    const def = g.screen === 'huddle' && g.menu && g.menu.layout(g.view).cards.some((c) => c.it.call);
+    g.simRestOfCareerGame(); window.__careerUI.career.s.calls = 'coach';
+    return { ok, def };
+  }, own.card.id);
+  check(own2.ok && own2.def, `...your pick (${own.card.id}) lines up, and you call the defense too`);
   // the rest of the season (quick-simmed stints), the playoffs, the summary, the junior year
   const season = await G(() => {
     const ui = window.__careerUI, c = ui.career, Q = window.__quicksim; let n = 0;

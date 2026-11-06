@@ -102,7 +102,7 @@ export class CareerScreens {
     this.game.playCareerGame({
       match: plan.match, you: c.rosterWithYou(), opp: c.opponentRoster(plan.opp, shift),
       units: { you: plan.units.you, cpu: { off: plan.units.cpu.off + shift, def: plan.units.cpu.def + shift } },
-      simDefense: c.s.defense === 'sim', endAtHalf: plan.endAtHalf, label: plan.label,
+      simDefense: c.s.defense === 'sim', coachCalls: c.s.calls !== 'you', endAtHalf: plan.endAtHalf, label: plan.label,
       onDone: (_m, stint) => this.finish(stint),
     });
   }
@@ -151,6 +151,7 @@ export class CareerScreens {
         if (hit(L.stats, p)) this.screen = 'stats';
         if (hit(L.team, p)) this.game.showRosterOf(c.rosterWithYou());
         if (hit(L.defense, p)) { c.s.defense = c.s.defense === 'play' ? 'sim' : 'play'; this.save(); }
+        if (hit(L.calls, p)) { c.s.calls = c.s.calls === 'you' ? 'coach' : 'you'; this.save(); }
         if (hit(L.menu, p)) this.game.showTitle();
         return;
       }
@@ -235,7 +236,7 @@ export class CareerScreens {
       return {
         left: { x: 4, w: lw }, focusY: 4, focusL: r(rx, 12, 20, 16), focusR: r(rx + rw - 20, 12, 20, 16),
         gameDay: r(rx, 34, rw, 22), schedule: r(rx, 62, half, 16), standings: r(rx + half + 4, 62, half, 16),
-        stats: r(rx, 82, half, 16), team: r(rx + half + 4, 82, half, 16), defense: r(rx, 106, rw, 14), menu: r(rx + rw / 2 - 30, v.h - 18, 60, 14),
+        stats: r(rx, 82, half, 16), team: r(rx + half + 4, 82, half, 16), defense: r(rx, 106, half, 14), calls: r(rx + half + 4, 106, half, 14), menu: r(rx + rw / 2 - 30, v.h - 18, 60, 14),
         panels: { head: 4, next: 26, depth: 64, you: 96 },
       };
     }
@@ -243,7 +244,7 @@ export class CareerScreens {
     return {
       left: { x, w }, focusY: 176, focusL: r(x, 184, 22, 16), focusR: r(x + w - 22, 184, 22, 16),
       gameDay: r(x, 208, w, 24), schedule: r(x, 238, half, 16), standings: r(x + half + 4, 238, half, 16),
-      stats: r(x, 258, half, 16), team: r(x + half + 4, 258, half, 16), defense: r(x, 280, w, 14), menu: r(v.w / 2 - 30, 302, 60, 14),
+      stats: r(x, 258, half, 16), team: r(x + half + 4, 258, half, 16), defense: r(x, 280, half, 14), calls: r(x + half + 4, 280, half, 14), menu: r(v.w / 2 - 30, 302, 60, 14),
       panels: { head: 4, next: 30, depth: 76, you: 120 },
     };
   }
@@ -388,7 +389,8 @@ export class CareerScreens {
     button(ctx, L.standings, c.isPlayoffs ? 'PLAYOFFS' : 'STANDINGS');
     button(ctx, L.stats, 'STATS');
     button(ctx, L.team, 'TEAM', C.blue);
-    button(ctx, L.defense, s.defense === 'play' ? 'DEFENSE: YOU PLAY MIKE LB' : 'DEFENSE: SIMULATED', C.grey);
+    button(ctx, L.defense, s.defense === 'play' ? 'DEF: PLAY MIKE' : 'DEF: SIMULATED', C.grey);
+    button(ctx, L.calls, s.calls === 'you' ? 'PLAYS: YOU CALL' : 'PLAYS: COACH', s.calls === 'you' ? C.yellow : C.grey);
     button(ctx, L.menu, 'MENU', C.grey);
   }
 
@@ -411,7 +413,7 @@ export class CareerScreens {
     }
     y += 6;
     const tips = [
-      'THE COACH CALLS THE PLAYS. TOUCH TO SNAP, AIM AND THROW.',
+      c.s.calls === 'you' ? 'YOU CALL THE PLAYS IN THE HUDDLE. TOUCH TO SNAP, AIM AND THROW.' : 'THE COACH CALLS THE PLAYS. TOUCH TO SNAP, AIM AND THROW.',
       c.s.defense === 'play' ? 'ON DEFENSE YOU PLAY THE MIKE: DRAG TO TAKE OVER.' : 'THE OTHER TEAM\'S DRIVES ARE SIMULATED.',
     ];
     if (plan.endAtHalf) tips.push('YOUR STINT ENDS AT HALFTIME.');

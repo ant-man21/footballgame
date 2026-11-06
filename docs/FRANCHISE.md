@@ -12,6 +12,7 @@ Answered by the owner (Nov 2026):
 - **Game day: keep the defense.** You play your offense as the QB *and* the MIKE linebacker on defense, as in the exhibition. A hub toggle simulates the opponent's drives instead for players who'd rather skip defense.
 - **10 games + an 8-team state playoff. No high school transfers.**
 - **The coach calls the plays in high school** (offense and defense). You run them (FLIP still works). No other team management.
+- **Option: call your own plays** (owner, follow-up): a hub toggle, PLAYS: COACH / YOU CALL. With YOU CALL a career game plays exactly like an exhibition: the huddle on both sides, you at QB and the MIKE. KICKOFF on the title screen is still the plain exhibition game.
 - **Logos: a later session fetches them**; generated pixel badges until then.
 
 Original proposals:
@@ -84,7 +85,7 @@ Reuses the league engine: recruiting a whole class, roster management, depth cha
 - **QB battle meter**: game grades (passer-rating based, ~60 = an average line), practice and the ratings gap vs the starter. A sophomore can't take a senior's job (meter capped at 90); juniors start from last year's trust and win the job at 100 (about 70% do, around week 6 in `career.cjs`). Seniors start.
 - **Stars** (1-5) after each season from ratings for your class, production and wins; season awards (region champion, all-region / all-state QB, state champion).
 - **Screens**: start (continue / new), create, hub, game day intro, week result (with around-the-state scores), schedule, standings + bracket, stats (season, game log, career), season summary, graduated. Portrait and landscape.
-- **On the field**: coach-called plays (no huddle), team abbreviations in the HUD, your defense or simulated opponent drives, SIM REST OF GAME in the pause menu.
+- **On the field**: coach-called plays (no huddle) or your own calls (PLAYS: YOU CALL), team abbreviations in the HUD, your defense or simulated opponent drives, SIM REST OF GAME in the pause menu.
 
 ### Next (rest of milestone 2)
 - **Recruiting**: interest from colleges from the junior year, offers by tier (needs `data/colleges.json`, i.e. starts milestone 3's data), visits, commitment, signing day. The star rating already exists.

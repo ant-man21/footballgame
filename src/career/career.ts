@@ -64,6 +64,7 @@ export interface CareerSave {
   phase: 'season' | 'summary' | 'done'; // summary: the season is over, showing it
   roster: Roster; // your team this season (the QB slot is filled with you when you play)
   defense: 'play' | 'sim'; // on game day: play the MIKE linebacker, or simulate the other team's drives
+  calls: 'coach' | 'you'; // who calls the plays: the coach, or you in the huddle (like an exhibition game)
   quarter: number; // quarter length in seconds for this career's games
 }
 
@@ -103,7 +104,7 @@ export class Career {
     const s: CareerSave = {
       v: CAREER_VERSION, seed, state: state.id, player, teams, schoolId: school.id, year: 0, week: 1,
       games: [], focus: 'acc', role: 'backup', battle: 15, starter: null, log: [], dry: 0, phase: 'season',
-      roster: makeRoster(school.name, 0, HS_TIER), defense: 'play', quarter: quarterSeconds,
+      roster: makeRoster(school.name, 0, HS_TIER), defense: 'play', calls: 'coach', quarter: quarterSeconds,
     };
     const c = new Career(s);
     c.startSeason(new Rng(seed + 1));
