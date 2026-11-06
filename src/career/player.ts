@@ -123,9 +123,20 @@ export function gradeGame(s: TeamStats, won: boolean | null): number {
   return Math.round(clamp(50 + (g - 50) * weight, 0, 100));
 }
 
-/** Recruiting stars (1-5): how good you are for your class, what you've done, and how your team did. */
-export function starRating(p: CareerPlayer, year: number, seasonGrade: number, wins: number, started: boolean): number {
-  const classNorm = qbNormOvr(HS_TIER) - 4 + year * 4; // what a solid QB of your class looks like
-  const score = (qbOvr(p) - classNorm) * 2.2 + (seasonGrade - 55) * (started ? 0.5 : 0.15) + (started ? wins * 0.8 : 0);
-  return score >= 32 ? 5 : score >= 22 ? 4 : score >= 10 ? 3 : score >= 0 ? 2 : 1;
+/** What a solid QB of your class looks like (overall), rising through the year (year 0 = sophomore, week 1-14). */
+export const classNorm = (year: number, week = 1) => qbNormOvr(HS_TIER) - 4 + (year + clamp((week - 1) / 14, 0, 1)) * 4;
+
+/**
+ * Production for recruiting: how you played (grades count fully once you've
+ * started 5 games), wins as the starter, playoff wins and a state title.
+ */
+export function production(avgGrade: number, starts: number, winsAsStarter: number, playoffWins: number, champion: boolean): number {
+  return (avgGrade - 55) * 0.5 * clamp(starts / 5, 0.3, 1) + winsAsStarter * 0.8 + playoffWins * 1.5 + (champion ? 4 : 0);
+}
+
+/** A finished season's production (for saves from before recruiting tracked it week by week). */
+export function seasonProduction(sl: SeasonLine): number {
+  const [w, l] = sl.record.split('-').map(Number);
+  const share = sl.gs / Math.max(1, w + l);
+  return production(gradeGame(sl.stats, null), sl.gs, Math.round(w * share), 0, sl.finish === 'STATE CHAMPIONS' && sl.gs >= 5);
 }

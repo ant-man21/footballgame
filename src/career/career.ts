@@ -15,8 +15,9 @@ import {
 } from './league';
 import {
   type Archetype, type CareerPlayer, type Focus, HS_TIER, asRosterPlayer, createPlayer, gameXp, gradeGame, offseason,
-  practice, qbNormOvr, qbOvr, starRating,
+  classNorm, practice, production, qbNormOvr, qbOvr, seasonProduction,
 } from './player';
+import { type RecruitState, college, newRecruiting, recruitingWeek, rollNeeds, starsFor } from './recruiting';
 import { type Units, overtimeWinner, simGame, simToEnd, simUntil } from './quicksim';
 import { Rng, newSeed } from './rng';
 import { CAREER_VERSION, saveCareer } from './save';
@@ -61,7 +62,9 @@ export interface CareerSave {
   starter: { name: string; ovr: number } | null; // the QB ahead of you
   log: WeekLog[]; // your team's games this season
   dry: number; // weeks in a row you didn't get in (backups)
-  phase: 'season' | 'summary' | 'done'; // summary: the season is over, showing it
+  phase: 'season' | 'summary' | 'signing' | 'done'; // summary: the season is over, showing it; signing: signing day
+  recruit: RecruitState; // colleges recruiting you
+  recruitFeed: string[]; // recent recruiting news, newest first
   roster: Roster; // your team this season (the QB slot is filled with you when you play)
   defense: 'play' | 'sim'; // on game day: play the MIKE linebacker, or simulate the other team's drives
   calls: 'coach' | 'you'; // who calls the plays: the coach, or you in the huddle (like an exhibition game)
@@ -85,7 +88,9 @@ const STARTER_FIRST = 'ABCDEFGHJKLMNPRSTW';
 const STARTER_LAST = ['BAKER', 'COLLINS', 'DUNN', 'EVANS', 'FISHER', 'GRIFFIN', 'HUNT', 'JENKINS', 'KELLY', 'LYNCH', 'MURPHY', 'PARKER', 'RYAN', 'SIMS', 'TUCKER', 'WOODS'];
 
 export class Career {
-  constructor(public s: CareerSave) {}
+  constructor(public s: CareerSave) {
+    if (!s.recruit) this.catchUpRecruiting(); // a save from before recruiting existed
+  }
 
   static create(first: string, last: string, stateId: string, archetype: Archetype, quarterSeconds: number): Career {
     const seed = newSeed();
@@ -104,7 +109,7 @@ export class Career {
     const s: CareerSave = {
       v: CAREER_VERSION, seed, state: state.id, player, teams, schoolId: school.id, year: 0, week: 1,
       games: [], focus: 'acc', role: 'backup', battle: 15, starter: null, log: [], dry: 0, phase: 'season',
-      roster: makeRoster(school.name, 0, HS_TIER), defense: 'play', calls: 'coach', quarter: quarterSeconds,
+      roster: makeRoster(school.name, 0, HS_TIER), recruit: newRecruiting(), recruitFeed: [], defense: 'play', calls: 'coach', quarter: quarterSeconds,
     };
     const c = new Career(s);
     c.startSeason(new Rng(seed + 1));
@@ -248,6 +253,7 @@ export class Career {
       line, grade, battle, gains, news,
     };
     s.log.push(log);
+    this.recruitingUpdate(news, 1);
     this.simWeek(rec.week);
     this.advance(news);
     saveCareer(s);
@@ -336,7 +342,7 @@ export class Career {
     const avg = graded ? gradeSum / graded : 50;
     const rec = this.record();
     const finish = this.finish();
-    const stars = starRating(p, s.year, avg, rec.w, gs >= 5);
+    const stars = s.recruit.stars;
     const region = regionOrder(s.teams, s.games.filter((g) => !g.round), this.school.region);
     const awards: string[] = [];
     if (finish === 'STATE CHAMPIONS') awards.push('STATE CHAMPION');
@@ -356,9 +362,15 @@ export class Career {
   nextSeason(): void {
     const s = this.s;
     if (s.phase !== 'summary') return;
-    if (s.year >= HS_YEARS - 1) { s.phase = 'done'; saveCareer(s); return; }
+    if (s.year >= HS_YEARS - 1) { // the weeks before signing day: late offers for late bloomers
+      this.recruitingUpdate([], 4);
+      s.phase = 'signing';
+      saveCareer(s);
+      return;
+    }
     const rng = new Rng(s.seed + 100 * (s.year + 2));
     offseason(this.player);
+    rollNeeds(s.recruit);
     for (const t of s.teams) {
       const st = standings(s.teams, s.games).get(t.id)!;
       t.prestige = Math.round(clamp(t.prestige * 0.85 + (st.w / Math.max(1, st.w + st.l)) * 100 * 0.15, 0, 100));
@@ -366,6 +378,78 @@ export class Career {
     }
     s.year++;
     this.startSeason(rng);
+    this.recruitingUpdate([], 4); // the summer: camps, visits, film
+    saveCareer(s);
+  }
+
+  // ---------- recruiting ----------
+
+  /** Your recruiting score right now: your ratings for your class, plus how you're playing (this season, then last). */
+  recruitScore(): number {
+    const s = this.s, p = this.player;
+    const talent = (qbOvr(p) - classNorm(s.year, s.week)) * 2.2;
+    const graded = s.log.filter((l) => l.grade !== null);
+    const starts = s.log.filter((l) => l.kind === 'full');
+    const avg = graded.length ? graded.reduce((t, l) => t + l.grade!, 0) / graded.length : 55;
+    const champ = starts.some((l) => l.round === 'F' && l.us > l.them);
+    const now = production(avg, starts.length, starts.filter((l) => l.us > l.them).length,
+      starts.filter((l) => l.round && l.us > l.them).length, champ);
+    const last = p.seasons[p.seasons.length - 1];
+    const prev = last ? seasonProduction(last) : 0;
+    const w = clamp(graded.length / 6, 0, 1);
+    return Math.round((talent + w * now + (1 - w) * prev) * 10) / 10;
+  }
+
+  /** Re-scores you and runs weeks of college interest; adds the news. */
+  private recruitingUpdate(news: string[], weeks: number): void {
+    const s = this.s, r = s.recruit;
+    const before = r.stars;
+    r.score = this.recruitScore();
+    r.stars = starsFor(r.score);
+    if (r.stars !== before && before > 0) news.push(r.stars > before ? `NOW A ${r.stars}-STAR RECRUIT!` : `DOWN TO ${r.stars} STARS`);
+    for (let i = 0; i < weeks; i++) news.push(...recruitingWeek(r, s.state, s.year >= 1));
+    const fresh = news.filter((n) => n.startsWith('OFFER') || n.includes('STAR'));
+    s.recruitFeed = [...fresh.reverse(), ...s.recruitFeed].slice(0, 10);
+  }
+
+  /** Commit to a school that offered (or take back a commitment with null). */
+  commit(id: string | null): void {
+    const r = this.s.recruit;
+    if (r.signed || (id && !r.offers.includes(id))) return;
+    r.committed = id;
+    this.s.recruitFeed = [id ? `COMMITTED TO ${college(id)!.name}` : 'DECOMMITTED', ...this.s.recruitFeed].slice(0, 10);
+    saveCareer(this.s);
+  }
+
+  /** Signing day: sign with a school (an offer, or a walk-on spot). High school is over. */
+  sign(id: string): void {
+    const r = this.s.recruit;
+    if (this.s.phase !== 'signing' || !college(id)) return;
+    r.signed = id;
+    r.committed = id;
+    this.player.awards.push(`SIGNED: ${college(id)!.name}${r.offers.includes(id) ? '' : ' (WALK-ON)'}`);
+    this.s.phase = 'done';
+    saveCareer(this.s);
+  }
+
+  /** Saves from before recruiting: start it and give it the weeks it missed. */
+  private catchUpRecruiting(): void {
+    const s = this.s;
+    s.recruit = newRecruiting();
+    s.recruitFeed = [];
+    const r = s.recruit;
+    r.score = this.recruitScore();
+    r.stars = starsFor(r.score);
+    const weeksThisYear = s.phase === 'season' ? s.week - 1 : 14;
+    // sophomore weeks: noticed, no offers; then every summer and junior/senior week can bring offers
+    const soWeeks = s.year === 0 ? weeksThisYear : 11;
+    const offerWeeks = s.year === 0 ? 0 : s.year === 1 ? 4 + weeksThisYear : 4 + 11 + 4 + weeksThisYear;
+    for (let i = 0; i < soWeeks; i++) recruitingWeek(r, s.state, false);
+    const news: string[] = [];
+    for (let i = 0; i < offerWeeks; i++) news.push(...recruitingWeek(r, s.state, true));
+    s.recruitFeed = news.filter((n) => n.startsWith('OFFER')).reverse().slice(0, 10);
+    if (s.phase === 'done' && !r.signed) s.phase = 'signing'; // graduated before signing day existed
+    saveCareer(s);
   }
 }
 

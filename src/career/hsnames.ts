@@ -63,7 +63,8 @@ export function makeSchools(state: StateDef, n: number, rng: Rng): SchoolIdentit
     const reg = rng.next() < 0.8 ? state.region : rng.pick(Object.keys(PREFIX) as Region[]);
     let name = rng.pick(PREFIX[reg]) + rng.pick(SUFFIX[reg]);
     if (rng.next() < 0.12) name = `${rng.pick(DIRECTION)} ${name}`;
-    if (name.length > 14 || used.has(name)) continue;
+    const words = name.split(' ');
+    if (name.length > 14 || used.has(name) || new Set(words).size < words.length) continue; // no STAR STAR
     const mascot = rng.pick(MASCOTS);
     if (mascots.has(mascot) && mascots.size < MASCOTS.length - 4) continue;
     const abbr = makeAbbr(name, abbrs);

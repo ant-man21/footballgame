@@ -8,7 +8,7 @@ Vite + TypeScript, plain Canvas 2D, no framework, no runtime dependencies.
 Live at https://ant-man21.github.io/footballgame/ (GitHub Pages, deployed on every push to `main`).
 The owner plays on an iPhone (portrait and landscape) and tunes by feel; keep changes testable on a phone.
 
-Current phase: **franchise / career mode** (plan and status in `docs/FRANCHISE.md`). Milestone 1 (foundation) is built and the high school career is playable: create a QB, three seasons, the QB battle, state playoffs. Recruiting, camps and college are next.
+Current phase: **franchise / career mode** (plan and status in `docs/FRANCHISE.md`). Milestone 1 (foundation) is built and the high school career is playable: create a QB, three seasons, the QB battle, state playoffs, recruiting (live stars, offers from real colleges, commit, signing day). Camps and the college career are next.
 
 ## Commands
 ```sh
@@ -56,6 +56,8 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
 | `career/league.ts` | Teams, the 10-game schedule (3 non-region + 7-game region round robin), standings + tiebreakers, 8-team playoff bracket. |
 | `career/quicksim.ts` | The quick-sim: drives a real `Match` with generated play outcomes from team unit ratings (`simPlay`, `simDrive`, `simUntil`, `simToEnd`, `simGame`). Calibrated against auto-play. |
 | `career/player.ts` | Your QB: creation (archetypes), practice/game/off-season progression, game grades, passer rating, star rating. `HS_TIER`. |
+| `career/recruiting.ts` | Colleges recruiting you: `COLLEGES` (from `src/data/colleges.json`), each school's `bar()` (the recruiting score it wants), weekly interest and offers (`recruitingWeek`), stars from the score (`starsFor`), the board, walk-on spots. |
+| `data/colleges.json` | Every FBS school and ~100 FCS schools: name, abbreviation, mascot, conference (2026), tier P4/G5/FCS, prestige, state, colours, logo path. All college identity lives here. |
 | `career/hsnames.ts`, `career/rng.ts`, `career/save.ts` | Generated schools per state/region, seeded RNG, the versioned save (`footballgame.career.v1`, `migrate()`). |
 | `ui/career.ts`, `ui/kit.ts` | The career screens (start, create, hub, game day, result, schedule, standings/bracket, stats, summary, graduated) and drawing helpers (buttons, badges, meters, stars). |
 
@@ -73,7 +75,7 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
 
 ## Testing and balance
 - `scripts/smoke.cjs`: Playwright on emulated Pixel 7 (portrait + landscape) with real touch events (CDP). Covers the title screen, TEAM screen, huddle, both aim modes, run after catch, sacks, punts, defense with the joystick, pause/timeouts/settings/restart, clock rules, hashes/FLIP, a full auto-played game, every call vs every play fielding 11 v 11, and the career (create, practice focus, a backup scenario on the field with coach calls, result, save round-trip through a reload, simulated defense, a season into the playoffs, the next season). Keep it green; extend it for new features.
-- Test handles: `window.__careerUI` (the career screens: `create()`, `gameDay()`, `play()`, `career`), `window.__quicksim`.
+- Test handles: `window.__careerUI` (the career screens: `create()`, `gameDay()`, `play()`, `career`, `toHubForTest()`), `window.__quicksim`, `window.__recruiting`.
 - `scripts/balance/` (run with the preview server up; `GAME_URL` overrides the URL):
   - `season.cjs N`: auto-play N games (CPU brain both sides): yards/play, plays/TD, completion %, INT %, sacks, plays/game.
   - `difficulty.cjs`: the same per difficulty, with team overalls.
@@ -82,12 +84,12 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
   - `rb-vs-man.cjs`: running back separation/completion vs man and zone.
   - `bunching.cjs`: defenders standing still / bunched in the middle.
   - `drives.cjs N`, `quicksim.cjs N runoff`, `career.cjs N`: see Commands. Retune the quick-sim (`career/quicksim.ts`) whenever on-field balance changes.
-- Career targets (career.cjs): a sophomore backup gets in ~4 of 11 games; ~70% win the job as a junior (~week 6); seniors average ~3.5-4 stars; quick-sim drive outcomes within a few % of drives.cjs.
+- Career targets (career.cjs): a sophomore backup gets in ~4 of 11 games; ~70% win the job as a junior (~week 6); seniors average ~3.5 stars; ~10-13 offers per career (2-stars mostly FCS, 3-stars G5 / low P4, 4-5 stars P4); quick-sim drive outcomes within a few % of drives.cjs.
 - Current targets (auto-play, even rosters, Pro): ~7-9 yards/play, ~11-14 plays/TD, ~65-70% completions, ~1-3% INT. Quick routes ~60-80% vs zone, ~50% vs man; deep ~35-40%. Human players have been landing a bit higher (they read coverage well).
 
 ## Gotchas
 - `tsc` runs with `noUnusedLocals`/`noUnusedParameters`: remove unused imports.
 - Tests mutate game state directly through `window.__game`; when adding state to `Game`, make sure `startHuddle()`/`newGame()` reset it.
 - Random outcomes make single test runs flaky if a check depends on a specific result (an interception flips possession). Force the state you need (`g.match.offense = 'you'`, `sim.forceCall = '...'`) before such checks.
-- `localStorage` keys: `footballgame.settings`, `footballgame.roster`, `footballgame.career.v1` (has a `v` field: bump `CAREER_VERSION` and add a `migrate()` step when `CareerSave` changes). Bump/validate shapes when they change (see `loadSettings`).
+- `localStorage` keys: `footballgame.settings`, `footballgame.roster`, `footballgame.career.v1` (has a `v` field, now 2: bump `CAREER_VERSION` and add a `migrate()` step when `CareerSave` changes; v1 saves get recruiting started and caught up in the `Career` constructor). Bump/validate shapes when they change (see `loadSettings`).
 - Career state lives in `CareerSave` (plain JSON). A `GamePlan` in progress is not saved: closing the app mid-game replays that week.

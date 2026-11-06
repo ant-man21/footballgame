@@ -3,7 +3,7 @@
 import type { CareerSave } from './career';
 
 export const CAREER_KEY = 'footballgame.career.v1';
-export const CAREER_VERSION = 1;
+export const CAREER_VERSION = 2;
 
 export function loadCareer(): CareerSave | null {
   try {
@@ -24,7 +24,8 @@ export function deleteCareer(): void {
 /** Brings an older save up to date; null if it can't be read. */
 export function migrate(s: { v?: number } & Record<string, unknown>): CareerSave | null {
   if (!s || typeof s !== 'object' || typeof s.v !== 'number') return null;
-  // (future: if (s.v === 1) { ...; s.v = 2; })
+  // v1 -> v2: recruiting (the Career constructor starts it and catches it up when it's missing)
+  if (s.v === 1) s.v = 2;
   if (s.v !== CAREER_VERSION) return null;
   const c = s as unknown as CareerSave;
   if (!c.player || !Array.isArray(c.teams) || !Array.isArray(c.games)) return null;

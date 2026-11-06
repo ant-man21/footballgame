@@ -370,6 +370,51 @@ const OUT = process.env.SHOT_DIR || '.';
   await tap({ x: 90, y: 312 }); // OFF-SEASON
   const jr = await G(() => { const c = window.__careerUI.career; return { yr: c.s.year, wk: c.s.week, games: c.s.games.filter((g) => g.hs === undefined).length, scr: window.__careerUI.screen }; });
   check(jr.yr === 1 && jr.wk === 1 && jr.games === 80 && jr.scr === 'hub', 'OFF-SEASON: on to the junior year with a new schedule');
+  // Recruiting: stars move week to week, colleges offer, commit from the board, signing day after the senior year
+  const jrRec = await G(() => {
+    const ui = window.__careerUI, c = ui.career, Q = window.__quicksim; const scores = []; let n = 0;
+    while (c.s.phase === 'season' && n++ < 20) { const p = c.prepareGame(); if (p.kind !== 'none') Q.simToEnd(p.match, p.units); c.finishGame(p); scores.push(c.s.recruit.score); }
+    return { scores, watching: Object.values(c.s.recruit.interest).filter((v) => v >= 5).length, stars: c.s.recruit.stars };
+  });
+  check(new Set(jrRec.scores).size > 3 && jrRec.watching > 0, `junior year: the recruiting score moves every week (${jrRec.scores.slice(0, 4).join(', ')}...), ${jrRec.watching} colleges watching, ${jrRec.stars} stars`);
+  const rb = await G(() => { const ui = window.__careerUI; ui.career.nextSeason(); ui.screen = 'hub'; window.__game.showCareer(ui); return ui.hubLayout(window.__game.view).recruiting; });
+  await tap({ x: rb.x + rb.w / 2, y: rb.y + rb.h / 2 });
+  const row = await G(() => {
+    const ui = window.__careerUI, rs = ui.career.s.recruit;
+    const rows = ui.recruitRows(window.__game.view);
+    if (!rows.length) return null;
+    if (!rs.offers.includes(rows[0].c.id)) rs.offers.push(rows[0].c.id); // make sure there's an offer to commit to
+    const rr = ui.recruitRows(window.__game.view).find((x) => rs.offers.includes(x.c.id));
+    return { id: rr.c.id, x: rr.r.x + rr.r.w / 2, y: rr.r.y + rr.r.h / 2, scr: ui.screen, offers: rs.offers.length };
+  });
+  check(row && row.scr === 'recruiting', `RECRUITING opens the board (${row && row.offers} offers)`);
+  await page.screenshot({ path: `${OUT}/smoke-career-recruiting.png` });
+  await tap({ x: row.x, y: row.y }); await tap({ x: row.x, y: row.y }); // tap twice to commit
+  check(await G((id) => window.__careerUI.career.s.recruit.committed === id && JSON.parse(localStorage.getItem('footballgame.career.v1')).recruit.committed === id, row.id), `tap an offer twice: committed to ${row.id} (saved)`);
+  const sr = await G(() => {
+    const ui = window.__careerUI, c = ui.career, Q = window.__quicksim; let n = 0;
+    while (c.s.phase === 'season' && n++ < 20) { const p = c.prepareGame(); if (p.kind !== 'none') Q.simToEnd(p.match, p.units); c.finishGame(p); }
+    const summary = c.s.phase; c.nextSeason(); ui.toHubForTest();
+    return { summary, phase: c.s.phase, scr: ui.screen, year: c.s.year };
+  });
+  check(sr.summary === 'summary' && sr.phase === 'signing' && sr.scr === 'signing' && sr.year === 2, 'after the senior season: SIGNING DAY');
+  await page.screenshot({ path: `${OUT}/smoke-career-signing.png` });
+  const sg = await G(() => { const ui = window.__careerUI, rr = ui.signingRows(window.__game.view)[0]; return { id: rr.c.id, x: rr.r.x + rr.r.w / 2, y: rr.r.y + rr.r.h / 2 }; });
+  await tap({ x: sg.x, y: sg.y }); await tap({ x: sg.x, y: sg.y });
+  check(await G((id) => { const c = window.__careerUI.career; return c.s.phase === 'done' && c.s.recruit.signed === id && window.__careerUI.screen === 'done'; }, sg.id), `signed with ${sg.id}: high school is done`);
+  await page.screenshot({ path: `${OUT}/smoke-career-done.png` });
+  // a save from before recruiting (v1, mid senior year) is upgraded and caught up
+  await G(() => {
+    const s = JSON.parse(localStorage.getItem('footballgame.career.v1'));
+    delete s.recruit; delete s.recruitFeed; s.v = 1; s.phase = 'season'; s.week = 6;
+    s.player.awards = s.player.awards.filter((a) => !a.startsWith('SIGNED'));
+    localStorage.setItem('footballgame.career.v1', JSON.stringify(s));
+  });
+  await page.reload();
+  await G(() => { window.__game.onCareer(); });
+  const mig = await G(() => { const ui = window.__careerUI, c = ui.career, s = JSON.parse(localStorage.getItem('footballgame.career.v1'));
+    return c && { v: c.s.v, saved: s.v, stars: c.s.recruit.stars, watching: Object.values(c.s.recruit.interest).filter((x) => x >= 5).length, offers: c.s.recruit.offers.length }; });
+  check(mig && mig.v === 2 && mig.saved === 2 && mig.stars >= 1 && mig.watching > 0, `an old (v1) save mid senior year gets recruiting caught up: ${mig && mig.stars} stars, ${mig && mig.offers} offers`);
   await G(() => { window.__game.showTitle(); });
 
   // 8. Landscape: turn the phone sideways; same game, bigger field between side panels.

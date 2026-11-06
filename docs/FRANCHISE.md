@@ -1,6 +1,6 @@
 # Franchise / career mode: plan
 
-Status: **milestone 1 built; milestone 2 (high school) playable, recruiting not yet built.** See "Status" at the end for what exists and what's next.
+Status: **milestone 1 built; milestone 2 (high school) playable, including recruiting; camps not yet built.** See "Status" at the end for what exists and what's next.
 
 ## Vision
 A career that runs **high school -> college -> NFL**, built on the existing on-field game. Later, a **coach mode** that reuses the same league engine (recruiting, roster management, trades, full sims, scheduling, playoffs).
@@ -14,6 +14,7 @@ Answered by the owner (Nov 2026):
 - **The coach calls the plays in high school** (offense and defense). You run them (FLIP still works). No other team management.
 - **Option: call your own plays** (owner, follow-up): a hub toggle, PLAYS: COACH / YOU CALL. With YOU CALL a career game plays exactly like an exhibition: the huddle on both sides, you at QB and the MIKE. KICKOFF on the title screen is still the plain exhibition game.
 - **Logos: a later session fetches them**; generated pixel badges until then.
+- **Recruiting means colleges recruiting you** in the player career (owner, follow-up); recruiting players is a coach-mode feature. **Stars move every week**, senior year included.
 
 Original proposals:
 - **Player mode first, as a quarterback.** The game is built around the QB; a QB career fits it, gives a clean HS -> college -> NFL path, and builds the systems coach mode needs (seasons, schedules, quick-sim, progression, saves).
@@ -83,12 +84,14 @@ Reuses the league engine: recruiting a whole class, roster management, depth cha
 - **Your QB**: name, real state, archetype (pocket passer / gunslinger / game manager), ratings ~52-62 as a sophomore (high school norm ~62).
 - **Progression**: weekly practice focus (accuracy / arm / reads), playing time (better games teach more), the off-season; capped at 86 in high school; hidden growth rate.
 - **QB battle meter**: game grades (passer-rating based, ~60 = an average line), practice and the ratings gap vs the starter. A sophomore can't take a senior's job (meter capped at 90); juniors start from last year's trust and win the job at 100 (about 70% do, around week 6 in `career.cjs`). Seniors start.
-- **Stars** (1-5) after each season from ratings for your class, production and wins; season awards (region champion, all-region / all-state QB, state champion).
-- **Screens**: start (continue / new), create, hub, game day intro, week result (with around-the-state scores), schedule, standings + bracket, stats (season, game log, career), season summary, graduated. Portrait and landscape.
+- **Stars** (1-5) move every week from a recruiting score: your overall vs a solid QB of your class (the bar rises through each year), how you're playing (grades count fully after 5 starts; before 6 appearances it blends with last season), wins as the starter, playoff wins, a state title. Thresholds: 2 stars at 0, 3 at 10, 4 at 22, 5 at 32.
+- **Recruiting** (`career/recruiting.ts`, `data/colleges.json`: all FBS + ~100 FCS, real names): each school has a bar (P4 3-5 stars, G5 2-3, FCS 1-2). Every week schools near your level gain interest (more in your state, more if they need a QB this year; ~1 in 5 schools does, re-rolled every year). Sophomores only get noticed; from the junior year a school that's interested (60+), needs a QB and is within reach (2 under its bar up to 5 + 0.3 x your score over it) has a 7% weekly chance to offer. The summers and 4 weeks after the senior season count too (late bloomers). Commit to an offer (tap twice) or decommit; **signing day** after the senior season: sign an offer, or a preferred walk-on spot if there are none. Calibrated with `career.cjs`: ~12 offers a career; 2-stars mostly FCS, 3-stars G5 / low P4, 4-5 stars P4.
+- Season awards (region champion, all-region / all-state QB, state champion).
+- **Screens**: start (continue / new), create, hub, game day intro, week result (with around-the-state scores and recruiting news), schedule, standings + bracket, stats (season, game log, career), recruiting board, season summary, signing day, graduated. Portrait and landscape.
 - **On the field**: coach-called plays (no huddle) or your own calls (PLAYS: YOU CALL), team abbreviations in the HUD, your defense or simulated opponent drives, SIM REST OF GAME in the pause menu.
 
 ### Next (rest of milestone 2)
-- **Recruiting**: interest from colleges from the junior year, offers by tier (needs `data/colleges.json`, i.e. starts milestone 3's data), visits, commitment, signing day. The star rating already exists.
+- **Visits** (official visits that boost one school's interest) and a recruiting calendar.
 - **Camps** in the off-season (an accuracy / reading drill on the field) to raise exposure.
 - Team colours on the field sprites (currently blue vs red), logos from JSON with the badge fallback.
 - Player of the week / season awards race on the hub; a career stats screen across levels.

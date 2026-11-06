@@ -1,4 +1,5 @@
 import * as quicksim from './career/quicksim';
+import * as recruiting from './career/recruiting';
 import { predict, readReceiver } from './cpu';
 import { Game } from './game';
 import { PLAYS } from './playbook/plays';
@@ -13,6 +14,7 @@ const game = new Game();
 (window as unknown as { __plays: typeof PLAYS }).__plays = PLAYS;
 (window as unknown as { __cpu: unknown }).__cpu = { readReceiver, predict };
 (window as unknown as { __quicksim: unknown }).__quicksim = quicksim;
+(window as unknown as { __recruiting: unknown }).__recruiting = recruiting;
 const careerScreens = new CareerScreens(game);
 game.onCareer = () => careerScreens.open();
 (window as unknown as { __careerUI: CareerScreens }).__careerUI = careerScreens;

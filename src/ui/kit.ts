@@ -26,14 +26,29 @@ export function stepper(ctx: CanvasRenderingContext2D, left: Rect, right: Rect, 
   drawText(ctx, value, (left.x + left.w + right.x) / 2, left.y + Math.floor((left.h - 5) / 2), { align: 'center', color });
 }
 
-/** A team's badge: its colours and abbreviation (stands in for a logo). */
+/** Relative luminance of a #rrggbb colour (0 dark - 1 light). */
+function lum(hex: string): number {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+function contrast(a: string, b: string): number {
+  const x = Math.max(lum(a), lum(b)), y = Math.min(lum(a), lum(b));
+  return (x + 0.05) / (y + 0.05);
+}
+
+/** A team's badge: its colours and abbreviation (stands in for a logo). The letters stay readable on any colours. */
 export function badge(ctx: CanvasRenderingContext2D, x: number, y: number, abbr: string, colors: [string, string], scale = 1): void {
   const w = textWidth(abbr, scale) + 6 * scale, h = 9 * scale;
   ctx.fillStyle = colors[1];
   ctx.fillRect(Math.round(x), Math.round(y), w, h);
   ctx.fillStyle = colors[0];
   ctx.fillRect(Math.round(x) + scale, Math.round(y) + scale, w - 2 * scale, h - 2 * scale);
-  drawText(ctx, abbr, x + 3 * scale, y + 2 * scale, { color: colors[1], scale });
+  const text = contrast(colors[0], colors[1]) >= 3 ? colors[1] : lum(colors[0]) > 0.35 ? '#111d2b' : '#ffffff';
+  drawText(ctx, abbr, x + 3 * scale, y + 2 * scale, { color: text, scale });
 }
 export const badgeWidth = (abbr: string, scale = 1) => textWidth(abbr, scale) + 6 * scale;
 

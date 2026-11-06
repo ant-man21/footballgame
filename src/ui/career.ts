@@ -9,6 +9,7 @@ import { type GameRec, PLAYOFF_ROUNDS, REGION_NAMES, ROUND_NAMES, played, region
 import {
   ARCHETYPES, type Archetype, CLASS_NAMES, CLASS_SHORT, FOCUSES, displayName, passerRating, qbOvr,
 } from '../career/player';
+import { type College, TIER_NAMES, board, college, offerList, toNextStar, walkOns } from '../career/recruiting';
 import { deleteCareer, loadCareer, saveCareer } from '../career/save';
 import type { TeamStats } from '../drive';
 import { drawText } from '../font';
@@ -18,7 +19,7 @@ import type { Vec } from '../util';
 import type { View } from '../view';
 import { type Rect, badge, badgeWidth, box, button, hit, meter, screenBg, stars, stepper } from './kit';
 
-type Screen = 'start' | 'create' | 'hub' | 'gameday' | 'result' | 'schedule' | 'standings' | 'stats' | 'summary' | 'done';
+type Screen = 'start' | 'create' | 'hub' | 'gameday' | 'result' | 'schedule' | 'standings' | 'stats' | 'summary' | 'recruiting' | 'signing' | 'done';
 
 const r = (x: number, y: number, w: number, h: number): Rect => ({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
 const cleanName = (s: string) => s.toUpperCase().replace(/[^A-Z' -]/g, '').trim().slice(0, 10);
@@ -43,6 +44,7 @@ export class CareerScreens {
   lastLog: WeekLog | null = null;
   battleBefore: number | null = null;
   confirmNew = false;
+  pick: string | null = null; // recruiting / signing day: the school tapped once (tap again to confirm)
   standingsTab: 'regions' | 'playoffs' = 'regions';
   // character creation
   first = 'JAKE';
@@ -68,9 +70,13 @@ export class CareerScreens {
     this.screen = 'create';
   }
 
+  /** Tests: go to the screen for the career's phase. */
+  toHubForTest(): void { this.toHub(); }
+
   private toHub(): void {
     const c = this.career!;
-    this.screen = c.s.phase === 'summary' ? 'summary' : c.s.phase === 'done' ? 'done' : 'hub';
+    this.screen = c.s.phase === 'summary' ? 'summary' : c.s.phase === 'signing' ? 'signing' : c.s.phase === 'done' ? 'done' : 'hub';
+    this.pick = null;
     this.game.showCareer(this);
   }
 
@@ -150,6 +156,7 @@ export class CareerScreens {
         if (hit(L.standings, p)) { this.screen = 'standings'; this.standingsTab = c.isPlayoffs ? 'playoffs' : 'regions'; }
         if (hit(L.stats, p)) this.screen = 'stats';
         if (hit(L.team, p)) this.game.showRosterOf(c.rosterWithYou());
+        if (hit(L.recruiting, p)) { this.screen = 'recruiting'; this.pick = null; }
         if (hit(L.defense, p)) { c.s.defense = c.s.defense === 'play' ? 'sim' : 'play'; this.save(); }
         if (hit(L.calls, p)) { c.s.calls = c.s.calls === 'you' ? 'coach' : 'you'; this.save(); }
         if (hit(L.menu, p)) this.game.showTitle();
@@ -177,6 +184,28 @@ export class CareerScreens {
       case 'summary':
         if (hit(this.bottomButton(v), p) && c) { c.nextSeason(); this.toHub(); }
         return;
+      case 'recruiting': {
+        if (!c) return;
+        if (hit(this.bottomButton(v), p)) { this.screen = 'hub'; return; }
+        const row = this.recruitRows(v).find((x) => hit(x.r, p));
+        if (!row) { this.pick = null; return; }
+        const rs = c.s.recruit, id = row.c.id;
+        if (!rs.offers.includes(id)) { this.pick = null; return; }
+        if (this.pick !== id) { this.pick = id; return; }
+        c.commit(rs.committed === id ? null : id);
+        this.pick = null;
+        return;
+      }
+      case 'signing': {
+        if (!c) return;
+        const row = this.signingRows(v).find((x) => hit(x.r, p));
+        if (!row) { this.pick = null; return; }
+        if (this.pick !== row.c.id) { this.pick = row.c.id; return; }
+        c.sign(row.c.id);
+        this.pick = null;
+        this.screen = 'done';
+        return;
+      }
       case 'done': {
         const L = this.doneLayout(v);
         if (hit(L.fresh, p)) { if (this.confirmNew) { this.confirmNew = false; this.newCreate(); } else this.confirmNew = true; }
@@ -236,15 +265,17 @@ export class CareerScreens {
       return {
         left: { x: 4, w: lw }, focusY: 4, focusL: r(rx, 12, 20, 16), focusR: r(rx + rw - 20, 12, 20, 16),
         gameDay: r(rx, 34, rw, 22), schedule: r(rx, 62, half, 16), standings: r(rx + half + 4, 62, half, 16),
-        stats: r(rx, 82, half, 16), team: r(rx + half + 4, 82, half, 16), defense: r(rx, 106, half, 14), calls: r(rx + half + 4, 106, half, 14), menu: r(rx + rw / 2 - 30, v.h - 18, 60, 14),
+        stats: r(rx, 82, half, 16), team: r(rx + half + 4, 82, half, 16), recruiting: r(rx, 102, rw, 16),
+        defense: r(rx, 126, half, 14), calls: r(rx + half + 4, 126, half, 14), menu: r(rx + rw / 2 - 30, v.h - 18, 60, 14),
         panels: { head: 4, next: 26, depth: 64, you: 96 },
       };
     }
     const x = 4, w = v.w - 8, half = (w - 4) / 2;
     return {
-      left: { x, w }, focusY: 176, focusL: r(x, 184, 22, 16), focusR: r(x + w - 22, 184, 22, 16),
-      gameDay: r(x, 208, w, 24), schedule: r(x, 238, half, 16), standings: r(x + half + 4, 238, half, 16),
-      stats: r(x, 258, half, 16), team: r(x + half + 4, 258, half, 16), defense: r(x, 280, half, 14), calls: r(x + half + 4, 280, half, 14), menu: r(v.w / 2 - 30, 302, 60, 14),
+      left: { x, w }, focusY: 171, focusL: r(x, 179, 22, 16), focusR: r(x + w - 22, 179, 22, 16),
+      gameDay: r(x, 199, w, 22), schedule: r(x, 225, half, 16), standings: r(x + half + 4, 225, half, 16),
+      stats: r(x, 244, half, 16), team: r(x + half + 4, 244, half, 16), recruiting: r(x, 263, w, 16),
+      defense: r(x, 284, half, 14), calls: r(x + half + 4, 284, half, 14), menu: r(v.w / 2 - 30, 303, 60, 14),
       panels: { head: 4, next: 30, depth: 76, you: 120 },
     };
   }
@@ -275,6 +306,8 @@ export class CareerScreens {
       case 'standings': this.renderStandings(ctx, v); break;
       case 'stats': this.renderStats(ctx, v); break;
       case 'summary': this.renderSummary(ctx, v); break;
+      case 'recruiting': this.renderRecruiting(ctx, v); break;
+      case 'signing': this.renderSigning(ctx, v); break;
       case 'done': this.renderDone(ctx, v); break;
     }
   }
@@ -374,10 +407,10 @@ export class CareerScreens {
     drawText(ctx, String(qbOvr(p)), x + w - 6, P.you + 4, { scale: 2, align: 'right', color: C.yellow });
     drawText(ctx, 'OVR', x + w - 34, P.you + 7, { align: 'right', color: C.grey });
     drawText(ctx, `ACC ${p.r.acc}  ARM ${p.r.arm}  DEC ${p.r.dec}  SPD ${p.r.spd}`, x + 4, P.you + 24);
-    const last = p.seasons[p.seasons.length - 1];
     drawText(ctx, 'RECRUIT', x + 4, P.you + yh - 10, { color: C.grey });
-    stars(ctx, x + 36, P.you + yh - 10, last?.stars ?? 1);
-    if (!last) drawText(ctx, 'AFTER THIS SEASON', x + 76, P.you + yh - 10, { color: C.darkGrey });
+    stars(ctx, x + 36, P.you + yh - 10, s.recruit.stars);
+    meter(ctx, r(x + 76, P.you + yh - 10, 40, 5), toNextStar(s.recruit.score), C.yellow);
+    if (s.recruit.stars < 5) drawText(ctx, `TO ${s.recruit.stars + 1}`, x + 120, P.you + yh - 10, { color: C.darkGrey });
 
     // practice + buttons
     const fr = L.focusL;
@@ -389,6 +422,8 @@ export class CareerScreens {
     button(ctx, L.standings, c.isPlayoffs ? 'PLAYOFFS' : 'STANDINGS');
     button(ctx, L.stats, 'STATS');
     button(ctx, L.team, 'TEAM', C.blue);
+    const rs = s.recruit, nOff = rs.offers.length;
+    button(ctx, L.recruiting, rs.committed ? `RECRUITING - COMMITTED: ${college(rs.committed)!.abbr}` : nOff ? `RECRUITING - ${nOff} OFFER${nOff > 1 ? 'S' : ''}` : 'RECRUITING', C.yellow);
     button(ctx, L.defense, s.defense === 'play' ? 'DEF: PLAY MIKE' : 'DEF: SIMULATED', C.grey);
     button(ctx, L.calls, s.calls === 'you' ? 'PLAYS: YOU CALL' : 'PLAYS: COACH', s.calls === 'you' ? C.yellow : C.grey);
     button(ctx, L.menu, 'MENU', C.grey);
@@ -449,7 +484,8 @@ export class CareerScreens {
     }
     const gains = Object.entries(l.gains).filter(([, n]) => n).map(([k, n]) => `+${n} ${k.toUpperCase()}`);
     if (gains.length) { drawText(ctx, gains.join('  '), mid, y + 2, { align: 'center', color: C.green }); y += 12; }
-    for (const n of l.news) { drawText(ctx, n, mid, y + 2, { align: 'center', color: C.yellow }); y += 10; }
+    const news = l.news.length > 4 ? [...l.news.slice(0, 3), `+${l.news.length - 3} MORE: SEE RECRUITING`] : l.news;
+    for (const n of news) { drawText(ctx, n, mid, y + 2, { align: 'center', color: n.startsWith('OFFER') ? C.green : C.yellow }); y += 10; }
 
     // around the state
     let ox = x, oy = y + 8;
@@ -600,9 +636,12 @@ export class CareerScreens {
     const champ = c.champion;
     if (champ) { y += 4; drawText(ctx, `STATE CHAMPION: ${champ.name}`, mid, y, { align: 'center', color: C.grey }); y += 10; }
     y += 4;
-    const next = sl.year >= HS_YEARS - 1 ? 'COLLEGE IS NEXT' : `NEXT: ${CLASS_NAMES[sl.year + 1]} YEAR`;
+    const rs = c.s.recruit;
+    drawText(ctx, rs.committed ? `COMMITTED TO ${college(rs.committed)!.name}` : `${rs.offers.length} COLLEGE OFFER${rs.offers.length === 1 ? '' : 'S'}`, mid, y, { align: 'center', color: C.yellow });
+    y += 12;
+    const next = sl.year >= HS_YEARS - 1 ? 'NEXT: SIGNING DAY' : `NEXT: ${CLASS_NAMES[sl.year + 1]} YEAR`;
     drawText(ctx, next, mid, y, { align: 'center', color: C.grey });
-    button(ctx, this.bottomButton(v), sl.year >= HS_YEARS - 1 ? 'FINISH' : 'OFF-SEASON', C.green);
+    button(ctx, this.bottomButton(v), sl.year >= HS_YEARS - 1 ? 'SIGNING DAY' : 'OFF-SEASON', C.green);
   }
 
   private renderDone(ctx: CanvasRenderingContext2D, v: View): void {
@@ -619,11 +658,103 @@ export class CareerScreens {
     }
     y += 4;
     drawText(ctx, `CAREER: ${line(tot)}`, mid, y, { align: 'center' }); y += 12;
-    for (const a of p.awards.slice(-8)) { drawText(ctx, a, mid, y, { align: 'center', color: C.green }); y += 8; }
+    for (const a of p.awards.filter((x) => !x.startsWith('SIGNED')).slice(v.landscape ? -3 : -6)) { drawText(ctx, a, mid, y, { align: 'center', color: C.green }); y += 8; }
     y += 6;
-    drawText(ctx, 'RECRUITING AND COLLEGE ARE COMING NEXT', mid, y, { align: 'center', color: C.yellow });
+    const signed = c.s.recruit.signed ? college(c.s.recruit.signed) : null;
+    if (signed) {
+      drawText(ctx, 'SIGNED WITH', mid, y, { align: 'center', color: C.grey }); y += 10;
+      badge(ctx, mid - badgeWidth(signed.abbr, 2) / 2, y, signed.abbr, signed.colors, 2); y += 22;
+      drawText(ctx, `${signed.name} ${signed.mascot}`, mid, y, { align: 'center', color: C.yellow }); y += 9;
+      drawText(ctx, `${signed.conference} - ${TIER_NAMES[signed.tier]}`, mid, y, { align: 'center', color: C.grey }); y += 12;
+    }
+    drawText(ctx, 'THE COLLEGE CAREER IS COMING NEXT', mid, y, { align: 'center', color: C.darkGrey });
     const L = this.doneLayout(v);
     button(ctx, L.fresh, this.confirmNew ? 'SURE?' : 'NEW CAREER', this.confirmNew ? C.orange : C.white);
     button(ctx, L.menu, 'MENU', C.grey);
+  }
+
+  // ---------- recruiting ----------
+
+  /** The recruiting board's rows (tap targets). */
+  recruitRows(v: View): { c: College; r: Rect }[] {
+    const rs = this.career!.s.recruit;
+    const x = 4, w = v.landscape ? Math.floor(v.w * 0.6) - 8 : v.w - 8;
+    const top = v.landscape ? 44 : 70, rowH = v.landscape ? 11 : 13, n = v.landscape ? 10 : 12;
+    return board(rs, n).map((c, i) => ({ c, r: r(x, top + i * rowH, w, rowH - 1) }));
+  }
+
+  /** A college row: [badge] NAME ... TIER [interest meter or a tag]. */
+  private collegeRow(ctx: CanvasRenderingContext2D, c: College, rr: Rect, opts: { interest?: number; tag?: string; tagColor?: string; picked?: boolean }): void {
+    if (opts.picked) box(ctx, rr, C.navy, C.yellow);
+    const y = rr.y + Math.floor((rr.h - 5) / 2);
+    badge(ctx, rr.x + 1, rr.y + Math.floor((rr.h - 9) / 2), c.abbr, c.colors);
+    const nx = rr.x + 26, right = rr.x + rr.w - 2;
+    const maxChars = Math.floor((rr.w - 26 - 58) / 4);
+    drawText(ctx, c.name.length > maxChars ? c.name.slice(0, maxChars) : c.name, nx, y, { color: C.white });
+    drawText(ctx, c.tier, right - 40, y, { align: 'right', color: c.tier === 'P4' ? C.yellow : c.tier === 'G5' ? C.white : C.grey });
+    if (opts.tag) drawText(ctx, opts.tag, right, y, { align: 'right', color: opts.tagColor ?? C.green });
+    else if (opts.interest !== undefined) meter(ctx, r(right - 34, y, 34, 5), opts.interest, C.blue);
+  }
+
+  private renderRecruiting(ctx: CanvasRenderingContext2D, v: View): void {
+    const c = this.career!, rs = c.s.recruit;
+    const y0 = this.title(ctx, v, 'RECRUITING');
+    const x = 4;
+    let y = y0;
+    stars(ctx, x, y, rs.stars);
+    drawText(ctx, `${rs.stars}-STAR QB`, x + 38, y, { color: C.yellow });
+    meter(ctx, r(x + 82, y, 50, 5), toNextStar(rs.score), C.yellow);
+    if (rs.stars < 5) drawText(ctx, `TO ${rs.stars + 1} STARS`, x + 136, y, { color: C.darkGrey });
+    y += 10;
+    const status = rs.committed ? `COMMITTED: ${college(rs.committed)!.name}` : c.s.year === 0 ? 'OFFERS START IN YOUR JUNIOR YEAR'
+      : `${rs.offers.length} OFFER${rs.offers.length === 1 ? '' : 'S'} - TAP AN OFFER TWICE TO COMMIT`;
+    drawText(ctx, status, x, y, { color: rs.committed ? C.green : C.grey });
+    y += 10;
+    if (!v.landscape) drawText(ctx, 'STARS MOVE WEEKLY: PLAY WELL AND WIN', x, y, { color: C.darkGrey });
+    const rows = this.recruitRows(v);
+    if (!rows.length) drawText(ctx, 'NO COLLEGES WATCHING YET', x, rows.length ? 0 : (v.landscape ? 44 : 70), { color: C.darkGrey });
+    for (const { c: col, r: rr } of rows) {
+      const offered = rs.offers.includes(col.id), committed = rs.committed === col.id, picked = this.pick === col.id;
+      const tag = picked ? (committed ? 'DECOMMIT?' : 'COMMIT?') : committed ? 'COMMITTED' : offered ? 'OFFER' : undefined;
+      this.collegeRow(ctx, col, rr, { interest: rs.interest[col.id] ?? 0, tag, tagColor: picked ? C.orange : committed ? C.yellow : C.green, picked });
+    }
+    // news
+    const fx = v.landscape ? Math.floor(v.w * 0.6) + 2 : x;
+    let fy = v.landscape ? y0 + 22 : 70 + 12 * 13 + 6;
+    drawText(ctx, 'LATEST', fx, fy, { color: C.grey });
+    fy += 9;
+    const maxN = v.landscape ? 12 : 6;
+    for (const n of c.s.recruitFeed.slice(0, maxN)) {
+      drawText(ctx, n.length > (v.landscape ? 34 : 44) ? n.slice(0, v.landscape ? 34 : 44) : n, fx, fy, { color: n.startsWith('OFFER') || n.startsWith('COMMIT') ? C.green : C.white });
+      fy += 8;
+    }
+    if (!c.s.recruitFeed.length) drawText(ctx, 'NOTHING YET', fx, fy, { color: C.darkGrey });
+    button(ctx, this.bottomButton(v), 'BACK');
+  }
+
+  /** Signing day rows: your offers, or walk-on spots if there are none. */
+  signingRows(v: View): { c: College; r: Rect }[] {
+    const c = this.career!, rs = c.s.recruit;
+    const list = rs.offers.length ? offerList(rs) : walkOns(rs, c.s.state);
+    if (rs.committed) list.sort((a, b) => Number(b.id === rs.committed) - Number(a.id === rs.committed));
+    const w = Math.min(v.w - 8, 240), x = (v.w - w) / 2;
+    const top = v.landscape ? 44 : 78, rowH = v.landscape ? 11 : 14, n = v.landscape ? 11 : 15;
+    return list.slice(0, n).map((col, i) => ({ c: col, r: r(x, top + i * rowH, w, rowH - 1) }));
+  }
+
+  private renderSigning(ctx: CanvasRenderingContext2D, v: View): void {
+    const c = this.career!, rs = c.s.recruit;
+    let y = this.title(ctx, v, 'SIGNING DAY', C.green);
+    const mid = v.w / 2;
+    stars(ctx, mid - 52, y, rs.stars);
+    drawText(ctx, `${rs.stars}-STAR QB - ${rs.offers.length} OFFER${rs.offers.length === 1 ? '' : 'S'}`, mid - 14, y, { color: C.yellow });
+    y += 11;
+    drawText(ctx, rs.offers.length ? 'TAP A SCHOOL TWICE TO SIGN' : 'NO OFFERS. PREFERRED WALK-ON SPOTS:', mid, y, { align: 'center', color: C.grey });
+    y += 9;
+    if (rs.committed && !v.landscape) drawText(ctx, `YOU ARE COMMITTED TO ${college(rs.committed)!.name}`, mid, y, { align: 'center', color: C.darkGrey });
+    for (const { c: col, r: rr } of this.signingRows(v)) {
+      const picked = this.pick === col.id;
+      this.collegeRow(ctx, col, rr, { tag: picked ? 'SIGN?' : col.id === rs.committed ? 'COMMITTED' : rs.offers.length ? 'OFFER' : 'WALK-ON', tagColor: picked ? C.orange : col.id === rs.committed ? C.yellow : rs.offers.length ? C.green : C.grey, picked });
+    }
   }
 }
