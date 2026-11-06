@@ -440,7 +440,7 @@ export class CareerScreens {
     drawText(ctx, `${m.score.you} - ${m.score.cpu}`, mid, y + 4, { scale: 2, align: 'center' });
     y += 26;
     const started = m.quarter > 1 || m.clock < m.quarterSeconds;
-    drawText(ctx, started ? `Q${m.quarter} ${m.clockText}` : `${c.weekName} - ${plan.rec.home === c.s.schoolId ? 'HOME' : 'AWAY'}`, mid, y, { align: 'center', color: C.yellow });
+    drawText(ctx, started ? m.periodText : `${c.weekName} - ${plan.rec.home === c.s.schoolId ? 'HOME' : 'AWAY'}`, mid, y, { align: 'center', color: C.yellow });
     y += 10;
     if (started) {
       drawText(ctx, `${m.offense === 'you' ? 'YOUR' : `${plan.opp.abbr}`} BALL - ${m.drive.downText} - ${m.offense === 'you' ? m.drive.spotText : m.drive.spotText.replace('OWN', 'THEIR').replace('OPP', 'YOUR')}`, mid, y, { align: 'center', color: C.grey });

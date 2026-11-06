@@ -76,7 +76,7 @@ Reuses the league engine: recruiting a whole class, roster management, depth cha
 
 ### Built (milestone 1 + most of the high school career)
 - **Save**: `footballgame.career.v1`, one JSON blob (`CareerSave`) with `v` and `migrate()`, autosaved every week.
-- **League**: 16 generated schools in your state, 2 regions of 8; 3 non-region weeks then a 7-game region round robin; standings (region record, overall, head to head, point diff, points); top 4 per region into an 8-team crossover bracket -> state title. Ties go to overtime (no kicks, so a strength-weighted coin flip worth 7).
+- **League**: 16 generated schools in your state, 2 regions of 8; 3 non-region weeks then a 7-game region round robin; standings (region record, overall, head to head, point diff, points); top 4 per region into an 8-team crossover bracket -> state title. Ties go to a played overtime (college style from the 25, no kicks, no clock), on the field and in the quick-sim.
 - **Team strength**: each school has a prestige (0-100) that pulls its offense/defense unit ratings each year (graduation turnover is the randomness). Your team and opponents get generated rosters at the high school tier for played games.
 - **Tiers**: rosters carry a `tier` (high school -16); the on-field sim judges ratings against the tier's norms, so progression is felt on the field.
 - **Quick-sim**: runs a real `Match` with generated plays; calibrated to auto-play (`drives.cjs` vs `quicksim.cjs`): even teams ~26.5 pts, TD 46% / punt 27% / INT 11% of drives (auto-play 46 / 30 / 8-11). Career sims use a slower between-play pace (`HUMAN_RUNOFF`), ~20 pts a game.

@@ -231,7 +231,7 @@ export class Game {
   private situation(): string {
     const m = this.match, d = m.drive;
     const spot = this.onOffense ? d.spotText : flipSpot(d.spotText);
-    return `${d.downText} - ${spot} - Q${m.quarter} ${m.clockText}`;
+    return `${d.downText} - ${spot} - ${m.periodText}`;
   }
 
   private showToast(text: string, color: string = C.yellow): void {
@@ -265,7 +265,7 @@ export class Game {
         this.setupSnap();
         return;
       }
-      this.menu = new Menu({ kind: 'offense', selectedId: this.lastPlayId, settings: this.settings, subtitle: this.situation(), fourthDown: d.down === 4 });
+      this.menu = new Menu({ kind: 'offense', selectedId: this.lastPlayId, settings: this.settings, subtitle: this.situation(), fourthDown: d.down === 4 && !m.ot });
     } else {
       if (d.down === 4 && !cpuGoesForIt(d, m.score.cpu - m.score.you, m.quarter, m.clock)) { this.showPunt(); return; }
       if (this.autoplay) { this.defCall = null; this.setupSnap(); return; }
@@ -576,13 +576,13 @@ export class Game {
       // next snap: where the play ended (on the hash if it ended outside it); the middle after a change of possession,
       // except an interception or turnover on downs, spotted from the other side's view
       const halftime = q === 2 && this.match.quarter === 3;
-      if (!halftime) {
+      if (!halftime && !this.match.ot) { // (overtime possessions start in the middle)
         if (this.match.offense === offenseBefore) this.match.drive.ballX = spot;
         else if (sim.result === 'int' || b.headline === 'TURNOVER ON DOWNS') this.match.drive.ballX = -spot; // their view is flipped
         // (after a touchdown the new drive starts in the middle)
       }
       if (this.match.over) b.note = 'FINAL';
-      else if (this.match.quarter !== q) b.note = q === 2 ? 'HALFTIME' : `END OF Q${q}`;
+      else if (this.match.quarter !== q) b.note = this.match.ot ? 'TIED: OVERTIME!' : q === 2 ? 'HALFTIME' : `END OF Q${q}`;
       this.banner = { ...b, kind: 'play' };
       this.screen = 'banner';
       this.bannerAt = this.clock;
@@ -613,9 +613,10 @@ export class Game {
   private quarterEndedBetweenPlays(): void {
     const m = this.match;
     const q = m.over ? 4 : m.quarter - 1;
-    const headline = m.over ? 'FINAL' : q === 2 ? 'HALFTIME' : `END OF Q${q}`;
+    const headline = m.over ? 'FINAL' : m.ot ? 'OVERTIME' : q === 2 ? 'HALFTIME' : `END OF Q${q}`;
     this.menu = null;
     this.banner = { headline, color: C.yellow, detail: `${m.names.you} ${m.score.you} - ${m.names.cpu} ${m.score.cpu}`, kind: 'note' };
+    if (m.ot) this.banner.note = `EACH TEAM GETS IT AT THE 25 - ${m.offense === 'you' ? 'YOU GO' : `${m.names.cpu} GOES`} FIRST`;
     this.screen = 'banner';
     this.bannerAt = this.clock;
     this.runoff = 0;
@@ -680,7 +681,7 @@ export class Game {
     ctx.fillStyle = 'rgba(17,29,43,0.93)';
     ctx.fillRect(0, 0, v.w, v.h);
     drawText(ctx, 'PAUSED', v.w / 2, v.landscape ? 10 : 60, { scale: 2, color: C.yellow, align: 'center' });
-    drawText(ctx, `${m.names.you} ${m.score.you} - ${m.names.cpu} ${m.score.cpu}   Q${m.quarter} ${m.clockText}`, v.w / 2, v.landscape ? 26 : 80, { align: 'center', color: C.grey });
+    drawText(ctx, `${m.names.you} ${m.score.you} - ${m.names.cpu} ${m.score.cpu}   ${m.periodText}`, v.w / 2, v.landscape ? 26 : 80, { align: 'center', color: C.grey });
     const b = this.pauseButtons;
     button(ctx, b.resume, 'RESUME', C.green);
     button(ctx, b.timeout, `TIMEOUT (${m.timeouts.you} LEFT)`, this.canTimeout() ? C.white : C.darkGrey);
@@ -865,7 +866,7 @@ export class Game {
     const showDown = this.screen === 'play';
     const fieldMid = v.landscape ? v.w / 2 : W / 2;
     const live = sim.phase === 'live' || sim.phase === 'air' || sim.phase === 'run';
-    const q = m.over ? 'FINAL' : `Q${m.quarter} ${m.clockText}`;
+    const q = m.over ? (m.ot ? 'FINAL OT' : 'FINAL') : m.periodText;
     const playClock = m.clockRunning && this.screen !== 'final' ? Math.max(0, Math.ceil(PLAY_CLOCK - this.runoff)) : null;
     const pips = (x: number, y: number, n: number, color: string) => {
       for (let i = 0; i < 3; i++) { ctx.fillStyle = i < n ? color : C.darkGrey; ctx.fillRect(x + i * 4, y, 3, 2); }
@@ -962,7 +963,7 @@ export class Game {
     ctx.fillRect(0, 0, v.w, v.h);
     const mid = v.w / 2;
     let y = v.landscape ? 14 : 70;
-    drawText(ctx, 'FINAL', mid, y, { scale: 2, color: C.yellow, align: 'center' });
+    drawText(ctx, m.ot ? `FINAL - ${m.periodText}` : 'FINAL', mid, y, { scale: 2, color: C.yellow, align: 'center' });
     y += 18;
     drawText(ctx, `${m.names.you} ${m.score.you}  -  ${m.names.cpu} ${m.score.cpu}`, mid, y, { scale: 2, align: 'center' });
     y += 18;

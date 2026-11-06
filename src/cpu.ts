@@ -142,6 +142,7 @@ export function callPlay(drive: Drive): Play {
 
 /** Should the CPU go for it on 4th down? (Otherwise it punts.) */
 export function cpuGoesForIt(drive: Drive, cpuLead: number, quarter: number, clock: number): boolean {
+  if (quarter >= 5) return true; // overtime: no punting
   if (quarter === 4 && cpuLead < 0 && clock < 150) return true; // desperate
   if (drive.toGo <= 2 && drive.ballOn >= 45) return true;
   if (drive.toGo <= 4 && drive.ballOn >= 65) return true;

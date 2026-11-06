@@ -16,6 +16,7 @@ export const QUARTER_SECONDS = 180;
 export const PLAY_CLOCK = 25; // most seconds that can run off between plays
 const TD_POINTS = 7;
 const TIMEOUTS = 3; // per team, per half
+const OT_YARD = 75; // overtime possessions start at the other team's 25
 
 /** A result banner, written from your point of view (green/yellow = good for you). */
 export interface Banner { headline: string; color: string; detail: string; note?: string }
@@ -49,6 +50,14 @@ export class Match {
   clockRunning = false; // is the clock running between plays?
   timeouts: Record<Side, number> = { you: TIMEOUTS, cpu: TIMEOUTS };
   names: Record<Side, string> = { you: 'YOU', cpu: 'CPU' }; // how the banners name each team
+  /**
+   * Overtime (college style, no kicks): tied after four quarters, each team gets
+   * a possession from the 25 with no clock; after both have had it, the leader
+   * wins, otherwise another round (the other team goes first). 0 = regulation.
+   */
+  ot = 0;
+  private otPoss = 0; // possessions finished in this overtime round
+  private otFirst: Side = 'you';
   private warned = new Set<number>(); // quarters that have had their two-minute warning
   private firstOffense: Side;
 
@@ -80,6 +89,8 @@ export class Match {
   get receivedFirst(): Side { return this.firstOffense; }
 
   get defense(): Side { return other(this.offense); }
+  /** "Q3 1:45", or "OT" / "OT2" in overtime. */
+  get periodText(): string { return this.ot ? `OT${this.ot > 1 ? this.ot : ''}` : `Q${this.quarter} ${this.clockText}`; }
   get clockText(): string {
     const s = Math.max(0, Math.ceil(this.clock));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -125,11 +136,47 @@ export class Match {
         b = { headline, color, detail: `${yds}${o.firstDown ? ' - FIRST DOWN' : o.outOfBounds ? ' - OUT' : ''}` };
       }
     }
+    if (this.ot) { // overtime: no clock; a possession ends with a score, a pick or on downs
+      if (o.event.kind !== 'continue') this.otPossessionOver(off, b);
+      this.clockRunning = false;
+      return b;
+    }
     const q = this.quarter;
     const warning = this.tick(playSeconds);
     this.clockRunning = running && this.quarter === q && !warning;
     if (warning) b.note = 'TWO-MINUTE WARNING';
     return b;
+  }
+
+  private startOvertime(): void {
+    this.ot = 1;
+    this.otPoss = 0;
+    this.quarter = 5;
+    this.clock = 0;
+    this.otFirst = Math.random() < 0.5 ? 'you' : 'cpu'; // the coin toss
+    this.offense = this.otFirst;
+    this.drive = new Drive(OT_YARD);
+    this.timeouts = { you: 1, cpu: 1 };
+    this.clockRunning = false;
+  }
+
+  private otPossessionOver(had: Side, b: Banner): void {
+    this.otPoss++;
+    const note = (t: string) => { b.note = b.note ? `${b.note} - ${t}` : t; };
+    if (this.otPoss === 1) {
+      this.offense = other(had);
+      this.drive = new Drive(OT_YARD);
+      note(`${this.offense === 'you' ? 'YOUR' : this.names.cpu} TURN AT THE 25`);
+      return;
+    }
+    if (this.score.you !== this.score.cpu) { this.over = true; note('FINAL (OT)'); return; }
+    this.ot++;
+    this.otPoss = 0;
+    this.otFirst = other(this.otFirst);
+    this.offense = this.otFirst;
+    this.drive = new Drive(OT_YARD);
+    this.timeouts = { you: 1, cpu: 1 };
+    note(`STILL TIED: OT${this.ot}`);
   }
 
   /** The offense punts on 4th down. */
@@ -160,7 +207,7 @@ export class Match {
    * Returns what happened, if anything: the two-minute warning or the end of a quarter.
    */
   tickBetween(seconds: number): 'warning' | 'quarter' | null {
-    if (!this.clockRunning || this.over) return null;
+    if (!this.clockRunning || this.over || this.ot) return null;
     const q = this.quarter;
     const warning = this.tick(seconds, true);
     if (this.quarter !== q || this.over) { this.clockRunning = false; return 'quarter'; }
@@ -178,6 +225,7 @@ export class Match {
 
   /** Runs the clock; true if that crossed the two-minute warning. */
   private tick(seconds: number, stopAtWarning = false): boolean {
+    if (this.ot) return false; // no clock in overtime
     const before = this.clock;
     this.clock -= seconds;
     let warning = false;
@@ -187,7 +235,12 @@ export class Match {
       if (stopAtWarning) this.clock = 120; // between plays the clock stops right at 2:00
     }
     if (this.clock > 0) return warning;
-    if (this.quarter === 4) { this.clock = 0; this.over = true; return false; }
+    if (this.quarter === 4) {
+      this.clock = 0;
+      if (this.score.you === this.score.cpu) this.startOvertime(); // tied: overtime
+      else this.over = true;
+      return false;
+    }
     this.quarter++;
     this.clock = this.quarterSeconds;
     if (this.quarter === 3) { // halftime: the other team gets the ball first, timeouts reset

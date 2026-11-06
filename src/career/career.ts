@@ -217,8 +217,8 @@ export class Career {
     const s = this.s, m = plan.match, me = this.school;
     const after = stint ? { ...stint } : { ...m.stats.you };
     if (!m.over) simToEnd(m, { you: this.units(me, this.starterOvr), cpu: plan.units.cpu });
-    let us = m.score.you, them = m.score.cpu, ot = false;
-    if (us === them) { // overtime
+    let us = m.score.you, them = m.score.cpu, ot = m.ot > 0;
+    if (us === them) { // still tied (only if a game was cut short): settle it
       ot = true;
       if (overtimeWinner(plan.units.you, plan.units.cpu) === 'a') us += 7; else them += 7;
     }
@@ -274,8 +274,8 @@ export class Career {
     const ua = this.units(a, g.away === this.s.schoolId ? this.starterOvr : undefined);
     const m = simGame(uh, ua, this.s.quarter);
     let hs = m.score.you, as = m.score.cpu;
-    g.ot = hs === as;
-    if (g.ot) { if (overtimeWinner(uh, ua) === 'a') hs += 7; else as += 7; }
+    g.ot = m.ot > 0 || hs === as;
+    if (hs === as) { if (overtimeWinner(uh, ua) === 'a') hs += 7; else as += 7; }
     g.hs = hs; g.as = as;
     g.box = { home: { ...m.stats.you }, away: { ...m.stats.cpu } };
   }
