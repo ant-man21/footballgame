@@ -108,12 +108,17 @@ Against three or more wide receivers the defense subs a nickel back in for a lin
 
 Adding a play is data only: add it to `src/playbook/plays.ts` (routes come from `src/playbook/routes.ts`, alignments from `src/playbook/formations.ts`). The menu and its play art pick it up automatically. New categories go in `CATEGORIES`.
 
+## Next: career mode
+The plan for high school -> college -> NFL is in [`docs/FRANCHISE.md`](docs/FRANCHISE.md). Working notes for development sessions are in [`CLAUDE.md`](CLAUDE.md).
+
 ## Develop
 ```sh
 npm install
 npm run dev        # http://localhost:5173 (also on your LAN, for testing on a phone)
 npm run build      # type-check + production build into dist/
 ```
+
+Balance scripts (auto-play games and measure): see `scripts/balance/` and CLAUDE.md.
 
 Smoke test (touch input on an emulated phone, needs Playwright + Chromium):
 ```sh
