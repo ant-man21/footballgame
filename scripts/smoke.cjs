@@ -91,6 +91,8 @@ const OUT = process.env.SHOT_DIR || '.';
   await page.screenshot({ path: `${OUT}/smoke-result.png` });
   await tap({ x: 90, y: 150 });
   check((await G(() => window.__game.screen)) === 'huddle', 'tap after the result goes back to the huddle');
+  // (if that throw happened to be picked off, the CPU has the ball: put us back on offense)
+  await G(new Function(offense + ' g.startHuddle();'));
   const same = await G(() => { const q = window.__game.menu.layout(window.__game.view).quick.find((b) => b.type === 'same'); return q && { x: q.r.x + q.r.w / 2, y: q.r.y + q.r.h / 2 }; });
   await tap(same);
   check(await G(() => window.__game.screen === 'play' && window.__game.play.id === 'mesh'), 'SAME PLAY lines up the last call');
