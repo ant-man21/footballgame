@@ -19,7 +19,7 @@ export type MenuAction =
   | { type: 'pick'; play: Play }
   | { type: 'pickCall'; call: Call }
   | { type: 'same' } | { type: 'auto' } | { type: 'punt' }
-  | { type: 'close' } | { type: 'settings' } | { type: 'start' }
+  | { type: 'close' } | { type: 'settings' } | { type: 'start' } | { type: 'team' }
   | null;
 
 export interface MenuOptions {
@@ -115,14 +115,16 @@ export class Menu {
       return { row, y, left: { x, y: y + 9, w: 22, h: 16 }, right: { x: x + w - 22, y: y + 9, w: 22, h: 16 }, mid: x + w / 2 };
     });
     const done = title
-      ? { x: Math.round(v.w / 2 - 50), y: v.landscape ? v.h - 22 : v.h - 50, w: 100, h: 20 }
+      ? (v.landscape ? { x: Math.round(v.w / 2 + 4), y: v.h - 22, w: 90, h: 20 } : { x: Math.round(v.w / 2 - 50), y: v.h - 56, w: 100, h: 20 })
       : { x: Math.round(v.w / 2 - 30), y: v.h - 18, w: 60, h: 14 };
-    return { rows, done };
+    const team = v.landscape ? { x: Math.round(v.w / 2 - 94), y: v.h - 22, w: 90, h: 20 } : { x: Math.round(v.w / 2 - 50), y: v.h - 30, w: 100, h: 16 };
+    return { rows, done, team };
   }
 
   tap(p: Vec, v: View): MenuAction {
     if (this.showSettings) {
-      const { rows, done } = this.settingsLayout(v);
+      const { rows, done, team } = this.settingsLayout(v);
+      if (this.o.title && hit(team, p)) return { type: 'team' };
       for (const r of rows) {
         const dir = hit(r.left, p) ? -1 : hit(r.right, p) ? 1 : 0;
         if (!dir) continue;
@@ -209,8 +211,12 @@ export class Menu {
     } else {
       drawText(ctx, 'SETTINGS', v.w / 2, v.landscape ? 6 : 20, { scale: 2, color: C.yellow, shadow: C.navy, align: 'center' });
     }
-    const { rows, done } = this.settingsLayout(v);
+    const { rows, done, team } = this.settingsLayout(v);
     const s = this.o.settings as unknown as Record<string, string>;
+    if (title) {
+      box(ctx, team, C.ink, C.blue);
+      drawText(ctx, 'TEAM', team.x + team.w / 2, team.y + Math.floor((team.h - 5) / 2), { align: 'center', color: C.blue });
+    }
     for (const r of rows) {
       drawText(ctx, r.row.label, r.mid, r.y, { align: 'center', color: C.grey });
       const cur = r.row.list.find((x) => x.id === s[r.row.key]);

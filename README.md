@@ -3,7 +3,11 @@
 Top-down, vertical, pixel-art football game for phone and laptop (browser / installable web app).
 
 ## Start screen
-Pick **quarter length** (2 / 3 / 5 / 8 minutes), difficulty, game speed and aim mode, then **KICKOFF**. Pause has **MAIN MENU** to come back here.
+Pick **quarter length** (1:00 to 4:00 in 30-second steps, default 2:30), difficulty, game speed and aim mode, then **KICKOFF**. Pause has **MAIN MENU** to come back here.
+
+## Your team and ratings
+Every player has ratings (0-99): **speed, hands, route running, blocking, elusiveness**, for QBs **accuracy, arm, decisions**, and for defenders **pass rush, coverage, ball skills, tackling**, plus an overall. Each rating is judged against the norm for his position: an average starter plays exactly like the base game, better or worse players move away from it (faster, surer hands, sharper cuts that are harder to cover, longer-holding blocks, more broken tackles, a tighter landing oval, a stronger arm, quicker reads...).
+Your team is generated once and saved on this device; see it on the **TEAM** screen (title or pause), or roll a **NEW TEAM**. The CPU fields a new team each game, built for the difficulty: weaker on Rookie, even on Pro, stronger on All-Pro.
 
 ## The game
 A full game against the CPU: **4 quarters of 3 minutes**, passing only, no kicks.
@@ -133,5 +137,6 @@ Open the page on your phone, then *Add to Home Screen* for full-screen play.
 - `src/menu.ts`, `src/playart.ts`, `src/defart.ts`: the huddle (offensive and defensive playbooks, settings) and the play / coverage diagrams
 - `src/sprites.ts`, `src/font.ts`: pixel-art sprites and the 3x5 bitmap font
 - `src/view.ts`: portrait/landscape views (how the field maps onto the screen)
-- `src/settings.ts`: difficulty / game speed / aim mode, saved on the device
+- `src/settings.ts`: difficulty / game speed / aim mode / quarter length, saved on the device
+- `src/ratings.ts`, `src/roster.ts`: player ratings, rosters (saved), and the TEAM screen
 - `src/main.ts`: canvas sizing per orientation + pointer (touch/mouse) input

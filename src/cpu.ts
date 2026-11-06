@@ -2,7 +2,7 @@
 // receivers one at a time, like a real progression, and throws to the first
 // one who's open enough. Where it's looking is shown on screen as the "eyes"
 // arrow, so a linebacker can jump the read.
-import { FIELD_LEFT, FIELD_RIGHT, MAX_THROW } from './config';
+import { FIELD_LEFT, FIELD_RIGHT } from './config';
 import type { Drive } from './drive';
 import { PLAYS, type Play } from './playbook/plays';
 import { type Actor, type Sim, flightFor } from './sim';
@@ -30,7 +30,7 @@ export function readReceiver(sim: Sim, r: Actor): { to: Vec; margin: number } {
   const from = { x: sim.qb.x, y: sim.qb.y - 3 };
   let to = { x: r.x, y: r.y };
   for (let i = 0; i < 4; i++) to = predict(r, flightFor(from, to).dur, sim.endLineY);
-  if (dist(from, to) > MAX_THROW) return { to, margin: -999 };
+  if (dist(from, to) > sim.maxThrow) return { to, margin: -999 };
   const dur = flightFor(from, to).dur;
   let margin = Infinity;
   for (const d of sim.defense) {
@@ -54,7 +54,11 @@ export class CpuQb {
   private lastT = 0;
 
   /** picky: extra margin (px) he wants before throwing; higher = a more cautious, easier QB. */
+  private acc: number;
   constructor(sim: Sim, private picky = 0) {
+    // his ratings: decisions make him more (or less) willing to pull the trigger; accuracy tightens his aim
+    this.picky = picky - sim.rd(sim.qb, 'dec') * 0.15;
+    this.acc = sim.accFactor;
     this.order = sim.play.routes
       .map((pr) => sim.receivers.find((a) => a.id === pr.who))
       .filter((a): a is Actor => !!a);
@@ -119,7 +123,7 @@ export class CpuQb {
   }
 
   private aim(to: Vec): Vec {
-    const a = Math.random() * Math.PI * 2, m = Math.abs(rand(-1, 1)) * 3;
+    const a = Math.random() * Math.PI * 2, m = Math.abs(rand(-1, 1)) * 3 * this.acc;
     return { x: to.x + Math.cos(a) * m, y: to.y + Math.sin(a) * m };
   }
 }

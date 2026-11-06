@@ -34,10 +34,23 @@ const OUT = process.env.SHOT_DIR || '.';
   // 0. Title screen: pick quarter length (and the rest), then KICKOFF.
   check(await G(() => window.__game.screen === 'title'), 'the game opens on the title screen');
   const tl = await G(() => { const g = window.__game; const L = g.menu.settingsLayout(g.view); const q = L.rows.find((r) => r.row.key === 'quarter'); return { right: q.right, done: L.done }; });
-  await tap({ x: tl.right.x + tl.right.w / 2, y: tl.right.y + tl.right.h / 2 }); // 5 MIN -> 8 MIN
-  check(await G(() => window.__game.settings.quarter === '8'), 'title: quarter length can be changed (8 MIN)');
+  check(await G(() => window.__game.settings.quarter === '2.5'), 'title: quarters default to 2:30');
+  await tap({ x: tl.right.x + tl.right.w / 2, y: tl.right.y + tl.right.h / 2 }); // 2:30 -> 3:00
+  check(await G(() => window.__game.settings.quarter === '3'), 'title: quarter length steps by 30 seconds (3:00)');
+  // TEAM: your roster, NEW TEAM rolls a fresh one (tap twice), BACK returns
+  const tb = await G(() => { const g = window.__game; return g.menu.settingsLayout(g.view).team; });
+  await tap({ x: tb.x + tb.w / 2, y: tb.y + tb.h / 2 });
+  const rv = await G(() => { const g = window.__game; return g.rosterView && { ...g.rosterView.layout(g.view), n: g.team.players.length, first: g.team.players[0].name }; });
+  check(!!rv && rv.n === 24, `TEAM shows your roster (${rv && rv.n} players)`);
+  await tap({ x: rv.fresh.x + rv.fresh.w / 2, y: rv.fresh.y + rv.fresh.h / 2 });
+  await tap({ x: rv.fresh.x + rv.fresh.w / 2, y: rv.fresh.y + rv.fresh.h / 2 });
+  check(await G(() => window.__game.team.players.length === 24 && JSON.parse(localStorage.getItem('footballgame.roster')).players.length === 24), 'NEW TEAM (tap twice) rolls and saves a new roster');
+  await page.screenshot({ path: `${OUT}/smoke-roster.png` });
+  await tap({ x: rv.back.x + rv.back.w / 2, y: rv.back.y + rv.back.h / 2 });
+  check(await G(() => !window.__game.rosterView && window.__game.screen === 'title'), 'BACK returns to the title screen');
   await tap({ x: tl.done.x + tl.done.w / 2, y: tl.done.y + tl.done.h / 2 });
-  check(await G(() => window.__game.screen === 'huddle' && window.__game.match.clockText === '8:00'), 'KICKOFF starts a game with 8:00 quarters');
+  check(await G(() => window.__game.screen === 'huddle' && window.__game.match.clockText === '3:00'), 'KICKOFF starts a game with 3:00 quarters');
+  check(await G(() => { const g = window.__game; g.pickPlay(window.__plays[0]); const ok = g.sim.actors.every((a) => a.pl && a.pl.ovr > 0); g.startHuddle(); return ok; }), 'every player on the field has ratings');
 
   // 1. Every defensive call accounts for all 11 defenders, for every play.
   const bad = await G(() => {

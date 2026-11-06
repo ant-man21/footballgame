@@ -1,9 +1,9 @@
 // Ties everything together: a full game (Match), the huddle (calling plays on
 // both sides of the ball), the clock between plays, timeouts, pause, input,
 // aiming, the CPU quarterback when you're on defense, and drawing.
-import { C, CX, FIELD_LEFT, FIELD_RIGHT, LOS_Y, MAX_THROW, PULL_POWER, RESULT_TIME, TIME_SCALE, W, YD, fx } from './config';
+import { C, CX, FIELD_LEFT, FIELD_RIGHT, LOS_Y, PULL_POWER, RESULT_TIME, TIME_SCALE, W, YD, fx } from './config';
 import { CpuQb, callPlay, cpuGoesForIt } from './cpu';
-import { type Call, DEF_BASE, beats, rushLabel } from './defense/calls';
+import { type Call, beats, rushLabel } from './defense/calls';
 import { drawText, textWidth } from './font';
 import { type Banner, Match, PLAY_CLOCK } from './match';
 import { Menu, type MenuAction } from './menu';
@@ -11,7 +11,9 @@ import { PLAYS, type Play } from './playbook/plays';
 import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
 import { HASH_YD, Sim, arcHeight, flightFor, throwSpread } from './sim';
 import { ballSprite, drawCentered, playerSprite } from './sprites';
-import { type Vec, clamp, dist, lerp, rand } from './util';
+import { type Vec, clamp, dist, lerp } from './util';
+import { type Roster, loadRoster, makeRoster, saveRoster } from './ratings';
+import { RosterView } from './roster';
 import { PORTRAIT, type View } from './view';
 
 export type AimMode = 'pull' | 'aim';
@@ -24,17 +26,8 @@ const USER_DEFENDER = 'MIKE';
 type Rect = { x: number; y: number; w: number; h: number };
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
-/** Per-game speed ratings for a team: everyone is a few percent faster or slower. */
-function makeRatings(): Record<string, number> {
-  const r: Record<string, number> = {};
-  for (const id of ['X', 'H', 'Y', 'Z', 'RB']) r[`off:${id}`] = rand(0.95, 1.05);
-  for (const id of Object.keys(DEF_BASE)) r[`def:${id}`] = rand(0.95, 1.05);
-  return r;
-}
-const pick = (r: Record<string, number>, prefix: string) =>
-  Object.fromEntries(Object.entries(r).filter(([k]) => k.startsWith(prefix)));
 
-type Screen = 'title' | 'huddle' | 'play' | 'banner' | 'final';
+type Screen = 'title' | 'huddle' | 'play' | 'banner' | 'final' | 'roster';
 
 export class Game {
   settings = loadSettings();
@@ -48,7 +41,10 @@ export class Game {
   menu: Menu | null = null; // the huddle, or settings from pause
   private huddleMenu: Menu | null = null; // remembered while settings are open
   mode: AimMode = this.settings.aim;
-  ratings = { you: makeRatings(), cpu: makeRatings() };
+  team: Roster = loadRoster(); // your team (saved on this device)
+  rosterView: RosterView | null = null; // the TEAM screen
+  private rosterFrom: 'title' | 'pause' = 'title';
+  cpuTeam: Roster = makeRoster('CPU', DIFFICULTY_TUNING[this.settings.difficulty].strength);
   history: string[] = []; // your recent play calls: the defense notices repeats
   view: View = PORTRAIT;
   clock = 0;
@@ -137,16 +133,22 @@ export class Game {
     return v.landscape ? { x: v.w - v.panel + 3, y: 3, w: v.panel - 6, h: 13 } : { x: v.w - 17, y: 2, w: 15, h: 15 };
   }
   /** Pause menu buttons. */
-  get pauseButtons(): { resume: Rect; timeout: Rect; settings: Rect; restart: Rect; title: Rect } {
+  get pauseButtons(): { resume: Rect; timeout: Rect; settings: Rect; team: Rect; restart: Rect; title: Rect } {
     const v = this.view, w = 96, x = Math.round(v.w / 2 - w / 2);
-    const y0 = v.landscape ? 36 : 104, gap = v.landscape ? 20 : 26;
+    const y0 = v.landscape ? 34 : 100, gap = v.landscape ? 19 : 26;
     const r = (i: number) => ({ x, y: y0 + i * gap, w, h: 16 });
-    return { resume: r(0), timeout: r(1), settings: r(2), restart: r(3), title: r(4) };
+    return { resume: r(0), timeout: r(1), settings: r(2), team: r(3), restart: r(4), title: r(5) };
+  }
+
+  private openRoster(from: 'title' | 'pause'): void {
+    this.rosterFrom = from;
+    this.rosterView = new RosterView(this.team, from === 'pause' ? this.cpuTeam : null);
+    this.pauseOpen = false;
   }
 
   newGame(): void {
     this.match = new Match('you', Number(this.settings.quarter) * 60);
-    this.ratings = { you: makeRatings(), cpu: makeRatings() };
+    this.cpuTeam = makeRoster('CPU', DIFFICULTY_TUNING[this.settings.difficulty].strength); // a new opponent each game
     this.history = [];
     this.lastPlayId = null;
     this.lastCallId = null;
@@ -221,7 +223,7 @@ export class Game {
       const reps = this.repeats(this.play);
       const vs = this.play.vs;
       this.sim.reset(this.play, d.goalY, {
-        ratings: { ...pick(this.ratings.you, 'off:'), ...pick(this.ratings.cpu, 'def:') },
+        teams: { off: this.team, def: this.cpuTeam },
         cpuTeam: 'def', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
         callBias: reps >= 2 ? (c) => (beats(vs, c) ? 1 / (1 + reps * 0.8) : 1) : undefined,
         recognition: clamp((reps - 1) / 4, 0, 1),
@@ -231,7 +233,7 @@ export class Game {
     } else {
       this.sim.reset(callPlay(d), d.goalY, {
         userDefender: USER_DEFENDER,
-        ratings: { ...pick(this.ratings.cpu, 'off:'), ...pick(this.ratings.you, 'def:') },
+        teams: { off: this.cpuTeam, def: this.team },
         cpuTeam: 'off', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
         call: this.defCall ?? undefined,
         ballX: d.ballX, mirror: toField !== (Math.random() < 0.2),
@@ -287,9 +289,10 @@ export class Game {
       if (dist(t, qb) < 12) return null;
     }
     const d = dist(t, qb);
-    if (d > MAX_THROW) {
-      t.x = qb.x + ((t.x - qb.x) / d) * MAX_THROW;
-      t.y = qb.y + ((t.y - qb.y) / d) * MAX_THROW;
+    const max = this.sim.maxThrow; // your QB's arm
+    if (d > max) {
+      t.x = qb.x + ((t.x - qb.x) / d) * max;
+      t.y = qb.y + ((t.y - qb.y) / d) * max;
     }
     t.x = clamp(t.x, FIELD_LEFT, FIELD_RIGHT);
     return t;
@@ -301,9 +304,16 @@ export class Game {
   }
 
   pointerDown(p: Vec): void {
+    if (this.rosterView) { // the TEAM screen
+      const a = this.rosterView.tap(p, this.view);
+      if (a === 'new') { this.team = makeRoster('YOU'); saveRoster(this.team); this.rosterView.team = this.team; }
+      if (a === 'back') { this.rosterView = null; if (this.rosterFrom === 'pause') this.pauseOpen = true; }
+      return;
+    }
     if (this.screen === 'title' && this.menu) {
       const a = this.menu.tap(p, this.view);
       if (a?.type === 'settings') this.applySettings();
+      if (a?.type === 'team') this.openRoster('title');
       if (a?.type === 'start') { this.applySettings(); this.newGame(); }
       return;
     }
@@ -351,6 +361,7 @@ export class Game {
       if (this.confirmRestart) this.newGame();
       else this.confirmRestart = true;
     } else if (hit(b.title, p)) this.showTitle();
+    else if (hit(b.team, p)) this.openRoster('pause');
   }
 
   pointerMove(p: Vec): void {
@@ -386,7 +397,7 @@ export class Game {
 
   update(dt: number): void {
     this.clock += dt;
-    if (this.paused || this.pauseOpen || this.menu?.showSettings) return;
+    if (this.paused || this.pauseOpen || this.rosterView || (this.screen !== 'title' && this.menu?.showSettings)) return;
     if (this.screen === 'final' || this.screen === 'title') return;
     const sim = this.sim;
 
@@ -484,6 +495,7 @@ export class Game {
   // ---------- drawing ----------
 
   render(ctx: CanvasRenderingContext2D): void {
+    if (this.rosterView) { this.rosterView.render(ctx, this.view); return; }
     if (this.screen === 'title' && this.menu) {
       drawField(ctx, this, 50, 60, false); // a field behind the title
       this.menu.render(ctx, this.view);
@@ -543,6 +555,7 @@ export class Game {
     button(ctx, b.resume, 'RESUME', C.green);
     button(ctx, b.timeout, `TIMEOUT (${m.timeouts.you} LEFT)`, this.canTimeout() ? C.white : C.darkGrey);
     button(ctx, b.settings, 'SETTINGS', C.white);
+    button(ctx, b.team, 'TEAM', C.blue);
     button(ctx, b.restart, this.confirmRestart ? 'TAP AGAIN TO RESTART' : 'RESTART GAME', this.confirmRestart ? C.orange : C.white);
     button(ctx, b.title, 'MAIN MENU', C.white);
   }
@@ -649,7 +662,8 @@ export class Game {
     // along the throw line with distance and grows under pressure (orange).
     const pressured = this.sim.pressured;
     const sp = throwSpread(dist(from, to), pressured);
-    const along = sp.along * s * this.sim.movingFactor, lat = sp.lat * s * this.sim.movingFactor; // throwing on the run spreads it
+    const k = this.sim.movingFactor * this.sim.accFactor; // throwing on the run spreads it; accuracy tightens it
+    const along = sp.along * s * k, lat = sp.lat * s * k;
     const u = { x: (to.x - from.x) / (dist(from, to) || 1), y: (to.y - from.y) / (dist(from, to) || 1) };
     const x = Math.round(this.sx(to.x)), y = Math.round(this.sy(to.y));
     ctx.fillStyle = pressured ? C.orange : C.yellow;
