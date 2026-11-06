@@ -87,7 +87,25 @@ export class Game {
   /** Kept for tests and older callers: the huddle menu is the "playbook". */
   get menuOpen(): boolean { return this.screen === 'huddle' || !!(this.menu && this.menu.showSettings); }
 
-  setView(v: View): void { this.view = v; this.drag = null; this.stick = null; }
+  setView(v: View): void {
+    this.view = v; this.drag = null; this.stick = null;
+    this.camY = Math.min(this.camY, this.camLimit());
+    if (this.sim.phase === 'presnap' || this.screen !== 'play') this.camY = this.camBase();
+  }
+
+  /**
+   * The camera never scrolls past the back of the end zone: near the goal line
+   * the field shifts up so the end zone stays at the top of the screen.
+   * This is the largest camY that keeps the end line at (or above) the top.
+   */
+  camLimit(): number {
+    const v = this.view;
+    const endLine = LOS_Y - (110 - this.fieldBallOn) * YD; // back of the end zone, world y
+    const top = v.landscape ? 0 : 19; // below the portrait scoreboard
+    return (top - v.oy) / v.s - endLine;
+  }
+  /** Where the camera rests before the snap: normally 0, shifted up in the red zone. */
+  camBase(): number { return Math.min(0, this.camLimit()); }
 
   // world <-> screen
   sx = (x: number) => this.view.ox + x * this.view.s;
@@ -149,6 +167,7 @@ export class Game {
     this.fieldBallOn = d.ballOn;
     this.lineToGain = d.ballOn + d.toGo;
     this.attackingYours = !this.onOffense;
+    this.camY = this.camBase();
     this.cpuTimeout();
 
     if (this.onOffense) {
@@ -400,7 +419,7 @@ export class Game {
     if (sim.carrier) focus = sim.carrier.y;
     else if (sim.phase === 'air' && sim.ball) focus = sim.ballGround().y - sim.ballHeight();
     if (focus !== null) {
-      const want = Math.max(this.camY, this.view.camAnchor - focus, 0);
+      const want = Math.min(Math.max(this.camY, this.view.camAnchor - focus, this.camBase()), this.camLimit());
       this.camY = lerp(this.camY, want, Math.min(1, dt * 6));
     }
   }
