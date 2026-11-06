@@ -27,6 +27,7 @@ export const DEF_BASE: Record<DefId, { x: number; d: number; kind: DefKind }> = 
 export interface ZoneDef {
   name: string; x: number; wx: number; d: number; dmin: number; dmax: number; deep: boolean;
   wide?: boolean; // flat defenders take the widest threat instead of the nearest
+  spy?: boolean; // shadows the quarterback instead of an area
 }
 
 const deep = (name: string, x: number, wx: number, d: number, dmin = 10): ZoneDef => ({ name, x, wx, d, dmin, dmax: 50, deep: true });
@@ -53,6 +54,7 @@ export const ZONES = {
   midHook: under('MIDDLE HOOK', 0, 6, 10, 3, 15),
   robber: under('ROBBER', 0, 8, 12, 6, 18),
   tampaMiddle: deep('DEEP MIDDLE', 0, 7, 14, 8), // Tampa 2: the MIKE runs the deep middle
+  spy: { ...under('QB SPY', 0, 20, 6, 2, 10), spy: true },
 } satisfies Record<string, ZoneDef>;
 export type ZoneKey = keyof typeof ZONES;
 
@@ -135,6 +137,15 @@ export const CALLS: Call[] = [
   {
     id: 'c1-lurk', name: 'COVER 1 LURK', coverage: 'COVER 1', family: 'man', shell: 'one', weight: 0.6,
     rush: [...DL], man: ['CB_L', 'CB_R', 'SAM', 'WILL', 'MIKE'], zones: { FS: 'deepMiddle', SS: 'robber' },
+  },
+  {
+    id: 'c1-spy', name: 'COVER 1 SPY', coverage: 'COVER 1', family: 'man', shell: 'one', weight: 0.5,
+    rush: [...DL], man: ['CB_L', 'CB_R', 'SS', 'SAM', 'WILL'], zones: { FS: 'deepMiddle', MIKE: 'spy' },
+  },
+  {
+    id: 'sim-pressure', name: 'SIM PRESSURE', coverage: 'COVER 3', family: 'zone', shell: 'one', weight: 0.6,
+    rush: ['DE_L', 'DT_L', 'DT_R', 'WILL'], man: [],
+    zones: { CB_L: 'deep3L', FS: 'deep3M', CB_R: 'deep3R', DE_R: 'curlFlatR', SS: 'curlFlatL', MIKE: 'hookL', SAM: 'hookR' },
   },
   {
     id: 'c3-buzz', name: 'COVER 3 BUZZ', coverage: 'COVER 3', family: 'zone', shell: 'one', weight: 0.8,

@@ -2,6 +2,9 @@
 
 Top-down, vertical, pixel-art football game for phone and laptop (browser / installable web app).
 
+## Start screen
+Pick **quarter length** (2 / 3 / 5 / 8 minutes), difficulty, game speed and aim mode, then **KICKOFF**. Pause has **MAIN MENU** to come back here.
+
 ## The game
 A full game against the CPU: **4 quarters of 3 minutes**, passing only, no kicks.
 - **Scoring:** a touchdown is worth 7 (no kicking), then the other team starts at its own 25.
@@ -11,7 +14,7 @@ A full game against the CPU: **4 quarters of 3 minutes**, passing only, no kicks
 
 ### Between plays
 - **The huddle:** before every snap you call your play (offense) or your defense. **SAME PLAY / SAME CALL** repeats the last one; on defense **AUTO** lets the coordinator call it; on 4th down the offensive huddle offers **PUNT** (pick a play to go for it).
-- **Clock:** after a catch in bounds or a sack the clock keeps running while you huddle (up to a 25-second play clock, shown on the scoreboard), so hurrying up saves time. Incompletions, out of bounds, scores and turnovers stop it. **Two-minute warning** in Q2 and Q4.
+- **Clock:** after a catch in bounds or a sack the clock keeps running while you huddle (2.5 game seconds per real second, up to a 25-second play clock shown on the scoreboard), so hurrying up saves time. Incompletions, out of bounds, scores and turnovers stop it. **Two-minute warning** in Q2 and Q4.
 - **Timeouts:** 3 per team per half (pips under the score). Call yours from the pause menu; the CPU uses its own late when it's behind.
 - **Pause** (top right): resume, timeout, settings, restart game.
 
@@ -26,7 +29,7 @@ A full game against the CPU: **4 quarters of 3 minutes**, passing only, no kicks
 - Two control schemes; tap **MODE** to switch: **PULL** (slingshot, finger never covers the target) and **AIM** (landing spot just above your finger).
 
 ### The defense you face
-- Seventeen calls (you can call these yourself on defense): Cover 0, Cover 1 (with and without a blitz or robber), Cover 2, Cover 2 Man, Tampa 2, Cover 3 (and a fire-zone blitz), Cover 4, Cover 6, with 3- to 6-man rushes.
+- Nineteen calls (you can call these yourself on defense), including a QB spy and a simulated pressure: Cover 0, Cover 1 (with and without a blitz or robber), Cover 2, Cover 2 Man, Tampa 2, Cover 3 (and a fire-zone blitz), Cover 4, Cover 6, with 3- to 6-man rushes.
 - It lines up to your formation (flat defenders over the slot, linebackers sliding to the strength), and man defenders vary their technique snap to snap: inside or outside leverage, press or off. Read it before the snap: outside leverage leaves the slant, off coverage leaves the hitch.
 - The safeties show a shell (one-high, two-high, or both down) that is usually, not always, what they play; they rotate after the snap.
 - It adapts: lean on the same play and it starts calling coverages that beat it and jumps it quicker ("THEY'VE SEEN THIS PLAY").
@@ -54,6 +57,9 @@ Picked at random each snap. Linemen block, rushers try to beat their block; spar
 | Cover 2 | 3 or 4 | zone: 2 deep halves, 5 underneath |
 | Cover 3 | 4 or 5 (fire zone) | zone: 3 deep thirds, 3-4 underneath |
 | Cover 4 | 3 or 4 | zone: 4 deep quarters, 3-4 underneath |
+
+### Blocking, screens and rollouts
+Linemen on screens let their rusher through and release downfield; receivers on stalk routes block the defender over them. Downfield blockers pick the nearest defender to the ball, get between him and the ball, and hold him for a moment (a held defender barely moves and can't make the tackle; linemen hold better than receivers). On rollouts the QB sprints out and throws on the run (a bit less accurate, away from the rush).
 
 ### Playbook
 | Category | Play | Good against |
@@ -85,6 +91,11 @@ Picked at random each snap. Linemen block, rushers try to beat their block; spar
 | CROSSERS | Texas | man |
 | SHOTS | Corner Post | Cover 3 |
 | SHOTS | Deep Cross | Cover 1 |
+| SCREEN | RB Screen | blitz (QB drifts back, three linemen release to block) |
+| SCREEN | Bubble | soft coverage (two receivers stalk-block) |
+| SCREEN | Tunnel | man (receiver comes inside behind two releasing linemen) |
+| CORE | Sprint Out | zone (QB rolls right, throws on the run) |
+| CORE | Roll Cross | man (QB rolls left, deep crosser coming back) |
 
 Against three or more wide receivers the defense subs a nickel back in for a linebacker.
 

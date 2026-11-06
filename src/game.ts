@@ -19,7 +19,7 @@ const SNAP_CATCH = 0.3; // sim seconds for the QB to catch the shotgun snap
 const AIM_OFFSET = 10; // AIM mode: the landing spot sits this far above your finger (screen px)
 const DEF_PRESNAP = 2.2; // seconds after you call your defense before the CPU snaps
 const STICK_RANGE = 22; // joystick: drag this far (screen px) for full speed
-const BETWEEN_RATE = 5; // game seconds that run off per real second between plays (clock running)
+const BETWEEN_RATE = 2.5; // game seconds that run off per real second between plays (clock running)
 const USER_DEFENDER = 'MIKE';
 type Rect = { x: number; y: number; w: number; h: number };
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
@@ -34,7 +34,7 @@ function makeRatings(): Record<string, number> {
 const pick = (r: Record<string, number>, prefix: string) =>
   Object.fromEntries(Object.entries(r).filter(([k]) => k.startsWith(prefix)));
 
-type Screen = 'huddle' | 'play' | 'banner' | 'final';
+type Screen = 'title' | 'huddle' | 'play' | 'banner' | 'final';
 
 export class Game {
   settings = loadSettings();
@@ -55,7 +55,7 @@ export class Game {
   pauseOpen = false; // the pause menu
   private confirmRestart = false;
   autoplay = false; // tests: the CPU brain plays your side too
-  screen: Screen = 'huddle';
+  screen: Screen = 'title';
   banner: (Banner & { kind: 'play' | 'punt' | 'note' }) | null = null;
   private bannerAt = 0;
   toast: { text: string; color: string; until: number } | null = null;
@@ -72,7 +72,14 @@ export class Game {
   private lineToGain = 35;
   private attackingYours = false; // is the top end zone yours (CPU on offense)?
 
-  constructor() { this.applySettings(); this.startHuddle(); }
+  constructor() { this.applySettings(); this.showTitle(); }
+
+  /** The start screen: pick quarter length, difficulty, speed, aim mode; then KICKOFF. */
+  showTitle(): void {
+    this.screen = 'title';
+    this.pauseOpen = false;
+    this.menu = new Menu({ kind: 'offense', selectedId: null, settings: this.settings, title: true });
+  }
 
   applySettings(): void {
     this.mode = this.settings.aim;
@@ -85,7 +92,7 @@ export class Game {
 
   get onOffense(): boolean { return this.match.offense === 'you'; }
   /** Kept for tests and older callers: the huddle menu is the "playbook". */
-  get menuOpen(): boolean { return this.screen === 'huddle' || !!(this.menu && this.menu.showSettings); }
+  get menuOpen(): boolean { return this.screen === 'huddle' || this.screen === 'title' || !!(this.menu && this.menu.showSettings); }
 
   setView(v: View): void {
     this.view = v; this.drag = null; this.stick = null;
@@ -125,15 +132,15 @@ export class Game {
     return v.landscape ? { x: v.w - v.panel + 3, y: 3, w: v.panel - 6, h: 13 } : { x: v.w - 17, y: 2, w: 15, h: 15 };
   }
   /** Pause menu buttons. */
-  get pauseButtons(): { resume: Rect; timeout: Rect; settings: Rect; restart: Rect } {
+  get pauseButtons(): { resume: Rect; timeout: Rect; settings: Rect; restart: Rect; title: Rect } {
     const v = this.view, w = 96, x = Math.round(v.w / 2 - w / 2);
-    const y0 = v.landscape ? 40 : 110, gap = v.landscape ? 22 : 26;
+    const y0 = v.landscape ? 36 : 104, gap = v.landscape ? 20 : 26;
     const r = (i: number) => ({ x, y: y0 + i * gap, w, h: 16 });
-    return { resume: r(0), timeout: r(1), settings: r(2), restart: r(3) };
+    return { resume: r(0), timeout: r(1), settings: r(2), restart: r(3), title: r(4) };
   }
 
   newGame(): void {
-    this.match = new Match('you');
+    this.match = new Match('you', Number(this.settings.quarter) * 60);
     this.ratings = { you: makeRatings(), cpu: makeRatings() };
     this.history = [];
     this.lastPlayId = null;
@@ -283,6 +290,12 @@ export class Game {
   }
 
   pointerDown(p: Vec): void {
+    if (this.screen === 'title' && this.menu) {
+      const a = this.menu.tap(p, this.view);
+      if (a?.type === 'settings') this.applySettings();
+      if (a?.type === 'start') { this.applySettings(); this.newGame(); }
+      return;
+    }
     // settings opened from the pause menu
     if (this.menu?.showSettings) {
       const a = this.menu.tap(p, this.view);
@@ -325,7 +338,7 @@ export class Game {
     } else if (hit(b.restart, p)) {
       if (this.confirmRestart) this.newGame();
       else this.confirmRestart = true;
-    }
+    } else if (hit(b.title, p)) this.showTitle();
   }
 
   pointerMove(p: Vec): void {
@@ -362,7 +375,7 @@ export class Game {
   update(dt: number): void {
     this.clock += dt;
     if (this.paused || this.pauseOpen || this.menu?.showSettings) return;
-    if (this.screen === 'final') return;
+    if (this.screen === 'final' || this.screen === 'title') return;
     const sim = this.sim;
 
     // Between plays the clock keeps running (if it's running), up to the play clock.
@@ -439,6 +452,11 @@ export class Game {
   // ---------- drawing ----------
 
   render(ctx: CanvasRenderingContext2D): void {
+    if (this.screen === 'title' && this.menu) {
+      drawField(ctx, this, 50, 60, false); // a field behind the title
+      this.menu.render(ctx, this.view);
+      return;
+    }
     if (this.screen === 'huddle' && this.menu) {
       this.menu.render(ctx, this.view);
       this.renderPauseButton(ctx);
@@ -494,6 +512,7 @@ export class Game {
     button(ctx, b.timeout, `TIMEOUT (${m.timeouts.you} LEFT)`, this.canTimeout() ? C.white : C.darkGrey);
     button(ctx, b.settings, 'SETTINGS', C.white);
     button(ctx, b.restart, this.confirmRestart ? 'TAP AGAIN TO RESTART' : 'RESTART GAME', this.confirmRestart ? C.orange : C.white);
+    button(ctx, b.title, 'MAIN MENU', C.white);
   }
 
   private renderPlayers(ctx: CanvasRenderingContext2D): void {
@@ -598,7 +617,7 @@ export class Game {
     // along the throw line with distance and grows under pressure (orange).
     const pressured = this.sim.pressured;
     const sp = throwSpread(dist(from, to), pressured);
-    const along = sp.along * s, lat = sp.lat * s;
+    const along = sp.along * s * this.sim.movingFactor, lat = sp.lat * s * this.sim.movingFactor; // throwing on the run spreads it
     const u = { x: (to.x - from.x) / (dist(from, to) || 1), y: (to.y - from.y) / (dist(from, to) || 1) };
     const x = Math.round(this.sx(to.x)), y = Math.round(this.sy(to.y));
     ctx.fillStyle = pressured ? C.orange : C.yellow;

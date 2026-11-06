@@ -3,7 +3,7 @@
 import { C, ROUTE_COLORS } from './config';
 import { FORMATIONS, OL_DEPTH, OL_SPOTS } from './playbook/formations';
 import type { Play } from './playbook/plays';
-import { ROUTES, routeYards } from './playbook/routes';
+import { ROUTES, type RouteDef, routeYards } from './playbook/routes';
 import { clamp } from './util';
 
 export function pixelLine(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number): void {
@@ -40,6 +40,14 @@ export function drawPlayArt(ctx: CanvasRenderingContext2D, play: Play, x: number
   for (const spot of FORMATIONS[play.formation].skill) {
     const pr = play.routes.find((r) => r.who === spot.id);
     const ax = Math.round(px(spot.x)), ay = Math.round(py(spot.d));
+    if (pr?.route === 'stalk') {
+      // stalk block: a short line up to the defender with a bar
+      ctx.fillStyle = C.grey;
+      pixelLine(ctx, ax, ay - 2, ax, ay - 6);
+      pixelLine(ctx, ax - 2, ay - 6, ax + 2, ay - 6);
+      ctx.fillRect(ax - 1, ay - 1, 3, 3);
+      continue;
+    }
     if (!pr || pr.route === 'block') {
       // pass protection: a short "T"
       ctx.fillStyle = C.grey;
@@ -49,7 +57,7 @@ export function drawPlayArt(ctx: CanvasRenderingContext2D, play: Play, x: number
       continue;
     }
     const color = ROUTE_COLORS[colorIdx++ % ROUTE_COLORS.length];
-    const route = ROUTES[pr.route];
+    const route: RouteDef = ROUTES[pr.route];
     const pts = [{ x: spot.x, d: spot.d }, ...routeYards(spot.x, spot.d, route, pr.flip)];
     if (route.end === 'continue') {
       const a = pts[pts.length - 2], b = pts[pts.length - 1];
@@ -76,7 +84,16 @@ export function drawPlayArt(ctx: CanvasRenderingContext2D, play: Play, x: number
   }
 
   ctx.fillStyle = C.grey;
-  for (const ox of OL_SPOTS) ctx.fillRect(Math.round(px(ox)) - 1, Math.round(py(OL_DEPTH)) - 1, 2, 2);
+  OL_SPOTS.forEach((ox, i) => {
+    const x0 = Math.round(px(ox)), y0 = Math.round(py(OL_DEPTH));
+    ctx.fillRect(x0 - 1, y0 - 1, 2, 2);
+    if (play.screen?.release.includes(i)) pixelLine(ctx, x0, y0 - 2, x0 + (ox >= 0 ? 2 : -2), y0 - 5); // releases downfield
+  });
   ctx.fillStyle = C.yellow;
-  ctx.fillRect(Math.round(px(0)) - 1, Math.round(py(-5)) - 1, 3, 3);
+  const qx = Math.round(px(0)), qy = Math.round(py(-5));
+  if (play.rollout) { // the QB's sprint-out path
+    const ex = Math.round(px(play.rollout === 'right' ? 8 : -8)), ey = Math.round(py(-6.5));
+    pixelLine(ctx, qx, qy, ex, ey);
+  }
+  ctx.fillRect(qx - 1, qy - 1, 3, 3);
 }

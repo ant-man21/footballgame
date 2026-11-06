@@ -4,17 +4,18 @@ import type { RouteKey } from './routes';
 // The playbook. Plays are grouped into categories so the menu can grow:
 // add a category here and plays that use it, and the menu picks them up.
 
-export type CategoryId = 'quick' | 'core' | 'crossers' | 'shots';
+export type CategoryId = 'quick' | 'core' | 'crossers' | 'shots' | 'screen';
 export const CATEGORIES: { id: CategoryId; name: string }[] = [
   { id: 'quick', name: 'QUICK' },
   { id: 'core', name: 'CORE' },
-  { id: 'crossers', name: 'CROSSERS' },
+  { id: 'crossers', name: 'CROSS' },
   { id: 'shots', name: 'SHOTS' },
+  { id: 'screen', name: 'SCREEN' },
 ];
 
 export interface PlayRoute {
   who: string; // formation spot id
-  route: RouteKey | 'block';
+  route: RouteKey | 'block' | 'stalk'; // stalk: block the defender over him
   flip?: boolean; // run the route toward the other side
 }
 
@@ -25,6 +26,10 @@ export interface Play {
   formation: FormationKey;
   vs: string; // what it is good against, shown on the card
   routes: PlayRoute[];
+  /** Screens: these linemen (0-4, left to right) let their man go and release downfield at `at` sim seconds. */
+  screen?: { release: number[]; at: number };
+  /** Rollouts: the QB sprints out to this side and throws on the move. */
+  rollout?: 'left' | 'right';
 }
 
 export const PLAYS: Play[] = [
@@ -233,6 +238,48 @@ export const PLAYS: Play[] = [
     routes: [
       { who: 'X', route: 'post' }, { who: 'Y', route: 'deepOver' },
       { who: 'H', route: 'flat' }, { who: 'Z', route: 'go' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'rb-screen', name: 'RB SCREEN', category: 'screen', formation: 'spread', vs: 'VS BLITZ',
+    screen: { release: [2, 3, 4], at: 0.75 },
+    routes: [
+      { who: 'X', route: 'go' }, { who: 'H', route: 'seam' },
+      { who: 'Y', route: 'seam' }, { who: 'Z', route: 'go' },
+      { who: 'RB', route: 'screenRB' },
+    ],
+  },
+  {
+    id: 'bubble', name: 'BUBBLE', category: 'screen', formation: 'trips', vs: 'VS SOFT',
+    routes: [
+      { who: 'X', route: 'slant' }, { who: 'Y', route: 'bubble' },
+      { who: 'H', route: 'stalk' }, { who: 'Z', route: 'stalk' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'tunnel', name: 'TUNNEL', category: 'screen', formation: 'spread', vs: 'VS MAN',
+    screen: { release: [3, 4], at: 0.45 },
+    routes: [
+      { who: 'X', route: 'go' }, { who: 'H', route: 'seam' },
+      { who: 'Y', route: 'stalk' }, { who: 'Z', route: 'tunnel' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'sprint-out', name: 'SPRINT OUT', category: 'core', formation: 'trips', vs: 'VS ZONE', rollout: 'right',
+    routes: [
+      { who: 'X', route: 'dig' }, { who: 'Y', route: 'flat' },
+      { who: 'H', route: 'sail' }, { who: 'Z', route: 'go' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'roll-cross', name: 'ROLL CROSS', category: 'core', formation: 'ace', vs: 'VS MAN', rollout: 'left',
+    routes: [
+      { who: 'X', route: 'go' }, { who: 'Y', route: 'flat' },
+      { who: 'H', route: 'drag' }, { who: 'Z', route: 'deepOver' },
       { who: 'RB', route: 'block' },
     ],
   },

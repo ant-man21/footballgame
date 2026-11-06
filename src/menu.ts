@@ -8,7 +8,7 @@ import { drawText } from './font';
 import { drawPlayArt } from './playart';
 import { FORMATIONS } from './playbook/formations';
 import { CATEGORIES, PLAYS, type Play } from './playbook/plays';
-import { DIFFICULTIES, SPEEDS, type Settings, cycle } from './settings';
+import { DIFFICULTIES, QUARTERS, SPEEDS, type Settings, cycle } from './settings';
 import type { Vec } from './util';
 import type { View } from './view';
 
@@ -19,7 +19,7 @@ export type MenuAction =
   | { type: 'pick'; play: Play }
   | { type: 'pickCall'; call: Call }
   | { type: 'same' } | { type: 'auto' } | { type: 'punt' }
-  | { type: 'close' } | { type: 'settings' }
+  | { type: 'close' } | { type: 'settings' } | { type: 'start' }
   | null;
 
 export interface MenuOptions {
@@ -29,6 +29,7 @@ export interface MenuOptions {
   subtitle?: string; // e.g. "2ND & 7 - OWN 35 - Q2 1:48"
   fourthDown?: boolean; // offense: show PUNT
   settingsOnly?: boolean; // opened from pause: just the settings panel
+  title?: boolean; // the start screen: title, game options, KICKOFF
 }
 
 function box(ctx: CanvasRenderingContext2D, r: Rect, fill: string, border: string): void {
@@ -39,6 +40,7 @@ function box(ctx: CanvasRenderingContext2D, r: Rect, fill: string, border: strin
 }
 
 type Option = { id: string; name: string };
+const QUARTER_ROW: { key: keyof Settings; label: string; list: Option[] } = { key: 'quarter', label: 'QUARTER LENGTH', list: QUARTERS };
 const SETTING_ROWS: { key: keyof Settings; label: string; list: Option[] }[] = [
   { key: 'difficulty', label: 'DIFFICULTY', list: DIFFICULTIES },
   { key: 'speed', label: 'GAME SPEED', list: SPEEDS },
@@ -55,7 +57,7 @@ export class Menu {
   private cats: readonly { id: string; name: string }[];
 
   constructor(private o: MenuOptions) {
-    this.showSettings = !!o.settingsOnly;
+    this.showSettings = !!o.settingsOnly || !!o.title;
     if (o.kind === 'offense') {
       this.cats = CATEGORIES;
       this.items = PLAYS.map((p) => ({ id: p.id, cat: p.category, play: p }));
@@ -103,13 +105,18 @@ export class Menu {
 
   /** Settings panel rows: label plus < value > arrows. */
   settingsLayout(v: View) {
-    const top = v.landscape ? 34 : 60, rowH = v.landscape ? 34 : 44;
+    const title = !!this.o.title;
+    const list = title ? [QUARTER_ROW, ...SETTING_ROWS] : SETTING_ROWS;
+    const top = title ? (v.landscape ? 34 : 92) : v.landscape ? 34 : 60;
+    const rowH = title ? (v.landscape ? 30 : 42) : v.landscape ? 34 : 44;
     const w = Math.min(160, v.w - 16), x = Math.round((v.w - w) / 2);
-    const rows = SETTING_ROWS.map((row, i) => {
+    const rows = list.map((row, i) => {
       const y = top + i * rowH;
       return { row, y, left: { x, y: y + 9, w: 22, h: 16 }, right: { x: x + w - 22, y: y + 9, w: 22, h: 16 }, mid: x + w / 2 };
     });
-    const done = { x: Math.round(v.w / 2 - 30), y: v.h - 18, w: 60, h: 14 };
+    const done = title
+      ? { x: Math.round(v.w / 2 - 50), y: v.landscape ? v.h - 22 : v.h - 50, w: 100, h: 20 }
+      : { x: Math.round(v.w / 2 - 30), y: v.h - 18, w: 60, h: 14 };
     return { rows, done };
   }
 
@@ -124,6 +131,7 @@ export class Menu {
         return { type: 'settings' };
       }
       if (hit(done, p)) {
+        if (this.o.title) return { type: 'start' };
         if (this.o.settingsOnly) return { type: 'close' };
         this.showSettings = false;
       }
@@ -194,7 +202,13 @@ export class Menu {
   }
 
   private renderSettings(ctx: CanvasRenderingContext2D, v: View): void {
-    drawText(ctx, 'SETTINGS', v.w / 2, v.landscape ? 6 : 20, { scale: 2, color: C.yellow, shadow: C.navy, align: 'center' });
+    const title = !!this.o.title;
+    if (title) {
+      drawText(ctx, 'FOOTBALL', v.w / 2, v.landscape ? 4 : 30, { scale: 3, color: C.yellow, shadow: C.red, align: 'center' });
+      drawText(ctx, 'PASS-FIRST POCKET GRIDIRON', v.w / 2, v.landscape ? 22 : 54, { align: 'center', color: C.grey });
+    } else {
+      drawText(ctx, 'SETTINGS', v.w / 2, v.landscape ? 6 : 20, { scale: 2, color: C.yellow, shadow: C.navy, align: 'center' });
+    }
     const { rows, done } = this.settingsLayout(v);
     const s = this.o.settings as unknown as Record<string, string>;
     for (const r of rows) {
@@ -208,8 +222,14 @@ export class Menu {
     }
     const note = this.o.settings.difficulty === 'rookie' ? 'SLOWER DEFENDERS, MORE CATCHES'
       : this.o.settings.difficulty === 'pro' ? 'A LITTLE HELP' : 'NO HELP';
-    drawText(ctx, note, v.w / 2, rows[0].y + 28, { align: 'center', color: C.grey });
-    box(ctx, done, C.ink, C.white);
-    drawText(ctx, 'DONE', done.x + done.w / 2, done.y + 5, { align: 'center' });
+    const diffRow = rows.find((r) => r.row.key === 'difficulty')!;
+    if (!v.landscape || !title) drawText(ctx, note, v.w / 2, diffRow.y + 28, { align: 'center', color: C.grey });
+    if (title) {
+      box(ctx, done, C.ink, C.green);
+      drawText(ctx, 'KICKOFF', done.x + done.w / 2, done.y + 6, { align: 'center', color: C.green, scale: 1 });
+    } else {
+      box(ctx, done, C.ink, C.white);
+      drawText(ctx, 'DONE', done.x + done.w / 2, done.y + 5, { align: 'center' });
+    }
   }
 }

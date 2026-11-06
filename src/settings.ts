@@ -3,11 +3,15 @@
 export type Difficulty = 'rookie' | 'pro' | 'allpro';
 export type Speed = 'slow' | 'normal' | 'fast';
 export type AimPref = 'pull' | 'aim';
+export type QuarterLen = '2' | '3' | '5' | '8';
 
-export interface Settings { difficulty: Difficulty; speed: Speed; aim: AimPref }
+export interface Settings { difficulty: Difficulty; speed: Speed; aim: AimPref; quarter: QuarterLen }
 
 export const DIFFICULTIES: { id: Difficulty; name: string }[] = [
   { id: 'rookie', name: 'ROOKIE' }, { id: 'pro', name: 'PRO' }, { id: 'allpro', name: 'ALL-PRO' },
+];
+export const QUARTERS: { id: QuarterLen; name: string }[] = [
+  { id: '2', name: '2 MIN' }, { id: '3', name: '3 MIN' }, { id: '5', name: '5 MIN' }, { id: '8', name: '8 MIN' },
 ];
 export const SPEEDS: { id: Speed; name: string }[] = [
   { id: 'slow', name: 'SLOW' }, { id: 'normal', name: 'NORMAL' }, { id: 'fast', name: 'FAST' },
@@ -24,7 +28,7 @@ export const DIFFICULTY_TUNING: Record<Difficulty, { speed: number; react: numbe
 export const SPEED_FACTOR: Record<Speed, number> = { slow: 0.82, normal: 1, fast: 1.15 };
 
 const KEY = 'footballgame.settings';
-const DEFAULTS: Settings = { difficulty: 'pro', speed: 'normal', aim: 'pull' };
+const DEFAULTS: Settings = { difficulty: 'pro', speed: 'normal', aim: 'pull', quarter: '5' };
 
 export function loadSettings(): Settings {
   try {

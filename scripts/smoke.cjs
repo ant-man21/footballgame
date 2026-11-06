@@ -31,10 +31,18 @@ const OUT = process.env.SHOT_DIR || '.';
     page.waitForFunction((ph) => window.__game.sim.phase === ph, ph, { timeout });
   const check = (cond, msg) => { if (!cond) throw new Error(msg); console.log('ok  ' + msg); };
 
+  // 0. Title screen: pick quarter length (and the rest), then KICKOFF.
+  check(await G(() => window.__game.screen === 'title'), 'the game opens on the title screen');
+  const tl = await G(() => { const g = window.__game; const L = g.menu.settingsLayout(g.view); const q = L.rows.find((r) => r.row.key === 'quarter'); return { right: q.right, done: L.done }; });
+  await tap({ x: tl.right.x + tl.right.w / 2, y: tl.right.y + tl.right.h / 2 }); // 5 MIN -> 8 MIN
+  check(await G(() => window.__game.settings.quarter === '8'), 'title: quarter length can be changed (8 MIN)');
+  await tap({ x: tl.done.x + tl.done.w / 2, y: tl.done.y + tl.done.h / 2 });
+  check(await G(() => window.__game.screen === 'huddle' && window.__game.match.clockText === '8:00'), 'KICKOFF starts a game with 8:00 quarters');
+
   // 1. Every defensive call accounts for all 11 defenders, for every play.
   const bad = await G(() => {
     const g = window.__game; const out = [];
-    for (const call of ['c0', 'c1-blitz', 'c1', 'c2', 'c2-drop', 'c3', 'c3-fire', 'c4', 'c4-drop', 'c2-man', 'c6', 'tampa2', 'c1-press', 'c1-lurk', 'c3-buzz', 'nickel-fire', 'c4-blitz']) {
+    for (const call of ['c0', 'c1-blitz', 'c1', 'c2', 'c2-drop', 'c3', 'c3-fire', 'c4', 'c4-drop', 'c2-man', 'c6', 'tampa2', 'c1-press', 'c1-lurk', 'c3-buzz', 'nickel-fire', 'c4-blitz', 'c1-spy', 'sim-pressure']) {
       for (const play of window.__plays) {
         g.sim.forceCall = call; g.sim.reset(play);
         const d = g.sim.defense;
@@ -58,7 +66,7 @@ const OUT = process.env.SHOT_DIR || '.';
   check(adapt.seen < adapt.base * 0.6, `defense adapts: Cover 2 looks vs Smash ${Math.round(adapt.base * 100)}% fresh -> ${Math.round(adapt.seen * 100)}% after 8 straight calls`);
 
   // 2. Drive starts at our own 25, 1st & 10.
-  check(await G(() => window.__game.match.drive.spotText === 'OWN 25' && window.__game.match.drive.downText === '1ST & 10' && window.__game.match.clockText === '3:00'), 'game starts Q1 3:00, 1ST & 10 at OWN 25');
+  check(await G(() => window.__game.match.drive.spotText === 'OWN 25' && window.__game.match.drive.downText === '1ST & 10' && window.__game.match.quarter === 1), 'game starts in Q1, 1ST & 10 at OWN 25');
   // keep the tests below on offense regardless of what happens (e.g. an interception)
   const offense = `const g = window.__game; g.match.offense = 'you'; g.match.drive.down = 1; g.match.drive.toGo = 10; g.match.drive.ballOn = 25; g.match.clockRunning = false;`;
 
@@ -202,11 +210,15 @@ const OUT = process.env.SHOT_DIR || '.';
   await G(() => { window.__game.match.score.you = 7; });
   await tap(c(pz.restart));
   check(await G(() => !window.__game.pauseOpen && window.__game.match.score.you === 0 && window.__game.match.quarter === 1), 'second tap restarts the game');
+  await tap({ x: pbtn.x + pbtn.w / 2, y: pbtn.y + pbtn.h / 2 });
+  await tap(c(pz.title));
+  check(await G(() => window.__game.screen === 'title'), 'MAIN MENU goes back to the title screen');
+  await tap({ x: tl.done.x + tl.done.w / 2, y: tl.done.y + tl.done.h / 2 });
 
   // 12. Clock: it runs between plays when it's running, and stops at the two-minute warning.
   const clk = await G(() => {
     const g = window.__game; g.match.quarter = 2; g.match.clock = 126; g.match.clockRunning = true; g.runoff = 0; g.startHuddle();
-    for (let i = 0; i < 60; i++) g.update(1 / 30); // 2 real seconds in the huddle
+    for (let i = 0; i < 90; i++) g.update(1 / 30); // 3 real seconds in the huddle (clock runs 2.5x)
     return { clock: g.match.clock, running: g.match.clockRunning, toast: g.toast && g.toast.text };
   });
   check(clk.clock === 120 && !clk.running && clk.toast === 'TWO-MINUTE WARNING', `clock ran in the huddle and stopped at the two-minute warning (${clk.clock}s, "${clk.toast}")`);
@@ -225,6 +237,9 @@ const OUT = process.env.SHOT_DIR || '.';
   }, q);
   const lw = await LG(() => window.__game.view.landscape ? document.getElementById('game').width : 0);
   check(lw >= 320, `landscape: ${lw}x180 view (fills a ${(915/412).toFixed(2)}:1 phone) when the phone is sideways`);
+  const ldone = await LG(() => { const g = window.__game; return g.menu.settingsLayout(g.view).done; });
+  const ld = await lscreen({ x: ldone.x + ldone.w / 2, y: ldone.y + ldone.h / 2 });
+  await ltouch('touchStart', [ld]); await ltouch('touchEnd', []); // KICKOFF
   const card = await LG(() => { const g = window.__game; const c = g.menu.layout(g.view).cards[2]; return { x: c.r.x + c.r.w / 2, y: c.r.y + c.r.h / 2, id: c.it.play.id }; });
   const cp = await lscreen(card);
   await ltouch('touchStart', [cp]); await ltouch('touchEnd', []);

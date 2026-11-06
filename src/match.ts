@@ -26,7 +26,7 @@ const fmtYds = (g: number) => (g > 0 ? `+${g} YDS` : g < 0 ? `${g} YDS` : 'NO GA
 
 export class Match {
   quarter = 1;
-  clock = QUARTER_SECONDS;
+  clock: number;
   score: Record<Side, number> = { you: 0, cpu: 0 };
   stats: Record<Side, TeamStats> = { you: newStats(), cpu: newStats() };
   offense: Side;
@@ -37,9 +37,10 @@ export class Match {
   private warned = new Set<number>(); // quarters that have had their two-minute warning
   private firstOffense: Side;
 
-  constructor(first: Side = 'you') {
+  constructor(first: Side = 'you', readonly quarterSeconds = QUARTER_SECONDS) {
     this.offense = first;
     this.firstOffense = first;
+    this.clock = quarterSeconds;
   }
 
   get defense(): Side { return other(this.offense); }
@@ -151,7 +152,7 @@ export class Match {
     if (this.clock > 0) return warning;
     if (this.quarter === 4) { this.clock = 0; this.over = true; return false; }
     this.quarter++;
-    this.clock = QUARTER_SECONDS;
+    this.clock = this.quarterSeconds;
     if (this.quarter === 3) { // halftime: the other team gets the ball first, timeouts reset
       this.offense = other(this.firstOffense);
       this.drive = new Drive(START_YARD);

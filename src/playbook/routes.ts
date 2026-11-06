@@ -4,7 +4,10 @@
 // 'continue' routes keep running in the direction of the last leg; 'stop' routes settle.
 
 export interface RoutePt { o: number; d: number }
-export interface RouteDef { name: string; pts: RoutePt[]; end: 'stop' | 'continue' }
+export interface RouteDef {
+  name: string; pts: RoutePt[]; end: 'stop' | 'continue';
+  delay?: number; // sim seconds he waits (selling a block) before he releases
+}
 
 export const ROUTES = {
   go:        { name: 'GO',        end: 'continue', pts: [{ o: 0, d: 40 }] },
@@ -36,6 +39,10 @@ export const ROUTES = {
   sluggo:    { name: 'SLUGGO',    end: 'continue', pts: [{ o: 0, d: 2 }, { o: -2.5, d: 5 }, { o: -2.5, d: 6 }, { o: -1.5, d: 40 }] },
   outAndUp:  { name: 'OUT + UP',  end: 'continue', pts: [{ o: 0, d: 5 }, { o: 2.5, d: 5.5 }, { o: 3, d: 7 }, { o: 3, d: 40 }] },
   bomb:      { name: 'BOMB',      end: 'continue', pts: [{ o: 0, d: 10 }, { o: -10, d: 45 }] },
+  // screens
+  screenRB:  { name: 'SCREEN',    end: 'stop',     delay: 0.4, pts: [{ o: 4.5, d: 1 }, { o: 6, d: 1.5 }] },
+  bubble:    { name: 'BUBBLE',    end: 'stop',     pts: [{ o: 2, d: -2.5 }, { o: 5, d: -2.5 }] },
+  tunnel:    { name: 'TUNNEL',    end: 'stop',     pts: [{ o: 0, d: 1 }, { o: -5, d: -1.5 }] },
   angle:     { name: 'ANGLE',     end: 'continue', pts: [{ o: 3, d: 0 }, { o: 2, d: 2.5 }, { o: -8, d: 7 }] },
   cornerPost:{ name: 'CORNER POST', end: 'continue', pts: [{ o: 0, d: 9 }, { o: 3, d: 13 }, { o: -3, d: 26 }] },
 } satisfies Record<string, RouteDef>;

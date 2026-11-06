@@ -3,14 +3,14 @@ import { CX, FIELD_LEFT, FIELD_RIGHT, LOS_Y, QB_DEPTH, ROUTE_COLORS, TIME_SCALE,
 import { CALLS, type Call, DEF_BASE, type DefId, type DefKind, ZONES, type ZoneDef, pickCall } from './defense/calls';
 import { FORMATIONS, OL_DEPTH, OL_SPOTS, type SkillType } from './playbook/formations';
 import type { Play } from './playbook/plays';
-import { ROUTES, routeYards } from './playbook/routes';
+import { ROUTES, type RouteDef, routeYards } from './playbook/routes';
 import { type Vec, clamp, dist, lerp, moveToward, rand, unit } from './util';
 
 export type Team = 'off' | 'def';
 export type Kind = 'qb' | 'ol' | SkillType | DefKind;
 export type Phase = 'presnap' | 'live' | 'air' | 'run' | 'done';
 export type Result = 'catch' | 'int' | 'inc' | 'sack';
-type Job = 'none' | 'route' | 'block' | 'rush' | 'man' | 'zone';
+type Job = 'none' | 'route' | 'block' | 'lead' | 'rush' | 'man' | 'zone'; // lead = blocking downfield
 
 /** Top speeds in yards per second. */
 const SPEED: Record<Kind, number> = { qb: 0, ol: 6, wr: 8.0, te: 7.1, rb: 7.6, dl: 6.4, lb: 7.0, db: 7.7 };
@@ -81,6 +81,11 @@ export interface Actor {
   vel: Vec;
   stunUntil: number;
   user: boolean; // the defender you control
+  delay: number; // receivers: sim seconds before he releases into his route (screens sell a block first)
+  blockTarget: Actor | null; // downfield blockers: the defender he's on
+  leadReadyAt: number; // downfield blockers: when he starts looking for someone to block
+  heldBy: Actor | null; // defenders: the blocker holding him
+  heldUntil: number; // defenders: when he sheds that block
   read: Vec; // man coverage: the defender's (lagging) read of his man's velocity
   leverage: number; // man coverage: +1 shades inside, -1 outside (decided each snap)
   cushion: number; // man coverage: yards off at the snap (press ~1, off ~5); closes as the route develops
@@ -129,6 +134,7 @@ function makeActor(id: string, team: Team, kind: Kind, x: number, y: number): Ac
     assigned: null, engaged: null, beatenBy: [], setSpot: { x, y: y + 1.5 * YD },
     engagedBy: null, shedAt: Infinity, burstAt: 0, push: 0,
     vel: { x: 0, y: 0 }, stunUntil: 0, read: { x: 0, y: 0 }, user: false, leverage: 1, cushion: 1,
+    delay: 0, blockTarget: null, leadReadyAt: 0, heldBy: null, heldUntil: 0,
   };
 }
 
@@ -155,6 +161,11 @@ export class Sim {
   lastContest: { off: number | null; def: number | null; outcome: Result } | null = null;
   goalY = -1e9; // pixel y of the goal line we're attacking
   get endLineY() { return this.goalY - 10 * YD; }
+  screenTarget: Actor | null = null; // the receiver a screen is for (blockers set up in front of him)
+  private released = false; // screen linemen have released
+  private qbSpot: Vec | null = null; // rollouts: where the QB is sprinting to
+  /** Throwing on the run spreads the ball out a bit more. */
+  get movingFactor(): number { return this.qbSpot && this.phase === 'live' && dist(this.qb, this.qbSpot) > 2 ? 1.25 : 1; }
 
   get qb(): Actor { return this.actors[0]; }
   get offense() { return this.actors.filter((a) => a.team === 'off'); }
@@ -182,6 +193,11 @@ export class Sim {
   reset(play: Play, goalY = this.goalY, opts: ResetOptions = {}): void {
     const { userDefender = null, ratings = {}, cpuTeam = null, tuning = NO_TUNING, callBias, recognition = 0 } = opts;
     this.play = play;
+    this.screenTarget = null;
+    this.released = false;
+    // rollouts sprint out; screens drift back to let the rush come and buy room
+    this.qbSpot = play.rollout ? { x: fx(play.rollout === 'right' ? 8 : -8), y: fy(-6.5) }
+      : play.screen ? { x: fx(0), y: fy(-8.5) } : null;
     this.catchBias = cpuTeam === 'def' ? tuning.catchBonus : cpuTeam === 'off' ? -tuning.catchBonus : 0;
     this.goalY = goalY;
     this.carrier = null;
@@ -197,6 +213,8 @@ export class Sim {
     this.result = null;
 
     const a: Actor[] = [makeActor('QB', 'off', 'qb', fx(0), fy(-QB_DEPTH))];
+    if (play.rollout) a[0].speed = 6.2 * YD; // sprints out
+    else if (play.screen) a[0].speed = 4.5 * YD; // drifts back
     OL_SPOTS.forEach((x, i) => {
       const ol = makeActor(`OL${i}`, 'off', 'ol', fx(x), fy(OL_DEPTH));
       ol.job = 'block';
@@ -209,10 +227,15 @@ export class Sim {
       const pr = play.routes.find((r) => r.who === spot.id);
       if (!pr || pr.route === 'block') {
         p.job = 'block';
+      } else if (pr.route === 'stalk') {
+        p.job = 'lead'; // blocks the defender over him
+        p.leadReadyAt = 0.2;
       } else {
-        const route = ROUTES[pr.route];
+        const route: RouteDef = ROUTES[pr.route];
         p.job = 'route';
         p.end = route.end;
+        p.delay = route.delay ?? 0;
+        if (pr.route === 'screenRB' || pr.route === 'bubble' || pr.route === 'tunnel') this.screenTarget = p;
         p.color = ROUTE_COLORS[colorIdx++ % ROUTE_COLORS.length];
         const depth = rand(0.93, 1.07); // a little variety in how deep he runs it
         p.path = routeYards(spot.x, spot.d, route, pr.flip).map((q) => ({
@@ -397,7 +420,8 @@ export class Sim {
     // but always inside the oval the player sees while aiming.
     let to = { ...aim };
     if (!accurate) {
-      const { along, lat } = throwSpread(dist(from, aim), this.pressured);
+      const sp = throwSpread(dist(from, aim), this.pressured);
+      const along = sp.along * this.movingFactor, lat = sp.lat * this.movingFactor;
       const u = unit(from, aim);
       let a = 0, b = 0;
       for (let i = 0; i < 12; i++) { // centre-weighted, truncated to the oval
@@ -422,12 +446,15 @@ export class Sim {
     if (this.phase === 'presnap') { this.updateUser(dt); return; } // you can line up before the snap
     if (this.phase !== 'live' && this.phase !== 'air' && this.phase !== 'run') return;
     this.t += dt;
-    if (this.phase === 'run') { this.updateUser(dt); this.updateRun(dt); return; }
+    if (this.phase === 'run') { this.updateUser(dt); this.updateLead(dt); this.updateRun(dt); return; }
     if (this.phase === 'air') this.airT += dt;
 
+    this.updateQb(dt);
     this.updateReceivers(dt);
     this.updateUser(dt);
+    this.releaseScreen();
     this.updateLine(dt);
+    this.updateLead(dt);
     this.updateCoverage(dt);
     this.separate();
 
@@ -474,6 +501,7 @@ export class Sim {
   }
 
   private followRoute(p: Actor, step: number): void {
+    if (this.t < p.delay) return; // still selling the block
     if (p.leg < p.path.length) {
       p.dir = unit(p, p.path[p.leg]);
       if (moveToward(p, p.path[p.leg], step)) p.leg++;
@@ -482,6 +510,75 @@ export class Sim {
       p.y = Math.max(this.endLineY + 2, p.y + p.dir.y * step);
     }
   }
+
+  /** Rollouts: the QB sprints out toward his spot (until he throws). */
+  private updateQb(dt: number): void {
+    if (!this.qbSpot || this.phase !== 'live') return;
+    const ramp = clamp(this.t / 0.5, 0.3, 1);
+    moveToward(this.qb, this.qbSpot, this.qb.speed * ramp * dt);
+  }
+
+  /** Screens: the chosen linemen let their man go and release downfield. */
+  private releaseScreen(): void {
+    const sc = this.play.screen;
+    if (!sc || this.released || this.t < sc.at) return;
+    this.released = true;
+    for (const i of sc.release) {
+      const b = this.actors.find((x) => x.id === `OL${i}`);
+      if (!b || b.job !== 'block') continue;
+      if (b.engaged && b.engaged.engagedBy === b) {
+        b.engaged.engagedBy = null;
+        b.engaged.burstAt = this.t; // let go: he has to get going again
+      }
+      b.engaged = null;
+      b.assigned = null;
+      b.job = 'lead';
+      b.leadReadyAt = this.t;
+    }
+  }
+
+  /**
+   * Downfield blocking (screens, stalk blocks, and after the catch): each
+   * blocker picks the nearest free defender to the ball, gets between him and
+   * the ball, and holds him for a second or two (a held defender barely moves
+   * and can't make the play).
+   */
+  private updateLead(dt: number): void {
+    const leads = this.actors.filter((a) => a.job === 'lead');
+    if (!leads.length) return;
+    const focus = this.carrier ?? this.screenTarget;
+    const taken = new Set<Actor>();
+    for (const b of leads) if (b.blockTarget) taken.add(b.blockTarget);
+    for (const b of leads) {
+      const t = b.blockTarget;
+      if (t && t.heldBy === b && this.t < t.heldUntil) { // stay on him, between him and the ball
+        const u = unit(t, focus ?? b);
+        moveToward(b, { x: t.x + u.x * 5, y: t.y + u.y * 5 }, b.speed * 2 * dt);
+        continue;
+      }
+      if (t && t.heldBy === b) t.heldBy = null; // he shed it
+      if (t) taken.delete(t);
+      b.blockTarget = null;
+      if (this.t < b.leadReadyAt) continue;
+      const ref = focus ?? b;
+      const d = this.defense
+        .filter((x) => x.job !== 'rush' && !x.heldBy && !taken.has(x) && dist(x, ref) < 60)
+        .sort((p, q) => dist(p, ref) - dist(q, ref))[0];
+      if (!d) { if (focus) moveToward(b, { x: focus.x, y: focus.y - 8 }, b.speed * 0.6 * dt); continue; }
+      taken.add(d);
+      moveToward(b, { x: lerp(d.x, ref.x, 0.3), y: lerp(d.y, ref.y, 0.3) }, b.speed * dt);
+      if (dist(b, d) < 6) {
+        d.heldBy = b;
+        d.heldUntil = this.t + rand(1.2, 2.4) * (b.kind === 'ol' ? 0.8 : 0.35); // receivers' stalk blocks are brief
+        b.blockTarget = d;
+      }
+    }
+  }
+
+  /** Is this defender tied up in a downfield block right now? */
+  private held(d: Actor): boolean { return !!d.heldBy && this.t < d.heldUntil; }
+  /** How much a block slows him: linemen engulf, receivers just get in the way. */
+  private holdFactor(d: Actor): number { return !this.held(d) ? 1 : d.heldBy!.kind === 'ol' ? 0.25 : 0.5; }
 
   /** Your defender goes where the joystick points (unless he's tied up in a block). */
   private updateUser(dt: number): void {
@@ -616,11 +713,12 @@ export class Sim {
       }
       d.goal.y = Math.max(d.goal.y, this.endLineY + 2); // nobody drops out the back of the end zone
       const driving = landing && this.airT >= d.react && d.zone?.deep; // deep help drives on the ball
-      moveToward(d, d.goal, d.speed * dt * (driving ? 1.25 : 1));
+      moveToward(d, d.goal, d.speed * dt * (driving ? 1.25 : 1) * this.holdFactor(d));
     }
   }
 
   private zoneTarget(z: ZoneDef): Vec {
+    if (z.spy) return { x: this.qb.x, y: Math.min(this.qb.y - 6 * YD, LOS_Y - 2 * YD) }; // mirror the QB from 6 yards
     const x0 = fx(z.x - z.wx), x1 = fx(z.x + z.wx);
     const top = fy(z.dmax), bottom = fy(z.dmin);
     const land = { x: fx(z.x), y: fy(z.d) };
@@ -660,6 +758,7 @@ export class Sim {
         if (p.engaged === q || q.engaged === p || p.engagedBy === q || q.engagedBy === p) continue;
         if ((p.kind === 'qb' && q.job === 'rush') || (q.kind === 'qb' && p.job === 'rush')) continue;
         if (p === this.carrier || q === this.carrier) continue;
+        if ((p.blockTarget === q && q.heldBy === p) || (q.blockTarget === p && p.heldBy === q)) continue; // locked in a block
         // the receiver going for the ball and defenders can both get to it; the catch decides
         if (this.phase === 'air' && (p === this.intended || q === this.intended)) continue;
         const d = dist(p, q);
@@ -691,7 +790,7 @@ export class Sim {
         let best: Actor | null = null, bestD = Infinity;
         for (const p of this.actors) {
           if (p.team !== team) continue;
-          const eligible = team === 'off' ? p.job === 'route' : p.user || p.job === 'man' || p.job === 'zone';
+          const eligible = team === 'off' ? p.job === 'route' : (p.user || p.job === 'man' || p.job === 'zone') && !this.held(p);
           const d = dist(p, pos);
           if (eligible && d <= reach[team] && d < bestD) { best = p; bestD = d; }
         }
@@ -798,8 +897,9 @@ export class Sim {
         const lead = clamp(dist(d, c) / d.speed, 0, 0.8);
         const aim = { x: c.x + c.vel.x * lead, y: c.y + c.vel.y * lead };
         const blocked = this.receivers.some((r) => r !== c && dist(r, d) < SCREEN_DIST);
-        moveToward(d, aim, d.speed * dt * (blocked ? 0.35 : 1));
+        moveToward(d, aim, d.speed * dt * (this.held(d) ? this.holdFactor(d) : blocked ? 0.55 : 1));
       }
+      if (this.held(d)) continue; // blocked: can't make the tackle
       if (dist(d, c) < TACKLE_DIST) {
         if (Math.random() < (BREAK_CHANCE[c.kind] ?? 0.15)) {
           d.stunUntil = this.t + STUN_TIME; // broken tackle!
