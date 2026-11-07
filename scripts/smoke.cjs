@@ -31,14 +31,21 @@ const OUT = process.env.SHOT_DIR || '.';
     page.waitForFunction((ph) => window.__game.sim.phase === ph, ph, { timeout });
   const check = (cond, msg) => { if (!cond) throw new Error(msg); console.log('ok  ' + msg); };
 
-  // 0. Title screen: pick quarter length (and the rest), then KICKOFF.
-  check(await G(() => window.__game.screen === 'title'), 'the game opens on the title screen');
-  const tl = await G(() => { const g = window.__game; const L = g.menu.settingsLayout(g.view); const q = L.rows.find((r) => r.row.key === 'quarter'); return { right: q.right, done: L.done }; });
-  check(await G(() => window.__game.settings.quarter === '2.5'), 'title: quarters default to 2:30');
-  await tap({ x: tl.right.x + tl.right.w / 2, y: tl.right.y + tl.right.h / 2 }); // 2:30 -> 3:00
-  check(await G(() => window.__game.settings.quarter === '3'), 'title: quarter length steps by 30 seconds (3:00)');
+  // 0. Title screen: PLAY NOW / CAREER / TEAM / SETTINGS; the game options live in SETTINGS.
+  const mid = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+  check(await G(() => window.__game.screen === 'title' && !window.__game.menu.showSettings), 'the game opens on the title screen (no settings on it)');
+  const tt = await G(() => { const g = window.__game; return g.menu.titleLayout(g.view); });
+  await page.screenshot({ path: `${OUT}/smoke-title.png` });
+  await tap(mid(tt.settings));
+  const tl = await G(() => { const g = window.__game; const L = g.menu.settingsLayout(g.view); const q = L.rows.find((r) => r.row.key === 'quarter'); return q && { right: q.right, done: L.done, open: g.menu.showSettings }; });
+  check(tl && tl.open, 'SETTINGS opens the settings menu, with the quarter length');
+  check(await G(() => window.__game.settings.quarter === '2.5'), 'settings: quarters default to 2:30');
+  await tap(mid(tl.right)); // 2:30 -> 3:00
+  check(await G(() => window.__game.settings.quarter === '3' && JSON.parse(localStorage.getItem('footballgame.settings')).quarter === '3'), 'settings: quarter length steps by 30 seconds (3:00) and saves');
+  await tap(mid(tl.done));
+  check(await G(() => window.__game.screen === 'title' && !window.__game.menu.showSettings), 'DONE goes back to the title screen');
   // TEAM: your roster, NEW TEAM rolls a fresh one (tap twice), BACK returns
-  const tb = await G(() => { const g = window.__game; return g.menu.settingsLayout(g.view).team; });
+  const tb = tt.team;
   await tap({ x: tb.x + tb.w / 2, y: tb.y + tb.h / 2 });
   const rv = await G(() => { const g = window.__game; return g.rosterView && { ...g.rosterView.layout(g.view), n: g.team.players.length, first: g.team.players[0].name }; });
   check(!!rv && rv.n === 24, `TEAM shows your roster (${rv && rv.n} players)`);
@@ -48,8 +55,8 @@ const OUT = process.env.SHOT_DIR || '.';
   await page.screenshot({ path: `${OUT}/smoke-roster.png` });
   await tap({ x: rv.back.x + rv.back.w / 2, y: rv.back.y + rv.back.h / 2 });
   check(await G(() => !window.__game.rosterView && window.__game.screen === 'title'), 'BACK returns to the title screen');
-  await tap({ x: tl.done.x + tl.done.w / 2, y: tl.done.y + tl.done.h / 2 });
-  check(await G(() => window.__game.screen === 'huddle' && window.__game.match.clockText === '3:00'), 'KICKOFF starts a game with 3:00 quarters');
+  await tap(mid(tt.play));
+  check(await G(() => window.__game.screen === 'huddle' && window.__game.match.clockText === '3:00'), 'PLAY NOW starts a game with 3:00 quarters');
   check(await G(() => { const g = window.__game; g.pickPlay(window.__plays[0]); const ok = g.sim.actors.every((a) => a.pl && a.pl.ovr > 0); g.startHuddle(); return ok; }), 'every player on the field has ratings');
 
   // 1. Every defensive call accounts for all 11 defenders, for every play.
@@ -218,9 +225,9 @@ const OUT = process.env.SHOT_DIR || '.';
     let n = 0; while (g.screen !== 'final' && n < 200000) { g.update(1 / 30); n++; }
     g.autoplay = false;
     const m = g.match;
-    return { final: g.screen === 'final', q: m.quarter, score: `${m.score.you}-${m.score.cpu}`, plays: m.stats.you.plays + m.stats.cpu.plays };
+    return { final: g.screen === 'final', q: m.quarter, ot: m.ot, score: `${m.score.you}-${m.score.cpu}`, plays: m.stats.you.plays + m.stats.cpu.plays };
   });
-  check(fg.final && fg.q === 4, `full game: FINAL ${fg.score} after ${fg.plays} plays`);
+  check(fg.final && (fg.q === 4 || fg.ot > 0), `full game: FINAL ${fg.score}${fg.ot ? ' (OT)' : ''} after ${fg.plays} plays`); // a tie goes to overtime
   await page.screenshot({ path: `${OUT}/smoke-final.png` });
   await tap({ x: 90, y: 150 });
   check(await G(() => window.__game.screen === 'huddle' && window.__game.match.quarter === 1 && window.__game.match.score.you === 0), 'tap on the final screen starts a new game');
@@ -304,7 +311,7 @@ const OUT = process.env.SHOT_DIR || '.';
   // 9. Career: create a QB from the title screen, the hub, a backup scenario played on the field (coach calls the
   // plays), the save round-trip, simulated defense, a full season into the playoffs and the next season.
   await G(() => { const g = window.__game; g.autoplay = false; g.showTitle(); localStorage.removeItem('footballgame.career.v1'); });
-  const cb = await G(() => { const g = window.__game; return g.menu.settingsLayout(g.view).career; });
+  const cb = await G(() => { const g = window.__game; return g.menu.titleLayout(g.view).career; });
   await tap({ x: cb.x + cb.w / 2, y: cb.y + cb.h / 2 });
   check(await G(() => window.__game.screen === 'career' && window.__careerUI.screen === 'create'), 'CAREER on the title screen opens character creation');
   const cl = await G(() => { const ui = window.__careerUI; return ui.createLayout(window.__game.view); });
@@ -433,6 +440,16 @@ const OUT = process.env.SHOT_DIR || '.';
   await page.screenshot({ path: `${OUT}/smoke-career-recruiting.png` });
   await tap({ x: row.x, y: row.y }); await tap({ x: row.x, y: row.y }); // tap twice to commit
   check(await G((id) => window.__careerUI.career.s.recruit.committed === id && JSON.parse(localStorage.getItem('footballgame.career.v1')).recruit.committed === id, row.id), `tap an offer twice: committed to ${row.id} (saved)`);
+  // lots of offers: the board pages through all of them with < >
+  const pg = await G(() => {
+    const ui = window.__careerUI, rs = ui.career.s.recruit, C = window.__recruiting;
+    for (const c of C.COLLEGES.slice(0, 30)) { if (!rs.offers.includes(c.id)) rs.offers.push(c.id); rs.interest[c.id] = Math.max(rs.interest[c.id] || 0, 70); }
+    const v = window.__game.view; return { pages: ui.recruitPages(v), first: ui.recruitRows(v)[0].c.id, next: ui.pagerLayout(v).next, offers: rs.offers.length };
+  });
+  await tap(mid(pg.next));
+  const pg2 = await G(() => { const ui = window.__careerUI; return { page: ui.listPage, first: ui.recruitRows(window.__game.view)[0].c.id }; });
+  check(pg.pages >= 3 && pg2.page === 1 && pg2.first !== pg.first, `${pg.offers} offers page through the board (${pg.pages} pages, > shows the next page)`);
+  await page.screenshot({ path: `${OUT}/smoke-career-recruiting-pages.png` });
   const sr = await G(() => {
     const ui = window.__careerUI, c = ui.career, Q = window.__quicksim; let n = 0;
     while (c.s.phase === 'season' && n++ < 20) { const p = c.prepareGame(); if (p.kind !== 'none') Q.simToEnd(p.match, p.units); c.finishGame(p); }
@@ -441,6 +458,8 @@ const OUT = process.env.SHOT_DIR || '.';
   });
   check(sr.summary === 'summary' && sr.phase === 'signing' && sr.scr === 'signing' && sr.year === 2, 'after the senior season: SIGNING DAY');
   await page.screenshot({ path: `${OUT}/smoke-career-signing.png` });
+  const spg = await G(() => { const ui = window.__careerUI, v = window.__game.view; return { pages: ui.signingPages(v), n: ui.career.s.recruit.offers.length }; });
+  check(spg.pages >= 2, `signing day pages through all ${spg.n} offers (${spg.pages} pages)`);
   const sg = await G(() => { const ui = window.__careerUI, rr = ui.signingRows(window.__game.view)[0]; return { id: rr.c.id, x: rr.r.x + rr.r.w / 2, y: rr.r.y + rr.r.h / 2 }; });
   await tap({ x: sg.x, y: sg.y }); await tap({ x: sg.x, y: sg.y });
   check(await G((id) => { const c = window.__careerUI.career; return c.s.phase === 'done' && c.s.recruit.signed === id && window.__careerUI.screen === 'done'; }, sg.id), `signed with ${sg.id}: high school is done`);
@@ -473,7 +492,7 @@ const OUT = process.env.SHOT_DIR || '.';
   }, q);
   const lw = await LG(() => window.__game.view.landscape ? document.getElementById('game').width : 0);
   check(lw >= 320, `landscape: ${lw}x180 view (fills a ${(915/412).toFixed(2)}:1 phone) when the phone is sideways`);
-  const ldone = await LG(() => { const g = window.__game; return g.menu.settingsLayout(g.view).done; });
+  const ldone = await LG(() => { const g = window.__game; return g.menu.titleLayout(g.view).play; });
   const ld = await lscreen({ x: ldone.x + ldone.w / 2, y: ldone.y + ldone.h / 2 });
   await ltouch('touchStart', [ld]); await ltouch('touchEnd', []); // KICKOFF
   const card = await LG(() => { const g = window.__game; const c = g.menu.layout(g.view).cards[2]; return { x: c.r.x + c.r.w / 2, y: c.r.y + c.r.h / 2, id: c.it.play.id }; });

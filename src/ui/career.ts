@@ -45,6 +45,7 @@ export class CareerScreens {
   battleBefore: number | null = null;
   confirmNew = false;
   pick: string | null = null; // recruiting / signing day: the school tapped once (tap again to confirm)
+  listPage = 0; // recruiting / signing day: which page of schools
   standingsTab: 'regions' | 'playoffs' = 'regions';
   // character creation
   first = 'JAKE';
@@ -77,6 +78,7 @@ export class CareerScreens {
     const c = this.career!;
     this.screen = c.s.phase === 'summary' ? 'summary' : c.s.phase === 'signing' ? 'signing' : c.s.phase === 'done' ? 'done' : 'hub';
     this.pick = null;
+    this.listPage = 0;
     this.game.showCareer(this);
   }
 
@@ -156,7 +158,7 @@ export class CareerScreens {
         if (hit(L.standings, p)) { this.screen = 'standings'; this.standingsTab = c.isPlayoffs ? 'playoffs' : 'regions'; }
         if (hit(L.stats, p)) this.screen = 'stats';
         if (hit(L.team, p)) this.game.showRosterOf(c.rosterWithYou());
-        if (hit(L.recruiting, p)) { this.screen = 'recruiting'; this.pick = null; }
+        if (hit(L.recruiting, p)) { this.screen = 'recruiting'; this.pick = null; this.listPage = 0; }
         if (hit(L.defense, p)) { c.s.defense = c.s.defense === 'play' ? 'sim' : 'play'; this.save(); }
         if (hit(L.calls, p)) { c.s.calls = c.s.calls === 'you' ? 'coach' : 'you'; this.save(); }
         if (hit(L.menu, p)) this.game.showTitle();
@@ -187,6 +189,7 @@ export class CareerScreens {
       case 'recruiting': {
         if (!c) return;
         if (hit(this.bottomButton(v), p)) { this.screen = 'hub'; return; }
+        if (this.pagerTap(p, v, this.recruitPages(v))) return;
         const row = this.recruitRows(v).find((x) => hit(x.r, p));
         if (!row) { this.pick = null; return; }
         const rs = c.s.recruit, id = row.c.id;
@@ -198,6 +201,7 @@ export class CareerScreens {
       }
       case 'signing': {
         if (!c) return;
+        if (this.pagerTap(p, v, this.signingPages(v))) return;
         const row = this.signingRows(v).find((x) => hit(x.r, p));
         if (!row) { this.pick = null; return; }
         if (this.pick !== row.c.id) { this.pick = row.c.id; return; }
@@ -675,12 +679,36 @@ export class CareerScreens {
 
   // ---------- recruiting ----------
 
-  /** The recruiting board's rows (tap targets). */
+  // Paging: < > at the bottom corners when a list has more schools than fit.
+  pagerLayout(v: View) { return { prev: r(4, v.h - 20, 26, 16), next: r(v.w - 30, v.h - 20, 26, 16) }; }
+  private pagerTap(p: Vec, v: View, pages: number): boolean {
+    if (pages <= 1) return false;
+    const L = this.pagerLayout(v);
+    if (hit(L.prev, p)) { this.listPage = (this.listPage - 1 + pages) % pages; this.pick = null; return true; }
+    if (hit(L.next, p)) { this.listPage = (this.listPage + 1) % pages; this.pick = null; return true; }
+    return false;
+  }
+  private renderPager(ctx: CanvasRenderingContext2D, v: View, pages: number): void {
+    if (pages <= 1) return;
+    const L = this.pagerLayout(v);
+    button(ctx, L.prev, '<', C.yellow);
+    button(ctx, L.next, '>', C.yellow);
+    drawText(ctx, `${Math.min(this.listPage, pages - 1) + 1}/${pages}`, v.w - 6, v.landscape ? 6 : 12, { align: 'right', color: C.yellow });
+  }
+  private page<T>(list: T[], per: number): T[] {
+    const pages = Math.max(1, Math.ceil(list.length / per));
+    const pg = Math.min(this.listPage, pages - 1);
+    return list.slice(pg * per, pg * per + per);
+  }
+
+  private recruitPer(v: View): number { return v.landscape ? 10 : 12; }
+  recruitPages(v: View): number { return Math.max(1, Math.ceil(board(this.career!.s.recruit, 999).length / this.recruitPer(v))); }
+  /** The recruiting board's rows on this page (tap targets): offers first, then the schools most interested. */
   recruitRows(v: View): { c: College; r: Rect }[] {
     const rs = this.career!.s.recruit;
     const x = 4, w = v.landscape ? Math.floor(v.w * 0.6) - 8 : v.w - 8;
-    const top = v.landscape ? 44 : 70, rowH = v.landscape ? 11 : 13, n = v.landscape ? 10 : 12;
-    return board(rs, n).map((c, i) => ({ c, r: r(x, top + i * rowH, w, rowH - 1) }));
+    const top = v.landscape ? 44 : 70, rowH = v.landscape ? 11 : 13;
+    return this.page(board(rs, 999), this.recruitPer(v)).map((c, i) => ({ c, r: r(x, top + i * rowH, w, rowH - 1) }));
   }
 
   /** A college row: [badge] NAME ... TIER [interest meter or a tag]. */
@@ -730,16 +758,23 @@ export class CareerScreens {
     }
     if (!c.s.recruitFeed.length) drawText(ctx, 'NOTHING YET', fx, fy, { color: C.darkGrey });
     button(ctx, this.bottomButton(v), 'BACK');
+    this.renderPager(ctx, v, this.recruitPages(v));
   }
 
-  /** Signing day rows: your offers, or walk-on spots if there are none. */
-  signingRows(v: View): { c: College; r: Rect }[] {
+  /** Signing day: your offers (committed school first, then the best programs), or walk-on spots if there are none. */
+  private signingList(): College[] {
     const c = this.career!, rs = c.s.recruit;
     const list = rs.offers.length ? offerList(rs) : walkOns(rs, c.s.state);
     if (rs.committed) list.sort((a, b) => Number(b.id === rs.committed) - Number(a.id === rs.committed));
+    return list;
+  }
+  private signingPer(v: View): number { return v.landscape ? 10 : 14; }
+  signingPages(v: View): number { return Math.max(1, Math.ceil(this.signingList().length / this.signingPer(v))); }
+  /** Signing day rows on this page (tap targets). */
+  signingRows(v: View): { c: College; r: Rect }[] {
     const w = Math.min(v.w - 8, 240), x = (v.w - w) / 2;
-    const top = v.landscape ? 44 : 78, rowH = v.landscape ? 11 : 14, n = v.landscape ? 11 : 15;
-    return list.slice(0, n).map((col, i) => ({ c: col, r: r(x, top + i * rowH, w, rowH - 1) }));
+    const top = v.landscape ? 44 : 78, rowH = v.landscape ? 11 : 14;
+    return this.page(this.signingList(), this.signingPer(v)).map((col, i) => ({ c: col, r: r(x, top + i * rowH, w, rowH - 1) }));
   }
 
   private renderSigning(ctx: CanvasRenderingContext2D, v: View): void {
@@ -756,5 +791,6 @@ export class CareerScreens {
       const picked = this.pick === col.id;
       this.collegeRow(ctx, col, rr, { tag: picked ? 'SIGN?' : col.id === rs.committed ? 'COMMITTED' : rs.offers.length ? 'OFFER' : 'WALK-ON', tagColor: picked ? C.orange : col.id === rs.committed ? C.yellow : rs.offers.length ? C.green : C.grey, picked });
     }
+    this.renderPager(ctx, v, this.signingPages(v));
   }
 }

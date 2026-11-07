@@ -29,7 +29,7 @@ export interface MenuOptions {
   subtitle?: string; // e.g. "2ND & 7 - OWN 35 - Q2 1:48"
   fourthDown?: boolean; // offense: show PUNT
   settingsOnly?: boolean; // opened from pause: just the settings panel
-  title?: boolean; // the start screen: title, game options, KICKOFF
+  title?: boolean; // the start screen: PLAY NOW, CAREER, TEAM, SETTINGS (game options live in SETTINGS)
 }
 
 function box(ctx: CanvasRenderingContext2D, r: Rect, fill: string, border: string): void {
@@ -57,7 +57,7 @@ export class Menu {
   private cats: readonly { id: string; name: string }[];
 
   constructor(private o: MenuOptions) {
-    this.showSettings = !!o.settingsOnly || !!o.title;
+    this.showSettings = !!o.settingsOnly; // the title screen opens its settings with SETTINGS
     if (o.kind === 'offense') {
       this.cats = CATEGORIES;
       this.items = PLAYS.map((p) => ({ id: p.id, cat: p.category, play: p }));
@@ -103,31 +103,45 @@ export class Menu {
     return { tabs, cards, quick, prev, next, page, pages };
   }
 
-  /** Settings panel rows: label plus < value > arrows. */
+  /** The title screen's buttons, stacked in the middle. */
+  titleLayout(v: View) {
+    const w = v.landscape ? 150 : 128, x = Math.round((v.w - w) / 2);
+    const y0 = v.landscape ? 60 : 136, big = v.landscape ? 22 : 26, small = v.landscape ? 18 : 20, gap = v.landscape ? 5 : 7;
+    const play = { x, y: y0, w, h: big };
+    const career = { x, y: play.y + big + gap, w, h: big };
+    const half = (w - gap) / 2;
+    const team = { x, y: career.y + big + gap, w: Math.floor(half), h: small };
+    const settings = { x: x + Math.ceil(half) + gap, y: team.y, w: Math.floor(half), h: small };
+    return { play, career, team, settings };
+  }
+
+  /** Settings panel rows: label plus < value > arrows. From the title screen it also has the quarter length. */
   settingsLayout(v: View) {
     const title = !!this.o.title;
     const list = title ? [QUARTER_ROW, ...SETTING_ROWS] : SETTING_ROWS;
-    const top = title ? (v.landscape ? 34 : 92) : v.landscape ? 34 : 60;
-    const rowH = title ? (v.landscape ? 30 : 42) : v.landscape ? 34 : 44;
+    const top = title ? (v.landscape ? 26 : 56) : v.landscape ? 34 : 60;
+    const rowH = title ? (v.landscape ? 31 : 48) : v.landscape ? 34 : 44;
     const w = Math.min(160, v.w - 16), x = Math.round((v.w - w) / 2);
     const rows = list.map((row, i) => {
       const y = top + i * rowH;
       return { row, y, left: { x, y: y + 9, w: 22, h: 16 }, right: { x: x + w - 22, y: y + 9, w: 22, h: 16 }, mid: x + w / 2 };
     });
     const mid = Math.round(v.w / 2);
-    const done = title
-      ? (v.landscape ? { x: mid - 46, y: v.h - 22, w: 92, h: 20 } : { x: mid - 74, y: v.h - 56, w: 72, h: 20 })
-      : { x: mid - 30, y: v.h - 18, w: 60, h: 14 };
-    const career = v.landscape ? { x: mid + 52, y: v.h - 22, w: 92, h: 20 } : { x: mid + 2, y: v.h - 56, w: 72, h: 20 };
-    const team = v.landscape ? { x: mid - 144, y: v.h - 22, w: 92, h: 20 } : { x: mid - 50, y: v.h - 30, w: 100, h: 16 };
-    return { rows, done, team, career };
+    const done = title && !v.landscape ? { x: mid - 40, y: v.h - 40, w: 80, h: 18 } : { x: mid - 30, y: v.h - 18, w: 60, h: 14 };
+    return { rows, done };
   }
 
   tap(p: Vec, v: View): MenuAction {
+    if (this.o.title && !this.showSettings) {
+      const L = this.titleLayout(v);
+      if (hit(L.play, p)) return { type: 'start' };
+      if (hit(L.career, p)) return { type: 'career' };
+      if (hit(L.team, p)) return { type: 'team' };
+      if (hit(L.settings, p)) this.showSettings = true;
+      return null;
+    }
     if (this.showSettings) {
-      const { rows, done, team, career } = this.settingsLayout(v);
-      if (this.o.title && hit(team, p)) return { type: 'team' };
-      if (this.o.title && hit(career, p)) return { type: 'career' };
+      const { rows, done } = this.settingsLayout(v);
       for (const r of rows) {
         const dir = hit(r.left, p) ? -1 : hit(r.right, p) ? 1 : 0;
         if (!dir) continue;
@@ -136,7 +150,7 @@ export class Menu {
         return { type: 'settings' };
       }
       if (hit(done, p)) {
-        if (this.o.title) return { type: 'start' };
+        if (this.o.title) { this.showSettings = false; return { type: 'settings' }; } // back to the title screen
         if (this.o.settingsOnly) return { type: 'close' };
         this.showSettings = false;
       }
@@ -156,6 +170,7 @@ export class Menu {
   }
 
   render(ctx: CanvasRenderingContext2D, v: View): void {
+    if (this.o.title && !this.showSettings) { this.renderTitle(ctx, v); return; }
     ctx.fillStyle = 'rgba(17,29,43,0.96)';
     ctx.fillRect(0, 0, v.w, v.h);
     if (this.showSettings) { this.renderSettings(ctx, v); return; }
@@ -206,22 +221,35 @@ export class Menu {
     }
   }
 
+  /** The title screen: the name over the field, four buttons, and the current settings in one quiet line. */
+  private renderTitle(ctx: CanvasRenderingContext2D, v: View): void {
+    ctx.fillStyle = 'rgba(17,29,43,0.82)'; // the field shows through
+    ctx.fillRect(0, 0, v.w, v.h);
+    const mid = v.w / 2, ty = v.landscape ? 14 : 52;
+    drawText(ctx, 'FOOTBALL', mid, ty, { scale: 4, color: C.yellow, shadow: C.red, align: 'center' });
+    ctx.fillStyle = C.red;
+    ctx.fillRect(Math.round(mid - 70), ty + 26, 140, 1);
+    drawText(ctx, 'PASS-FIRST POCKET GRIDIRON', mid, ty + 31, { align: 'center', color: C.grey });
+    const L = this.titleLayout(v);
+    const btn = (r: Rect, label: string, color: string, scale = 1) => {
+      box(ctx, r, C.ink, color);
+      drawText(ctx, label, r.x + r.w / 2, r.y + Math.floor((r.h - 5 * scale) / 2), { align: 'center', color, scale });
+    };
+    btn(L.play, 'PLAY NOW', C.green, 2);
+    btn(L.career, 'CAREER', C.yellow, 2);
+    btn(L.team, 'TEAM', C.blue);
+    btn(L.settings, 'SETTINGS', C.white);
+    const st = this.o.settings;
+    const name = (list: Option[], id: string) => list.find((x) => x.id === id)?.name ?? '';
+    const summary = `${name(DIFFICULTIES, st.difficulty)} - ${name(QUARTERS, st.quarter)} QUARTERS - ${st.aim.toUpperCase()} AIM`;
+    drawText(ctx, summary, mid, v.landscape ? v.h - 12 : v.h - 28, { align: 'center', color: C.darkGrey });
+  }
+
   private renderSettings(ctx: CanvasRenderingContext2D, v: View): void {
     const title = !!this.o.title;
-    if (title) {
-      drawText(ctx, 'FOOTBALL', v.w / 2, v.landscape ? 4 : 30, { scale: 3, color: C.yellow, shadow: C.red, align: 'center' });
-      drawText(ctx, 'PASS-FIRST POCKET GRIDIRON', v.w / 2, v.landscape ? 22 : 54, { align: 'center', color: C.grey });
-    } else {
-      drawText(ctx, 'SETTINGS', v.w / 2, v.landscape ? 6 : 20, { scale: 2, color: C.yellow, shadow: C.navy, align: 'center' });
-    }
-    const { rows, done, team, career } = this.settingsLayout(v);
+    drawText(ctx, 'SETTINGS', v.w / 2, v.landscape ? 6 : 20, { scale: 2, color: C.yellow, shadow: C.navy, align: 'center' });
+    const { rows, done } = this.settingsLayout(v);
     const s = this.o.settings as unknown as Record<string, string>;
-    if (title) {
-      box(ctx, team, C.ink, C.blue);
-      drawText(ctx, 'TEAM', team.x + team.w / 2, team.y + Math.floor((team.h - 5) / 2), { align: 'center', color: C.blue });
-      box(ctx, career, C.ink, C.yellow);
-      drawText(ctx, 'CAREER', career.x + career.w / 2, career.y + 8, { align: 'center', color: C.yellow });
-    }
     for (const r of rows) {
       drawText(ctx, r.row.label, r.mid, r.y, { align: 'center', color: C.grey });
       const cur = r.row.list.find((x) => x.id === s[r.row.key]);
@@ -235,12 +263,7 @@ export class Menu {
       : this.o.settings.difficulty === 'pro' ? 'A LITTLE HELP' : 'NO HELP';
     const diffRow = rows.find((r) => r.row.key === 'difficulty')!;
     if (!v.landscape || !title) drawText(ctx, note, v.w / 2, diffRow.y + 28, { align: 'center', color: C.grey });
-    if (title) {
-      box(ctx, done, C.ink, C.green);
-      drawText(ctx, 'KICKOFF', done.x + done.w / 2, done.y + 6, { align: 'center', color: C.green, scale: 1 });
-    } else {
-      box(ctx, done, C.ink, C.white);
-      drawText(ctx, 'DONE', done.x + done.w / 2, done.y + 5, { align: 'center' });
-    }
+    box(ctx, done, C.ink, C.white);
+    drawText(ctx, 'DONE', done.x + done.w / 2, done.y + Math.floor((done.h - 5) / 2), { align: 'center' });
   }
 }

@@ -47,7 +47,7 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
 | `cpu.ts` | CPU quarterback (progression reads, eyes, windup, throws), CPU play calling, CPU 4th-down decisions. `readReceiver()` = best lead spot + how open it is. |
 | `ratings.ts` | Player ratings, position norms, roster generation (generated names), saving the user's roster, `playerFor()` mapping field spots to players. |
 | `roster.ts` | TEAM screen UI. |
-| `menu.ts` | The huddle (offensive/defensive playbooks with paging), the settings panel, and the title screen (it's a mode of the menu). |
+| `menu.ts` | The huddle (offensive/defensive playbooks with paging), the settings panel, and the title screen (a mode of the menu: PLAY NOW / CAREER / TEAM / SETTINGS via `titleLayout()`; SETTINGS opens the settings panel with the quarter length, DONE returns). |
 | `playart.ts`, `defart.ts` | Diagrams for play cards and defensive call cards, drawn from the data. |
 | `settings.ts` | Difficulty, game speed, aim mode, quarter length (saved in localStorage). |
 | `playbook/` | `routes.ts` (route library in "outside / depth" yards), `formations.ts`, `plays.ts` (all offensive plays + categories). Adding a play is data only. |
@@ -77,7 +77,7 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
 
 ## Testing and balance
 - `scripts/smoke.cjs`: Playwright on emulated Pixel 7 (portrait + landscape) with real touch events (CDP). Covers the title screen, TEAM screen, huddle, both aim modes, run after catch, sacks, punts, defense with the joystick, pause/timeouts/settings/restart, clock rules, hashes/FLIP, a full auto-played game, every call vs every play fielding 11 v 11, and the career (create, practice focus, a backup scenario on the field with coach calls, result, save round-trip through a reload, simulated defense, a season into the playoffs, the next season). Keep it green; extend it for new features.
-- Test handles: `window.__careerUI` (the career screens: `create()`, `gameDay()`, `play()`, `career`, `toHubForTest()`), `window.__quicksim`, `window.__recruiting`.
+- Test handles: `window.__careerUI` (the career screens: `create()`, `gameDay()`, `play()`, `career`, `toHubForTest()`, `recruitRows/recruitPages`, `signingRows/signingPages`, `pagerLayout`), `window.__quicksim`, `window.__recruiting`.
 - `scripts/balance/` (run with the preview server up; `GAME_URL` overrides the URL):
   - `season.cjs N`: auto-play N games (CPU brain both sides): yards/play, plays/TD, completion %, INT %, sacks, plays/game.
   - `difficulty.cjs`: the same per difficulty, with team overalls.

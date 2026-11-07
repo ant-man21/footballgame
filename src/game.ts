@@ -633,7 +633,7 @@ export class Game {
     if (this.rosterView) { this.rosterView.render(ctx, this.view); return; }
     if (this.screen === 'career' && this.careerScreens) { this.careerScreens.render(ctx, this.view); return; }
     if (this.screen === 'title' && this.menu) {
-      drawField(ctx, this, 50, 60, false); // a field behind the title
+      drawField(ctx, this, 36, 200, false); // a field behind the title (between the end zones)
       this.menu.render(ctx, this.view);
       return;
     }
