@@ -61,6 +61,7 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
 | `career/recruiting.ts` | Colleges recruiting you: `COLLEGES` (from `src/data/colleges.json`), each school's `bar()` (the recruiting score it wants), weekly interest and offers (`recruitingWeek`), stars from the score (`starsFor`), the board, walk-on spots. |
 | `data/colleges.json` | Every FBS school and ~100 FCS schools: name, abbreviation, mascot, conference (2026), tier P4/G5/FCS, prestige, state, colours, logo path. All college identity lives here. |
 | `career/hsnames.ts`, `career/rng.ts`, `career/save.ts` | Generated schools per state/region, seeded RNG, the versioned save (`footballgame.career.v1`, `migrate()`). |
+| `ui/export.ts` | EXPORT SAVE (career start screen): copies `{game, build, exported, settings, career}` as JSON to the clipboard (on pointerup via `Game.afterTap`, since phones only grant clipboard access when the finger lifts), or shows it in a box to copy by hand. When the owner pastes one, `career` is the `CareerSave`. |
 | `ui/career.ts`, `ui/kit.ts` | The career screens (start, create, hub, game day, result, schedule, standings/bracket, stats, summary, graduated) and drawing helpers (buttons, badges, meters, stars). |
 
 ### Key concepts

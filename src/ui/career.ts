@@ -11,6 +11,7 @@ import {
 } from '../career/player';
 import { type College, TIER_NAMES, board, college, offerList, toNextStar, walkOns } from '../career/recruiting';
 import { deleteCareer, loadCareer, saveCareer } from '../career/save';
+import { copyText, exportText } from './export';
 import type { TeamStats } from '../drive';
 import { drawText } from '../font';
 import type { Game } from '../game';
@@ -46,6 +47,7 @@ export class CareerScreens {
   confirmNew = false;
   pick: string | null = null; // recruiting / signing day: the school tapped once (tap again to confirm)
   listPage = 0; // recruiting / signing day: which page of schools
+  exportNote: { text: string; color: string; until: number } | null = null; // EXPORT SAVE feedback
   standingsTab: 'regions' | 'playoffs' = 'regions';
   // character creation
   first = 'JAKE';
@@ -133,6 +135,7 @@ export class CareerScreens {
         const L = this.startLayout(v);
         if (hit(L.cont, p) && c) { this.toHub(); return; }
         if (hit(L.fresh, p)) { if (this.confirmNew || !c) this.newCreate(); else this.confirmNew = true; return; }
+        if (hit(L.exp, p) && c) { this.confirmNew = false; this.game.afterTap = () => this.exportSave(); return; }
         if (hit(L.back, p)) this.game.showTitle();
         return;
       }
@@ -224,6 +227,16 @@ export class CareerScreens {
     if (this.career) saveCareer(this.career.s);
   }
 
+  /** EXPORT SAVE: copies the save as text (runs on the finger lifting, for the clipboard). */
+  exportSave(): void {
+    const text = exportText();
+    copyText(text).then((ok) => {
+      this.exportNote = ok
+        ? { text: `SAVE COPIED (${Math.ceil(text.length / 1024)} KB)`, color: C.green, until: performance.now() + 6000 }
+        : { text: 'COPY IT FROM THE BOX', color: C.yellow, until: performance.now() + 4000 };
+    });
+  }
+
   private editName(): void {
     try {
       const raw = window.prompt('YOUR NAME (FIRST LAST)', `${this.first} ${this.last}`);
@@ -240,8 +253,8 @@ export class CareerScreens {
   private bottomButton(v: View): Rect { return r(v.w / 2 - 40, v.h - 20, 80, 16); }
 
   startLayout(v: View) {
-    const mid = v.w / 2, y = v.landscape ? 96 : 170;
-    return { cont: r(mid - 60, y, 120, 20), fresh: r(mid - 60, y + 26, 120, 16), back: r(mid - 40, v.h - 20, 80, 16) };
+    const mid = v.w / 2, y = v.landscape ? 74 : 170;
+    return { cont: r(mid - 60, y, 120, 20), fresh: r(mid - 60, y + 26, 120, 16), exp: r(mid - 60, y + 48, 120, 16), back: r(mid - 40, v.h - 20, 80, 16) };
   }
 
   createLayout(v: View) {
@@ -337,6 +350,12 @@ export class CareerScreens {
     const L = this.startLayout(v);
     if (c) button(ctx, L.cont, 'CONTINUE', C.green);
     button(ctx, L.fresh, this.confirmNew ? 'TAP AGAIN: ERASES SAVE' : 'NEW CAREER', this.confirmNew ? C.orange : C.white);
+    if (c) button(ctx, L.exp, 'EXPORT SAVE', C.blue);
+    const note = this.exportNote;
+    if (note && performance.now() < note.until) {
+      drawText(ctx, note.text, v.w / 2, L.exp.y + 22, { align: 'center', color: note.color });
+      if (note.color === C.green && !v.landscape) drawText(ctx, 'PASTE IT INTO YOUR CHAT', v.w / 2, L.exp.y + 31, { align: 'center', color: C.grey });
+    }
     button(ctx, L.back, 'BACK', C.grey);
   }
 

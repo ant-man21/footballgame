@@ -59,6 +59,9 @@ const end = (e: PointerEvent) => {
   if (e.pointerId !== activePointer) return;
   activePointer = null;
   game.pointerUp(toLogical(e));
+  const after = game.afterTap; // e.g. EXPORT SAVE: the clipboard needs the finger lifting
+  game.afterTap = null;
+  if (after && e.type === 'pointerup') after();
 };
 canvas.addEventListener('pointerup', end);
 canvas.addEventListener('pointercancel', end);

@@ -366,6 +366,15 @@ const OUT = process.env.SHOT_DIR || '.';
   const saved0 = await G(() => JSON.stringify(window.__careerUI.career.s));
   await page.reload();
   await G(() => { window.__game.onCareer(); });
+  // EXPORT SAVE copies the whole save as text (the copy runs when the finger lifts)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new globalThis.URL(URL).origin });
+  const exb = await G(() => window.__careerUI.startLayout(window.__game.view).exp);
+  await tap({ x: exb.x + exb.w / 2, y: exb.y + exb.h / 2 });
+  await page.waitForFunction(() => window.__careerUI.exportNote, null, { timeout: 5000 });
+  const ex = await G(async () => { const t = await navigator.clipboard.readText(); const j = JSON.parse(t);
+    return { game: j.game, build: j.build, same: JSON.stringify(j.career) === localStorage.getItem('footballgame.career.v1'), kb: Math.ceil(t.length / 1024), note: window.__careerUI.exportNote.text }; });
+  check(ex.game === 'footballgame' && ex.same && !!ex.build, `EXPORT SAVE copies the whole save (${ex.kb} KB, build ${ex.build}): "${ex.note}"`);
+  await page.screenshot({ path: `${OUT}/smoke-career-export.png` });
   const cont = await G(() => window.__careerUI.startLayout(window.__game.view).cont);
   await tap({ x: cont.x + cont.w / 2, y: cont.y + cont.h / 2 });
   check(await G((b) => window.__careerUI.screen === 'hub' && JSON.stringify(window.__careerUI.career.s) === b, saved0), 'the career save round-trips through a page reload (CONTINUE)');

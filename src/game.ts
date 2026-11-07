@@ -89,6 +89,8 @@ export class Game {
   careerGame: CareerGameSetup | null = null; // playing a career game (coach calls the plays)
   careerScreens: Screens | null = null; // the career hub and its screens (screen 'career')
   onCareer: (() => void) | null = null; // the title screen's CAREER button (set up in main.ts)
+  /** Work that needs the finger to lift first (the clipboard needs a user activation): main.ts runs it on pointerup. */
+  afterTap: (() => void) | null = null;
   confirmSim = false;
 
   // Field state captured for the coming snap, so the field doesn't jump while a banner is up.
