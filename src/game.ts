@@ -25,6 +25,8 @@ const DEF_PRESNAP = 2.2; // seconds after you call your defense before the CPU s
 const STICK_RANGE = 22; // joystick: drag this far (screen px) for full speed
 const BETWEEN_RATE = 2.5; // game seconds that run off per real second between plays (clock running)
 const USER_DEFENDER = 'MIKE';
+/** Simulated defense (career): how your defense fares on the other team's simulated drives. See scripts/balance/simdefense.cjs. */
+export const SIM_DEF = { bonus: 7, runoff: 20 };
 type Rect = { x: number; y: number; w: number; h: number };
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
@@ -294,7 +296,10 @@ export class Game {
     }
     if (cg.simDefense) {
       const before = m.score.cpu;
-      const r = simDrive(m, cg.units);
+      // a simulated opponent drive: a run-heavy high school offense (the clock keeps running) against your
+      // whole defense, so it scores at a football rate, not the arcade passing rate of a played drive
+      const u = { ...cg.units, you: { ...cg.units.you, def: cg.units.you.def + SIM_DEF.bonus } };
+      const r = simDrive(m, u, { runoff: SIM_DEF.runoff });
       const name = m.names.cpu;
       const what = { td: 'TOUCHDOWN', punt: 'PUNT', int: 'INTERCEPTED!', downs: 'STOPPED ON DOWNS', half: 'END OF HALF', end: 'END OF GAME' }[r.end];
       const good = r.end === 'int' || r.end === 'downs';

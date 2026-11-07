@@ -1,7 +1,7 @@
 import * as quicksim from './career/quicksim';
 import * as recruiting from './career/recruiting';
 import { predict, readReceiver } from './cpu';
-import { Game } from './game';
+import { Game, SIM_DEF } from './game';
 import { PLAYS } from './playbook/plays';
 import { CareerScreens } from './ui/career';
 import { PORTRAIT, landscapeView } from './view';
@@ -15,6 +15,7 @@ const game = new Game();
 (window as unknown as { __cpu: unknown }).__cpu = { readReceiver, predict };
 (window as unknown as { __quicksim: unknown }).__quicksim = quicksim;
 (window as unknown as { __recruiting: unknown }).__recruiting = recruiting;
+(window as unknown as { __simDef: unknown }).__simDef = SIM_DEF;
 const careerScreens = new CareerScreens(game);
 game.onCareer = () => careerScreens.open();
 (window as unknown as { __careerUI: CareerScreens }).__careerUI = careerScreens;

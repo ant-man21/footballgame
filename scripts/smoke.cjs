@@ -278,20 +278,28 @@ const OUT = process.env.SHOT_DIR || '.';
     m.afterPlay({ result: 'catch', yards: 25, touchdown: true, outOfBounds: false }, 4);
     const end = { over: m.over, you: m.score.you, cpu: m.score.cpu };
     // and the quick-sim always finishes overtime with a winner
-    let ties = 0, ots = 0;
-    for (let i = 0; i < 200; i++) {
+    let ties = 0, ots = 0, maxOt = 0;
+    for (let i = 0; i < 400; i++) {
       const q = new m.constructor('you', 150); q.quarter = 4; q.clock = 1; q.score = { you: 7, cpu: 7 };
       Q.simToEnd(q, { you: { off: 0, def: 0 }, cpu: { off: 0, def: 0 } });
-      if (q.ot) ots++; if (q.score.you === q.score.cpu) ties++;
+      if (q.ot) ots++; if (q.score.you === q.score.cpu) ties++; maxOt = Math.max(maxOt, q.ot);
     }
+    // simulated defense (career): an even opponent's drive from its 25 scores at a football rate
+    const S = window.__simDef; let td = 0;
+    for (let i = 0; i < 600; i++) {
+      const q = new m.constructor('cpu', 240); q.drive.ballOn = 25;
+      if (Q.simDrive(q, { you: { off: 0, def: S.bonus }, cpu: { off: 0, def: 0 } }, { runoff: S.runoff }).end === 'td') td++;
+    }
+    const simTd = Math.round((100 * td) / 600);
     g.newGame();
-    return { start, punt, first, second, end, ties, ots };
+    return { start, punt, first, second, end, ties, ots, maxOt, simTd };
   });
   check(ot.start.ot === 1 && ot.start.period === 'OT' && ot.start.ballOn === 75 && !ot.start.over, `tied after four quarters: overtime from the 25 (${ot.start.period})`);
   check(ot.punt === false, 'no PUNT on 4th down in overtime');
   check(ot.second.off !== ot.first && ot.second.ballOn === 75 && !ot.second.over, 'a stop on downs: the other team gets its turn at the 25');
   check(ot.end.over && ot.end.you !== ot.end.cpu, `a score on the second possession wins it (${ot.end.you}-${ot.end.cpu})`);
-  check(ot.ots >= 190 && ot.ties === 0, `quick-simmed overtimes always end with a winner (${ot.ots}/200 went to OT, ${ot.ties} ties)`);
+  check(ot.ots >= 380 && ot.ties === 0 && ot.maxOt <= 30, `quick-simmed overtimes always end with a winner (${ot.ots}/400 went to OT, ${ot.ties} ties, longest OT${ot.maxOt})`);
+  check(ot.simTd >= 15 && ot.simTd <= 40, `simulated defense: an even opponent scores a TD on ${ot.simTd}% of drives from its 25 (target ~27%)`);
 
   // 9. Career: create a QB from the title screen, the hub, a backup scenario played on the field (coach calls the
   // plays), the save round-trip, simulated defense, a full season into the playoffs and the next season.
