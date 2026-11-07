@@ -55,10 +55,33 @@ export interface RecruitState {
   offers: string[]; // college ids, in the order they came
   committed: string | null;
   signed: string | null;
+  visits: string[]; // official visits taken (college ids)
+  lastVisit: string; // "year-week" of the last visit (one a week)
+}
+
+/** Official visits: five in a career, juniors and seniors, one a week. */
+export const MAX_VISITS = 5;
+
+/**
+ * An official visit: the school gets a long look at you. Interest jumps; half the
+ * time they leave sold on you as their quarterback (they need one now); and if
+ * you're at their level they may offer on the spot. Returns the news.
+ */
+export function officialVisit(r: RecruitState, c: College): string[] {
+  const news: string[] = [`OFFICIAL VISIT: ${c.name}`];
+  r.visits.push(c.id);
+  r.interest[c.id] = Math.min(100, (r.interest[c.id] ?? 0) + 30);
+  if (Math.random() < 0.5) r.need[c.id] = Math.max(r.need[c.id] ?? 0, 0.6);
+  const gap = r.score - bar(c);
+  if (!r.offers.includes(c.id) && gap >= -4 && gap <= offerReach(r.score) + 4 && (r.need[c.id] ?? 0) >= 0.5 && Math.random() < 0.45) {
+    r.offers.push(c.id);
+    news.push(`OFFER: ${c.name}!`);
+  } else if (!r.offers.includes(c.id)) news.push(gap < -4 ? 'GREAT VISIT, BUT THEY WANT MORE' : 'GREAT VISIT: THEY ARE INTERESTED');
+  return news;
 }
 
 export function newRecruiting(): RecruitState {
-  const r: RecruitState = { score: 0, stars: 1, interest: {}, need: {}, offers: [], committed: null, signed: null };
+  const r: RecruitState = { score: 0, stars: 1, interest: {}, need: {}, offers: [], committed: null, signed: null, visits: [], lastVisit: '' };
   rollNeeds(r);
   return r;
 }

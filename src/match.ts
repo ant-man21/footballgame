@@ -17,6 +17,8 @@ export const PLAY_CLOCK = 25; // most seconds that can run off between plays
 const TD_POINTS = 7;
 const TIMEOUTS = 3; // per team, per half
 const OT_YARD = 75; // overtime possessions start at the other team's 25
+const SHOOTOUT_POINTS = 2; // ...worth 2
+const SHOOTOUT_YARD = 95; // from the 3rd overtime: one play from the 5 (a shootout, like college's two-point tries)
 
 /** A result banner, written from your point of view (green/yellow = good for you). */
 export interface Banner { headline: string; color: string; detail: string; note?: string }
@@ -108,10 +110,11 @@ export class Match {
 
     switch (o.event.kind) {
       case 'td':
-        this.score[off] += TD_POINTS;
+        const pts = this.ot >= 3 ? SHOOTOUT_POINTS : TD_POINTS; // a shootout score is a two-point try
+        this.score[off] += pts;
         b = {
-          headline: mine ? 'TOUCHDOWN!' : `${N.cpu} TOUCHDOWN`, color: mine ? C.yellow : C.red,
-          detail: `${yds} - ${o.playsInDrive} PLAY DRIVE`, note: `${mine ? N.you : N.cpu} +${TD_POINTS}`,
+          headline: mine ? (pts === TD_POINTS ? 'TOUCHDOWN!' : 'GOOD!') : pts === TD_POINTS ? `${N.cpu} TOUCHDOWN` : `${N.cpu} SCORES`, color: mine ? C.yellow : C.red,
+          detail: pts === TD_POINTS ? `${yds} - ${o.playsInDrive} PLAY DRIVE` : 'TWO-POINT SHOOTOUT', note: `${mine ? N.you : N.cpu} +${pts}`,
         };
         this.changePossession(START_YARD);
         break;
@@ -136,8 +139,8 @@ export class Match {
         b = { headline, color, detail: `${yds}${o.firstDown ? ' - FIRST DOWN' : o.outOfBounds ? ' - OUT' : ''}` };
       }
     }
-    if (this.ot) { // overtime: no clock; a possession ends with a score, a pick or on downs
-      if (o.event.kind !== 'continue') this.otPossessionOver(off, b);
+    if (this.ot) { // overtime: no clock; a possession ends with a score, a pick or on downs (one play in a shootout)
+      if (o.event.kind !== 'continue' || this.ot >= 3) this.otPossessionOver(off, b);
       this.clockRunning = false;
       return b;
     }
@@ -165,8 +168,8 @@ export class Match {
     const note = (t: string) => { b.note = b.note ? `${b.note} - ${t}` : t; };
     if (this.otPoss === 1) {
       this.offense = other(had);
-      this.drive = new Drive(OT_YARD);
-      note(`${this.offense === 'you' ? 'YOUR' : this.names.cpu} TURN AT THE 25`);
+      this.drive = this.otDrive();
+      note(`${this.offense === 'you' ? 'YOUR' : this.names.cpu} TURN${this.ot >= 3 ? ': ONE PLAY' : ' AT THE 25'}`);
       return;
     }
     if (this.score.you !== this.score.cpu) { this.over = true; note('FINAL (OT)'); return; }
@@ -174,9 +177,14 @@ export class Match {
     this.otPoss = 0;
     this.otFirst = other(this.otFirst);
     this.offense = this.otFirst;
-    this.drive = new Drive(OT_YARD);
+    this.drive = this.otDrive();
     this.timeouts = { you: 1, cpu: 1 };
-    note(`STILL TIED: OT${this.ot}`);
+    note(this.ot === 3 ? 'OT3: 2-POINT SHOOTOUT' : `STILL TIED: OT${this.ot}`);
+  }
+
+  /** An overtime possession: from the 25, or one play from the 5 from the 3rd overtime on. */
+  private otDrive(): Drive {
+    return new Drive(this.ot >= 3 ? SHOOTOUT_YARD : OT_YARD);
   }
 
   /** The offense punts on 4th down. */

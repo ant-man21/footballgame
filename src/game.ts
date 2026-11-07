@@ -12,7 +12,7 @@ import { Menu, type MenuAction } from './menu';
 import { PLAYS, type Play } from './playbook/plays';
 import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
 import { HASH_YD, Sim, arcHeight, flightFor, throwSpread } from './sim';
-import { ballSprite, drawCentered, playerSprite } from './sprites';
+import { type Kit, ballSprite, drawCentered, playerSprite, shade } from './sprites';
 import { type Vec, clamp, dist, lerp } from './util';
 import { type Roster, loadRoster, makeRoster, saveRoster } from './ratings';
 import { RosterView } from './roster';
@@ -43,6 +43,7 @@ export interface CareerGameSetup {
   coachCalls: boolean; // the coach calls the plays; otherwise you call them in the huddle, as in an exhibition
   endAtHalf: boolean; // a two-minute drill: your stint ends at halftime
   label: string; // shown as you take the field
+  kits?: Record<Side, Kit>; // the two schools' uniforms (otherwise blue vs red)
   onDone: (m: Match, stint?: TeamStats) => void; // stint: your team's stats when your part ended early
 }
 
@@ -703,8 +704,9 @@ export class Game {
   }
 
   private renderPlayers(ctx: CanvasRenderingContext2D): void {
-    const offColor = this.attackingYours ? 'red' : 'blue';
-    const defColor = this.attackingYours ? 'blue' : 'red';
+    const kits = this.careerGame?.kits;
+    const offColor = kits ? (this.attackingYours ? kits.cpu : kits.you) : this.attackingYours ? 'red' : 'blue';
+    const defColor = kits ? (this.attackingYours ? kits.you : kits.cpu) : this.attackingYours ? 'blue' : 'red';
     for (const p of [...this.sim.actors].sort((a, b) => a.y - b.y)) {
       const build = p.kind === 'qb' ? 'qb' : p.kind === 'ol' || p.kind === 'dl' ? 'big' : 'skill';
       const img = p.team === 'off'
@@ -1015,7 +1017,9 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
   const yOf = (yard: number) => Math.round(g.sy(LOS_Y - (yard - ballOn) * YD));
   const left = Math.round(g.sx(FIELD_LEFT)), right = Math.round(g.sx(FIELD_RIGHT));
   const fw = right - left;
-  const yourZone = C.navy, cpuZone = '#7e2553';
+  const kits = g.careerGame?.kits; // career games: the end zones in the schools' colours
+  const zone = (k: Kit) => shade(k.jersey === '#fff1e8' ? k.trim : k.jersey, -0.45);
+  const yourZone = kits ? zone(kits.you) : C.navy, cpuZone = kits ? zone(kits.cpu) : '#7e2553';
   ctx.fillStyle = '#0a5c36';
   ctx.fillRect(0, 0, v.w, v.h);
 

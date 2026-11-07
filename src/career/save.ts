@@ -30,5 +30,6 @@ export function migrate(s: { v?: number } & Record<string, unknown>): CareerSave
   const c = s as unknown as CareerSave;
   if (!c.player || !Array.isArray(c.teams) || !Array.isArray(c.games)) return null;
   if (c.calls !== 'you') c.calls = 'coach'; // added after v1 shipped
+  if (c.recruit && !Array.isArray(c.recruit.visits)) { c.recruit.visits = []; c.recruit.lastVisit = ''; } // official visits came later
   return c;
 }

@@ -17,7 +17,7 @@ import {
   type Archetype, type CareerPlayer, type Focus, HS_TIER, asRosterPlayer, createPlayer, gameXp, gradeGame, offseason,
   classNorm, practice, production, qbNormOvr, qbOvr, seasonProduction,
 } from './player';
-import { type RecruitState, college, newRecruiting, recruitingWeek, rollNeeds, starsFor } from './recruiting';
+import { MAX_VISITS, type RecruitState, college, newRecruiting, officialVisit, recruitingWeek, rollNeeds, starsFor } from './recruiting';
 import { type Units, overtimeWinner, simGame, simToEnd, simUntil } from './quicksim';
 import { Rng, newSeed } from './rng';
 import { CAREER_VERSION, saveCareer } from './save';
@@ -410,6 +410,29 @@ export class Career {
     for (let i = 0; i < weeks; i++) news.push(...recruitingWeek(r, s.state, s.year >= 1));
     const fresh = news.filter((n) => n.startsWith('OFFER') || n.includes('STAR'));
     s.recruitFeed = [...fresh.reverse(), ...s.recruitFeed].slice(0, 10);
+  }
+
+  /** Why you can't take an official visit right now (null = you can). */
+  visitBlocked(id: string): string | null {
+    const s = this.s, r = s.recruit;
+    if (r.signed || s.phase === 'signing' || s.phase === 'done') return 'RECRUITING IS OVER';
+    if (s.year < 1) return 'VISITS START IN YOUR JUNIOR YEAR';
+    if (r.visits.length >= MAX_VISITS) return 'NO OFFICIAL VISITS LEFT';
+    if (r.visits.includes(id)) return 'ALREADY VISITED';
+    if (r.lastVisit === `${s.year}-${s.week}`) return 'ONE VISIT A WEEK';
+    return null;
+  }
+
+  /** Take an official visit (see officialVisit). Returns the news, or null if you can't. */
+  visit(id: string): string[] | null {
+    const c = college(id);
+    if (!c || this.visitBlocked(id)) return null;
+    const s = this.s;
+    s.recruit.lastVisit = `${s.year}-${s.week}`;
+    const news = officialVisit(s.recruit, c);
+    s.recruitFeed = [...[...news].reverse(), ...s.recruitFeed].slice(0, 10);
+    saveCareer(s);
+    return news;
   }
 
   /** Commit to a school that offered (or take back a commitment with null). */

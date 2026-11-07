@@ -305,7 +305,7 @@ const OUT = process.env.SHOT_DIR || '.';
   check(ot.punt === false, 'no PUNT on 4th down in overtime');
   check(ot.second.off !== ot.first && ot.second.ballOn === 75 && !ot.second.over, 'a stop on downs: the other team gets its turn at the 25');
   check(ot.end.over && ot.end.you !== ot.end.cpu, `a score on the second possession wins it (${ot.end.you}-${ot.end.cpu})`);
-  check(ot.ots >= 380 && ot.ties === 0 && ot.maxOt <= 30, `quick-simmed overtimes always end with a winner (${ot.ots}/400 went to OT, ${ot.ties} ties, longest OT${ot.maxOt})`);
+  check(ot.ots >= 380 && ot.ties === 0 && ot.maxOt <= 14, `quick-simmed overtimes always end with a winner (${ot.ots}/400 went to OT, ${ot.ties} ties, longest OT${ot.maxOt}: one-play shootouts from OT3)`);
   check(ot.simTd >= 15 && ot.simTd <= 40, `simulated defense: an even opponent scores a TD on ${ot.simTd}% of drives from its 25 (target ~27%)`);
 
   // 9. Career: create a QB from the title screen, the hub, a backup scenario played on the field (coach calls the
@@ -447,8 +447,25 @@ const OUT = process.env.SHOT_DIR || '.';
   });
   check(row && row.scr === 'recruiting', `RECRUITING opens the board (${row && row.offers} offers)`);
   await page.screenshot({ path: `${OUT}/smoke-career-recruiting.png` });
-  await tap({ x: row.x, y: row.y }); await tap({ x: row.x, y: row.y }); // tap twice to commit
-  check(await G((id) => window.__careerUI.career.s.recruit.committed === id && JSON.parse(localStorage.getItem('footballgame.career.v1')).recruit.committed === id, row.id), `tap an offer twice: committed to ${row.id} (saved)`);
+  await tap({ x: row.x, y: row.y }); // pick the school: the action bar shows VISIT and COMMIT
+  const act = await G(() => window.__careerUI.recruitActions(window.__game.view));
+  check(!!act && !!act.commit, 'tapping an offered school shows VISIT and COMMIT');
+  await tap({ x: act.commit.x + act.commit.w / 2, y: act.commit.y + act.commit.h / 2 });
+  check(await G((id) => window.__careerUI.career.s.recruit.committed === id && JSON.parse(localStorage.getItem('footballgame.career.v1')).recruit.committed === id, row.id), `COMMIT: committed to ${row.id} (saved)`);
+  // official visits: pick a school that hasn't offered, VISIT raises its interest; one visit a week
+  const vrow = await G(() => {
+    const ui = window.__careerUI, rs = ui.career.s.recruit;
+    const rr = ui.recruitRows(window.__game.view).find((x) => !rs.offers.includes(x.c.id) && !rs.visits.includes(x.c.id));
+    return rr && { id: rr.c.id, x: rr.r.x + rr.r.w / 2, y: rr.r.y + rr.r.h / 2, before: rs.interest[rr.c.id] || 0 };
+  });
+  await tap({ x: vrow.x, y: vrow.y });
+  const va = await G(() => window.__careerUI.recruitActions(window.__game.view));
+  await tap({ x: va.visit.x + va.visit.w / 2, y: va.visit.y + va.visit.h / 2 });
+  const v1 = await G((id) => { const rs = window.__careerUI.career.s.recruit; return { n: rs.visits.length, interest: rs.interest[id], saved: JSON.parse(localStorage.getItem('footballgame.career.v1')).recruit.visits.length }; }, vrow.id);
+  check(v1.n === 1 && v1.saved === 1 && v1.interest >= Math.min(100, vrow.before + 30) - 0.01, `official visit to ${vrow.id}: interest ${Math.round(vrow.before)} -> ${Math.round(v1.interest)} (saved)`);
+  await page.screenshot({ path: `${OUT}/smoke-career-visit.png` });
+  const v2 = await G(() => { const ui = window.__careerUI, c = ui.career; const other = window.__recruiting.COLLEGES.find((x) => !c.s.recruit.visits.includes(x.id)); return c.visitBlocked(other.id); });
+  check(v2 === 'ONE VISIT A WEEK', `a second visit the same week is refused (${v2})`);
   // lots of offers: the board pages through all of them with < >
   const pg = await G(() => {
     const ui = window.__careerUI, rs = ui.career.s.recruit, C = window.__recruiting;

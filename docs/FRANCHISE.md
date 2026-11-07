@@ -14,6 +14,7 @@ Answered by the owner (Nov 2026):
 - **The coach calls the plays in high school** (offense and defense). You run them (FLIP still works). No other team management.
 - **Option: call your own plays** (owner, follow-up): a hub toggle, PLAYS: COACH / YOU CALL. With YOU CALL a career game plays exactly like an exhibition: the huddle on both sides, you at QB and the MIKE. KICKOFF on the title screen is still the plain exhibition game.
 - **Logos: a later session fetches them**; generated pixel badges until then.
+- **Levels (owner agreed):** a QB's norm overall (average starter) is ~60 in high school, ~70 in college (an incoming freshman at 70-74 is in a real QB battle; a good college career ends ~80-85), and 76 in the NFL (the base game; a college QB at 80+ arrives as a starter, elite NFL QBs reach the high 80s-90s).
 - **Recruiting means colleges recruiting you** in the player career (owner, follow-up); recruiting players is a coach-mode feature. **Stars move every week**, senior year included.
 
 Original proposals:
@@ -87,11 +88,12 @@ Reuses the league engine: recruiting a whole class, roster management, depth cha
 - **Stars** (1-5) move every week from a recruiting score: your overall vs a solid QB of your class (the bar rises through each year), how you're playing (grades count fully after 5 starts; before 6 appearances it blends with last season), wins as the starter, playoff wins, a state title. Thresholds: 2 stars at 0, 3 at 10, 4 at 22, 5 at 32.
 - **Recruiting** (`career/recruiting.ts`, `data/colleges.json`: all FBS + ~100 FCS, real names): each school has a bar (P4 3-5 stars, G5 2-3, FCS 1-2). Every week schools near your level gain interest (more in your state, more if they need a QB this year; ~1 in 5 schools does, re-rolled every year). Sophomores only get noticed; from the junior year a school that's interested (60+), needs a QB and is within reach (2 under its bar up to 5 + 0.3 x your score over it) has a 7% weekly chance to offer. The summers and 4 weeks after the senior season count too (late bloomers). Commit to an offer (tap twice) or decommit; **signing day** after the senior season: sign an offer, or a preferred walk-on spot if there are none. Calibrated with `career.cjs`: ~12 offers a career; 2-stars mostly FCS, 3-stars G5 / low P4, 4-5 stars P4.
 - Season awards (region champion, all-region / all-state QB, state champion).
+- **Official visits**: five a career, juniors and seniors, one a week, from the recruiting board (tap a school, VISIT). Interest +30; half the time the school decides it needs you at QB; if you're at its level it may offer on the spot.
+- **Team colours on the field** in career games: home in school colours, visitors in white (auto-swapped for clashes and for jerseys that vanish on the green field); end zones in team colours.
 - **Screens**: start (continue / new), create, hub, game day intro, week result (with around-the-state scores and recruiting news), schedule, standings + bracket, stats (season, game log, career), recruiting board, season summary, signing day, graduated. Portrait and landscape.
 - **On the field**: coach-called plays (no huddle) or your own calls (PLAYS: YOU CALL), team abbreviations in the HUD, your defense or simulated opponent drives, SIM REST OF GAME in the pause menu.
 
 ### Next (rest of milestone 2)
-- **Visits** (official visits that boost one school's interest) and a recruiting calendar.
 - **Camps** in the off-season (an accuracy / reading drill on the field) to raise exposure.
 - Team colours on the field sprites (currently blue vs red), logos from JSON with the badge fallback.
 - Player of the week / season awards race on the hub; a career stats screen across levels.

@@ -9,9 +9,10 @@ import { type GameRec, PLAYOFF_ROUNDS, REGION_NAMES, ROUND_NAMES, played, region
 import {
   ARCHETYPES, type Archetype, CLASS_NAMES, CLASS_SHORT, FOCUSES, displayName, passerRating, qbOvr,
 } from '../career/player';
-import { type College, TIER_NAMES, board, college, offerList, toNextStar, walkOns } from '../career/recruiting';
+import { type College, MAX_VISITS, TIER_NAMES, board, college, offerList, toNextStar, walkOns } from '../career/recruiting';
 import { deleteCareer, loadCareer, saveCareer } from '../career/save';
 import { copyText, exportText } from './export';
+import { type Kit, kitsFor } from '../sprites';
 import type { TeamStats } from '../drive';
 import { drawText } from '../font';
 import type { Game } from '../game';
@@ -48,6 +49,7 @@ export class CareerScreens {
   pick: string | null = null; // recruiting / signing day: the school tapped once (tap again to confirm)
   listPage = 0; // recruiting / signing day: which page of schools
   exportNote: { text: string; color: string; until: number } | null = null; // EXPORT SAVE feedback
+  flash: { text: string; color: string; until: number } | null = null; // recruiting board: why a visit can't happen, etc.
   standingsTab: 'regions' | 'playoffs' = 'regions';
   // character creation
   first = 'JAKE';
@@ -112,9 +114,17 @@ export class CareerScreens {
     this.game.playCareerGame({
       match: plan.match, you: c.rosterWithYou(), opp: c.opponentRoster(plan.opp, shift),
       units: { you: plan.units.you, cpu: { off: plan.units.cpu.off + shift, def: plan.units.cpu.def + shift } },
+      kits: this.kits(plan),
       simDefense: c.s.defense === 'sim', coachCalls: c.s.calls !== 'you', endAtHalf: plan.endAtHalf, label: plan.label,
       onDone: (_m, stint) => this.finish(stint),
     });
+  }
+
+  /** Uniforms: the home team in its colours, the visitors in white. */
+  private kits(plan: GamePlan): { you: Kit; cpu: Kit } {
+    const me = this.career!.school, home = plan.rec.home === this.career!.s.schoolId;
+    const k = home ? kitsFor(me.colors, plan.opp.colors) : kitsFor(plan.opp.colors, me.colors);
+    return home ? { you: k.home, cpu: k.away } : { you: k.away, cpu: k.home };
   }
 
   /** The game is over (or your part of it): record it and show the week's result. */
@@ -193,13 +203,17 @@ export class CareerScreens {
         if (!c) return;
         if (hit(this.bottomButton(v), p)) { this.screen = 'hub'; return; }
         if (this.pagerTap(p, v, this.recruitPages(v))) return;
+        const rs = c.s.recruit;
+        const A = this.recruitActions(v);
+        if (A && this.pick && hit(A.visit, p)) {
+          const why = c.visitBlocked(this.pick);
+          if (why) this.flash = { text: why, color: C.orange, until: performance.now() + 2500 };
+          else { const news = c.visit(this.pick)!; this.flash = { text: news[news.length - 1], color: news.some((n) => n.startsWith('OFFER')) ? C.green : C.white, until: performance.now() + 3500 }; }
+          return;
+        }
+        if (A?.commit && this.pick && hit(A.commit, p)) { c.commit(rs.committed === this.pick ? null : this.pick); this.pick = null; return; }
         const row = this.recruitRows(v).find((x) => hit(x.r, p));
-        if (!row) { this.pick = null; return; }
-        const rs = c.s.recruit, id = row.c.id;
-        if (!rs.offers.includes(id)) { this.pick = null; return; }
-        if (this.pick !== id) { this.pick = id; return; }
-        c.commit(rs.committed === id ? null : id);
-        this.pick = null;
+        this.pick = row && this.pick !== row.c.id ? row.c.id : null; // tap a school to pick it (again to let go)
         return;
       }
       case 'signing': {
@@ -743,6 +757,14 @@ export class CareerScreens {
     else if (opts.interest !== undefined) meter(ctx, r(right - 34, y, 34, 5), opts.interest, C.blue);
   }
 
+  /** The action bar for the picked school: VISIT, and COMMIT / DECOMMIT if it offered. */
+  recruitActions(v: View): { visit: Rect; commit: Rect | null } | null {
+    if (!this.pick || this.screen !== 'recruiting') return null;
+    const rs = this.career!.s.recruit, offered = rs.offers.includes(this.pick);
+    const x = v.landscape ? Math.floor(v.w * 0.6) + 2 : 4, w = v.landscape ? v.w - x - 4 : v.w - 8, y = v.h - 42, half = (w - 4) / 2;
+    return { visit: r(x, y, offered ? half : w, 16), commit: offered ? r(x + half + 4, y, half, 16) : null };
+  }
+
   private renderRecruiting(ctx: CanvasRenderingContext2D, v: View): void {
     const c = this.career!, rs = c.s.recruit;
     const y0 = this.title(ctx, v, 'RECRUITING');
@@ -753,8 +775,9 @@ export class CareerScreens {
     meter(ctx, r(x + 82, y, 50, 5), toNextStar(rs.score), C.yellow);
     if (rs.stars < 5) drawText(ctx, `TO ${rs.stars + 1} STARS`, x + 136, y, { color: C.darkGrey });
     y += 10;
+    const left = MAX_VISITS - rs.visits.length;
     const status = rs.committed ? `COMMITTED: ${college(rs.committed)!.name}` : c.s.year === 0 ? 'OFFERS START IN YOUR JUNIOR YEAR'
-      : `${rs.offers.length} OFFER${rs.offers.length === 1 ? '' : 'S'} - TAP AN OFFER TWICE TO COMMIT`;
+      : `${rs.offers.length} OFFER${rs.offers.length === 1 ? '' : 'S'} - ${left} VISIT${left === 1 ? '' : 'S'} LEFT - TAP A SCHOOL`;
     drawText(ctx, status, x, y, { color: rs.committed ? C.green : C.grey });
     y += 10;
     if (!v.landscape) drawText(ctx, 'STARS MOVE WEEKLY: PLAY WELL AND WIN', x, y, { color: C.darkGrey });
@@ -762,20 +785,28 @@ export class CareerScreens {
     if (!rows.length) drawText(ctx, 'NO COLLEGES WATCHING YET', x, rows.length ? 0 : (v.landscape ? 44 : 70), { color: C.darkGrey });
     for (const { c: col, r: rr } of rows) {
       const offered = rs.offers.includes(col.id), committed = rs.committed === col.id, picked = this.pick === col.id;
-      const tag = picked ? (committed ? 'DECOMMIT?' : 'COMMIT?') : committed ? 'COMMITTED' : offered ? 'OFFER' : undefined;
-      this.collegeRow(ctx, col, rr, { interest: rs.interest[col.id] ?? 0, tag, tagColor: picked ? C.orange : committed ? C.yellow : C.green, picked });
+      const tag = committed ? 'COMMITTED' : offered ? 'OFFER' : rs.visits.includes(col.id) ? 'VISITED' : undefined;
+      this.collegeRow(ctx, col, rr, { interest: rs.interest[col.id] ?? 0, tag, tagColor: committed ? C.yellow : offered ? C.green : C.blue, picked });
     }
     // news
     const fx = v.landscape ? Math.floor(v.w * 0.6) + 2 : x;
     let fy = v.landscape ? y0 + 22 : 70 + 12 * 13 + 6;
     drawText(ctx, 'LATEST', fx, fy, { color: C.grey });
     fy += 9;
-    const maxN = v.landscape ? 12 : 6;
+    const A = this.recruitActions(v);
+    const maxN = A ? (v.landscape ? 8 : 3) : v.landscape ? 12 : 6; // room for the action bar and its message
     for (const n of c.s.recruitFeed.slice(0, maxN)) {
       drawText(ctx, n.length > (v.landscape ? 34 : 44) ? n.slice(0, v.landscape ? 34 : 44) : n, fx, fy, { color: n.startsWith('OFFER') || n.startsWith('COMMIT') ? C.green : C.white });
       fy += 8;
     }
     if (!c.s.recruitFeed.length) drawText(ctx, 'NOTHING YET', fx, fy, { color: C.darkGrey });
+    if (A && this.pick) {
+      const blocked = c.visitBlocked(this.pick);
+      button(ctx, A.visit, `VISIT (${left} LEFT)`, blocked ? C.darkGrey : C.blue);
+      if (A.commit) button(ctx, A.commit, rs.committed === this.pick ? 'DECOMMIT' : 'COMMIT', rs.committed === this.pick ? C.orange : C.green);
+      const f = this.flash;
+      if (f && performance.now() < f.until) drawText(ctx, f.text, A.visit.x, A.visit.y - 9, { color: f.color });
+    }
     button(ctx, this.bottomButton(v), 'BACK');
     this.renderPager(ctx, v, this.recruitPages(v));
   }
