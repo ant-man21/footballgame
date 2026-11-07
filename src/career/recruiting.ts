@@ -56,8 +56,12 @@ export interface RecruitState {
   committed: string | null;
   signed: string | null;
   visits: string[]; // official visits taken (college ids)
+  formula?: number; // which version of the recruiting score this was computed with (see SCORE_FORMULA)
   lastVisit: string; // "year-week" of the last visit (one a week)
 }
+
+/** Bump when the recruiting score changes: saves scored by an older formula are re-scored once on load. */
+export const SCORE_FORMULA = 2;
 
 /** Official visits: five in a career, juniors and seniors, one a week. */
 export const MAX_VISITS = 5;
@@ -81,7 +85,7 @@ export function officialVisit(r: RecruitState, c: College): string[] {
 }
 
 export function newRecruiting(): RecruitState {
-  const r: RecruitState = { score: 0, stars: 1, interest: {}, need: {}, offers: [], committed: null, signed: null, visits: [], lastVisit: '' };
+  const r: RecruitState = { score: 0, stars: 1, interest: {}, need: {}, offers: [], committed: null, signed: null, visits: [], lastVisit: '', formula: SCORE_FORMULA };
   rollNeeds(r);
   return r;
 }

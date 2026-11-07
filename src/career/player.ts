@@ -34,6 +34,7 @@ export interface SeasonLine {
   finish: string; // e.g. "STATE CHAMPIONS", "LOST IN SEMIFINAL", "MISSED PLAYOFFS"
   ovr: number; // your overall at season's end
   stars: number;
+  prod?: number; // recruiting production at the season's end (see production()); older saves estimate it
 }
 
 export interface CareerPlayer {
@@ -136,7 +137,19 @@ export function production(avgGrade: number, starts: number, winsAsStarter: numb
 
 /** A finished season's production (for saves from before recruiting tracked it week by week). */
 export function seasonProduction(sl: SeasonLine): number {
+  if (sl.prod !== undefined) return sl.prod;
+  // An estimate from the season summary (saves from before seasons stored it): the playoffs are
+  // read from the finish, and a mid-season starter is assumed to have started the playoff games.
   const [w, l] = sl.record.split('-').map(Number);
-  const share = sl.gs / Math.max(1, w + l);
-  return production(gradeGame(sl.stats, null), sl.gs, Math.round(w * share), 0, sl.finish === 'STATE CHAMPIONS' && sl.gs >= 5);
+  const games = Math.max(1, w + l);
+  const poWins = sl.finish === 'STATE CHAMPIONS' ? 3 : sl.finish === 'STATE RUNNER-UP' ? 2 : sl.finish === 'LOST IN THE SEMIFINAL' ? 1 : 0;
+  const poGames = sl.finish === 'MISSED THE PLAYOFFS' ? 0 : sl.finish === 'LOST IN THE QUARTERFINAL' ? 1 : sl.finish === 'LOST IN THE SEMIFINAL' ? 2 : 3;
+  const poStarts = Math.min(poGames, sl.gs);
+  const regWins = Math.round(w * clamp((sl.gs - poStarts) / games, 0, 1));
+  const poWinsStarted = Math.min(poWins, poStarts);
+  // a season's average game grade: the season's passer rating, sacks spread over the games, the win bonus
+  const perGameSacks = sl.stats.sacks / Math.max(1, sl.gp);
+  const winBonus = (5 * (w + poWins) - 3 * (l + poGames - poWins)) / Math.max(1, games + poGames);
+  const grade = sl.stats.att ? clamp((passerRating(sl.stats) - 40) * 0.85, 0, 100) - perGameSacks * 3 + winBonus : 55;
+  return production(grade, sl.gs, regWins + poWinsStarted, poWinsStarted, sl.finish === 'STATE CHAMPIONS' && sl.gs >= 5);
 }

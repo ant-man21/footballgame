@@ -418,11 +418,11 @@ const OUT = process.env.SHOT_DIR || '.';
     const ui = window.__careerUI, c = ui.career, Q = window.__quicksim; let n = 0;
     while (c.s.phase === 'season' && n++ < 20) { const p = c.prepareGame(); if (p.kind !== 'none') Q.simToEnd(p.match, p.units); c.finishGame(p); }
     const rounds = ['QF', 'SF', 'F'].map((r) => c.s.games.filter((g) => g.round === r).length);
-    const out = { phase: c.s.phase, rounds, finish: c.finish(), champ: c.champion && c.champion.name, seasons: c.player.seasons.length };
+    const out = { phase: c.s.phase, rounds, finish: c.finish(), champ: c.champion && c.champion.name, seasons: c.player.seasons.length, prod: c.player.seasons[0] && c.player.seasons[0].prod };
     ui.screen = 'summary';
     return out;
   });
-  check(season.phase === 'summary' && season.rounds.join() === '4,2,1' && !!season.champ && season.seasons === 1,
+  check(season.phase === 'summary' && season.rounds.join() === '4,2,1' && !!season.champ && season.seasons === 1 && typeof season.prod === 'number',
     `a full season into an 8-team playoff (${season.finish}; state champion ${season.champ})`);
   await page.screenshot({ path: `${OUT}/smoke-career-summary.png` });
   await tap({ x: 90, y: 312 }); // OFF-SEASON

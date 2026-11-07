@@ -17,7 +17,7 @@ import {
   type Archetype, type CareerPlayer, type Focus, HS_TIER, asRosterPlayer, createPlayer, gameXp, gradeGame, offseason,
   classNorm, practice, production, qbNormOvr, qbOvr, seasonProduction,
 } from './player';
-import { MAX_VISITS, type RecruitState, college, newRecruiting, officialVisit, recruitingWeek, rollNeeds, starsFor } from './recruiting';
+import { MAX_VISITS, type RecruitState, SCORE_FORMULA, college, newRecruiting, officialVisit, recruitingWeek, rollNeeds, starsFor } from './recruiting';
 import { type Units, overtimeWinner, simGame, simToEnd, simUntil } from './quicksim';
 import { Rng, newSeed } from './rng';
 import { CAREER_VERSION, saveCareer } from './save';
@@ -90,6 +90,14 @@ const STARTER_LAST = ['BAKER', 'COLLINS', 'DUNN', 'EVANS', 'FISHER', 'GRIFFIN', 
 export class Career {
   constructor(public s: CareerSave) {
     if (!s.recruit) this.catchUpRecruiting(); // a save from before recruiting existed
+    else if ((s.recruit.formula ?? 1) < SCORE_FORMULA) { // scored by an older formula: re-score once
+      if (s.phase === 'season' && !s.recruit.signed) {
+        s.recruit.score = this.recruitScore();
+        s.recruit.stars = starsFor(s.recruit.score);
+      }
+      s.recruit.formula = SCORE_FORMULA;
+      saveCareer(s);
+    }
   }
 
   static create(first: string, last: string, stateId: string, archetype: Archetype, quarterSeconds: number): Career {
@@ -352,7 +360,7 @@ export class Career {
     p.awards.push(...awards.map((a) => `${a} (${['SO', 'JR', 'SR'][s.year]})`));
     p.seasons.push({
       year: s.year, school: this.school.name, role: gs >= 5 ? 'STARTER' : 'BACKUP', gp, gs, stats: line,
-      record: rec.text, finish, ovr: qbOvr(p), stars,
+      record: rec.text, finish, ovr: qbOvr(p), stars, prod: Math.round(this.productionNow() * 10) / 10,
     });
     news.push(`SEASON OVER: ${finish}`);
     s.phase = 'summary';
@@ -384,16 +392,23 @@ export class Career {
 
   // ---------- recruiting ----------
 
+  /** This season's production so far (grades, wins as the starter, playoff wins, a title). */
+  productionNow(): number {
+    const s = this.s;
+    const graded = s.log.filter((l) => l.grade !== null);
+    const starts = s.log.filter((l) => l.kind === 'full');
+    const avg = graded.length ? graded.reduce((t, l) => t + l.grade!, 0) / graded.length : 55;
+    const champ = starts.some((l) => l.round === 'F' && l.us > l.them);
+    return production(avg, starts.length, starts.filter((l) => l.us > l.them).length,
+      starts.filter((l) => l.round && l.us > l.them).length, champ);
+  }
+
   /** Your recruiting score right now: your ratings for your class, plus how you're playing (this season, then last). */
   recruitScore(): number {
     const s = this.s, p = this.player;
     const talent = (qbOvr(p) - classNorm(s.year, s.week)) * 2.2;
     const graded = s.log.filter((l) => l.grade !== null);
-    const starts = s.log.filter((l) => l.kind === 'full');
-    const avg = graded.length ? graded.reduce((t, l) => t + l.grade!, 0) / graded.length : 55;
-    const champ = starts.some((l) => l.round === 'F' && l.us > l.them);
-    const now = production(avg, starts.length, starts.filter((l) => l.us > l.them).length,
-      starts.filter((l) => l.round && l.us > l.them).length, champ);
+    const now = this.productionNow();
     const last = p.seasons[p.seasons.length - 1];
     const prev = last ? seasonProduction(last) : 0;
     const w = clamp(graded.length / 6, 0, 1);
