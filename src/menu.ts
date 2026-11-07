@@ -243,6 +243,7 @@ export class Menu {
     const name = (list: Option[], id: string) => list.find((x) => x.id === id)?.name ?? '';
     const summary = `${name(DIFFICULTIES, st.difficulty)} - ${name(QUARTERS, st.quarter)} QUARTERS - ${st.aim.toUpperCase()} AIM`;
     drawText(ctx, summary, mid, v.landscape ? v.h - 12 : v.h - 28, { align: 'center', color: C.darkGrey });
+    drawText(ctx, `BUILD ${__BUILD__}`, v.w - 3, v.h - 8, { align: 'right', color: C.darkGrey });
   }
 
   private renderSettings(ctx: CanvasRenderingContext2D, v: View): void {

@@ -38,6 +38,7 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
 | File | Role |
 |---|---|
 | `main.ts` | Canvas sizing per orientation, pointer input, the frame loop. Exposes `window.__game`, `window.__plays`, `window.__cpu` for tests. |
+| `update.ts` | Keeps a home-screen install current: on open / return to the foreground it fetches `index.html` uncached and reloads if a newer build's script is deployed, only on a menu (never mid-game). The title screen shows `BUILD MM-DD HH:MM` (UTC, `__BUILD__` from vite.config.ts). |
 | `config.ts` | Logical size (180x320 portrait world), `YD` = 3.15 px per yard, `LOS_Y`, field edges, `fx()`/`fy()` yard->px helpers, colours (PICO-8-ish palette), game-feel constants. |
 | `view.ts` | Portrait (1:1) and landscape views: how the world maps to the screen (`s`, `ox`, `oy`, side panels). Landscape canvas width follows the phone's aspect. |
 | `game.ts` | The controller: screens (`title`, `huddle`, `play`, `banner`, `final`, plus the TEAM screen and pause overlay), input (one-touch snap+throw, PULL/AIM aiming, defensive joystick), clock between plays, timeouts, hash spotting, camera, all drawing of the field/players/HUD. |
@@ -94,4 +95,5 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
 - Tests mutate game state directly through `window.__game`; when adding state to `Game`, make sure `startHuddle()`/`newGame()` reset it.
 - Random outcomes make single test runs flaky if a check depends on a specific result (an interception flips possession). Force the state you need (`g.match.offense = 'you'`, `sim.forceCall = '...'`) before such checks.
 - `localStorage` keys: `footballgame.settings`, `footballgame.roster`, `footballgame.career.v1` (has a `v` field, now 2: bump `CAREER_VERSION` and add a `migrate()` step when `CareerSave` changes; v1 saves get recruiting started and caught up in the `Career` constructor). Bump/validate shapes when they change (see `loadSettings`).
+- The owner plays from an iPhone home-screen icon: never tell them to delete it or clear website data (that erases the career save). New builds arrive through `update.ts`.
 - Career state lives in `CareerSave` (plain JSON). A `GamePlan` in progress is not saved: closing the app mid-game replays that week.

@@ -4,6 +4,7 @@ import { predict, readReceiver } from './cpu';
 import { Game, SIM_DEF } from './game';
 import { PLAYS } from './playbook/plays';
 import { CareerScreens } from './ui/career';
+import { watchForUpdates } from './update';
 import { PORTRAIT, landscapeView } from './view';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -72,3 +73,6 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// a newer deploy reloads the app, but only on a menu (the title or the career screens), never mid-game
+watchForUpdates(() => game.screen === 'title' || (game.screen === 'career' && !game.rosterView));
