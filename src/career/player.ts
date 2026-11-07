@@ -102,6 +102,9 @@ export function offseason(p: CareerPlayer): void {
   addXp(p, 'spd', rand(0, 1.5));
 }
 
+/** Grade points a sack costs (see gradeGame). */
+export const SACK_COST = 1;
+
 /** NFL-style passer rating (0-158.3). */
 export function passerRating(s: TeamStats): number {
   if (!s.att) return 0;
@@ -114,11 +117,13 @@ export function passerRating(s: TeamStats): number {
  * A game grade (0-100) from your line. An average line in this game (70%, 8 a
  * throw, a TD every dozen attempts, few picks) grades about 60. Few attempts
  * pull the grade toward 50; sacks and a loss cost a little, a win helps.
+ * A sack costs 1 point (its lost yards already lower yards per throw in the
+ * passer rating; at 3 a sack outweighed 4 points of completion percentage).
  */
 export function gradeGame(s: TeamStats, won: boolean | null): number {
   if (!s.att && !s.sacks) return 50;
   let g = clamp((passerRating(s) - 40) * 0.85, 0, 100);
-  g -= s.sacks * 3;
+  g -= s.sacks * SACK_COST;
   if (won !== null) g += won ? 5 : -3;
   const weight = clamp((s.att + s.sacks) / 12, 0, 1);
   return Math.round(clamp(50 + (g - 50) * weight, 0, 100));
@@ -150,6 +155,6 @@ export function seasonProduction(sl: SeasonLine): number {
   // a season's average game grade: the season's passer rating, sacks spread over the games, the win bonus
   const perGameSacks = sl.stats.sacks / Math.max(1, sl.gp);
   const winBonus = (5 * (w + poWins) - 3 * (l + poGames - poWins)) / Math.max(1, games + poGames);
-  const grade = sl.stats.att ? clamp((passerRating(sl.stats) - 40) * 0.85, 0, 100) - perGameSacks * 3 + winBonus : 55;
+  const grade = sl.stats.att ? clamp((passerRating(sl.stats) - 40) * 0.85, 0, 100) - perGameSacks * SACK_COST + winBonus : 55;
   return production(grade, sl.gs, regWins + poWinsStarted, poWinsStarted, sl.finish === 'STATE CHAMPIONS' && sl.gs >= 5);
 }
