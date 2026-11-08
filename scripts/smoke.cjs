@@ -563,7 +563,7 @@ const OUT = process.env.SHOT_DIR || '.';
     const r = document.getElementById('game').getBoundingClientRect(), v = window.__game.view;
     return { x: r.left + (x / v.w) * r.width, y: r.top + (y / v.h) * r.height };
   }, q);
-  const lw = await LG(() => window.__game.view.landscape ? document.getElementById('game').width : 0);
+  const lw = await LG(() => window.__game.view.landscape ? document.getElementById('game').width / 3 : 0);
   check(lw >= 320, `landscape: ${lw}x180 view (fills a ${(915/412).toFixed(2)}:1 phone) when the phone is sideways`);
   const ldone = await LG(() => { const g = window.__game; return g.menu.titleLayout(g.view).play; });
   const ld = await lscreen({ x: ldone.x + ldone.w / 2, y: ldone.y + ldone.h / 2 });
@@ -583,7 +583,7 @@ const OUT = process.env.SHOT_DIR || '.';
   check(await LG(() => !!window.__game.banner), `landscape: touch-drag throw resolves (${await LG(() => window.__game.banner.headline)})`);
   await lp.setViewportSize({ width: 412, height: 915 });
   await lp.waitForTimeout(200);
-  check(await LG(() => !window.__game.view.landscape && document.getElementById('game').width === 180), 'rotating back switches to portrait');
+  check(await LG(() => !window.__game.view.landscape && document.getElementById('game').width === 180 * 3), 'rotating back switches to portrait (canvas at 3x for HD)');
 
   await browser.close();
   if (errors.length) throw new Error('page errors: ' + errors.join('; '));

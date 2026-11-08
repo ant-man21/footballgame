@@ -2,6 +2,7 @@ import * as quicksim from './career/quicksim';
 import * as recruiting from './career/recruiting';
 import { predict, readReceiver } from './cpu';
 import { Game, SIM_DEF } from './game';
+import { HD } from './hd';
 import { PLAYS } from './playbook/plays';
 import { CareerScreens } from './ui/career';
 import { watchForUpdates } from './update';
@@ -25,10 +26,10 @@ game.onCareer = () => careerScreens.open();
 function fit(): void {
   const aspect = window.innerWidth / window.innerHeight;
   const v = aspect > 1 ? landscapeView(aspect) : PORTRAIT;
-  if (v.landscape !== game.view.landscape || canvas.width !== v.w) {
+  if (v.landscape !== game.view.landscape || canvas.width !== v.w * HD) {
     game.setView(v);
-    canvas.width = v.w;
-    canvas.height = v.h;
+    canvas.width = v.w * HD; // HD: a finer pixel grid for the players and the grass; everything else draws in logical pixels
+    canvas.height = v.h * HD;
   }
   const scale = Math.min(window.innerWidth / v.w, window.innerHeight / v.h);
   canvas.style.width = `${Math.floor(v.w * scale)}px`;
@@ -72,6 +73,8 @@ function frame(now: number) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   game.update(dt);
+  ctx.setTransform(HD, 0, 0, HD, 0, 0);
+  ctx.imageSmoothingEnabled = false;
   game.render(ctx);
   requestAnimationFrame(frame);
 }

@@ -11,8 +11,9 @@ import { type Banner, Match, PLAY_CLOCK, type Side } from './match';
 import { Menu, type MenuAction } from './menu';
 import { PLAYS, type Play } from './playbook/plays';
 import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
-import { HASH_YD, Sim, arcHeight, flightFor, throwSpread } from './sim';
-import { type Kit, ballSprite, drawCentered, playerSprite, shade } from './sprites';
+import { type Actor, HASH_YD, Sim, arcHeight, flightFor, throwSpread } from './sim';
+import { type Facing, HD, type Pose, grassTile, hdBall, hdPlayer, identity } from './hd';
+import { type Kit, shade } from './sprites';
 import { type Vec, clamp, dist, lerp } from './util';
 import { type Roster, loadRoster, makeRoster, saveRoster } from './ratings';
 import { RosterView } from './roster';
@@ -735,21 +736,66 @@ export class Game {
     }
   }
 
+  /** Per-player animation: where he was last frame, how fast he's moving, how far through his stride. */
+  private anim = new WeakMap<Actor, { x: number; y: number; t: number; vx: number; vy: number; stride: number }>();
+
+  private poseFor(p: Actor, speed: number): Pose {
+    const sim = this.sim;
+    if (sim.phase === 'presnap') return p.kind === 'ol' || p.kind === 'dl' ? 'stance' : 'stand';
+    if (sim.phase === 'done') {
+      const tackled = sim.result === 'sack' ? sim.qb : sim.result === 'catch' && !sim.touchdown && !sim.outOfBounds ? sim.carrier : null;
+      if (p === tackled) return 'down';
+      return speed > 8 ? 'run' : 'stand';
+    }
+    if (p === sim.qb) {
+      if (sim.phase === 'air' && sim.airT < 0.3) return 'throw'; // follow-through
+      if (sim.phase === 'live') return this.cpuQb?.windup && !this.onOffense ? 'throw' : speed > 8 ? 'carry' : 'hold';
+    }
+    if (sim.phase === 'run' && p === sim.carrier) return 'carry';
+    if (sim.phase === 'air' && sim.ball) { // hands up as the ball arrives
+      const left = sim.ball.dur - sim.ball.t;
+      if (left < 0.45 && dist(p, sim.ball.to) < 9 * YD && (p === sim.intended || p.team === 'def')) return 'catch';
+    }
+    if (p.engaged || p.engagedBy || p.heldBy || (p.job === 'block' && speed < 20)) return 'block';
+    return speed > 8 ? 'run' : 'stand';
+  }
+
   private renderPlayers(ctx: CanvasRenderingContext2D): void {
     const kits = this.careerGame?.kits;
     const offColor = kits ? (this.attackingYours ? kits.cpu : kits.you) : this.attackingYours ? 'red' : 'blue';
     const defColor = kits ? (this.attackingYours ? kits.you : kits.cpu) : this.attackingYours ? 'blue' : 'red';
+    const s = this.view.s;
     for (const p of [...this.sim.actors].sort((a, b) => a.y - b.y)) {
       const build = p.kind === 'qb' ? 'qb' : p.kind === 'ol' || p.kind === 'dl' ? 'big' : 'skill';
-      const img = p.team === 'off'
-        ? playerSprite(offColor, build, 'up', this.view.landscape)
-        : playerSprite(defColor, build, 'down', this.view.landscape);
+      // movement since the last frame drives the run cycle, the lean and which way he faces
+      let a = this.anim.get(p);
+      if (!a) { a = { x: p.x, y: p.y, t: this.clock, vx: 0, vy: 0, stride: Math.random() * 4 }; this.anim.set(p, a); }
+      const dt = this.clock - a.t;
+      if (dt > 0) {
+        const k = Math.min(1, dt * 12);
+        a.vx += ((p.x - a.x) / dt - a.vx) * k;
+        a.vy += ((p.y - a.y) / dt - a.vy) * k;
+        a.stride += Math.hypot(p.x - a.x, p.y - a.y) / (1.1 * YD); // a frame every ~1.1 yards
+        a.x = p.x; a.y = p.y; a.t = this.clock;
+      }
+      const speed = Math.hypot(a.vx, a.vy);
+      const pose = this.poseFor(p, speed);
+      let facing: Facing = p.team === 'off' ? 'up' : 'down';
+      if (pose === 'run' && speed > 12 && Math.abs(a.vy) > Math.abs(a.vx) * 0.7) facing = a.vy < 0 ? 'up' : 'down'; // turned to run
+      const lean = pose === 'run' || pose === 'carry' ? (a.vx > 14 && Math.abs(a.vx) > Math.abs(a.vy) * 0.6 ? 1 : a.vx < -14 && Math.abs(a.vx) > Math.abs(a.vy) * 0.6 ? -1 : 0) : 0;
+      const id = identity(p.pl?.name ?? p.id, p.kind);
+      const img = hdPlayer({ team: p.team === 'off' ? offColor : defColor, build, facing, pose, frame: Math.floor(a.stride) & 3, lean, num: id.num, skin: id.skin });
       const x = this.sx(p.x), y = this.sy(p.y);
-      ctx.fillStyle = p.user ? C.yellow : 'rgba(0,0,0,0.25)';
-      ctx.fillRect(Math.round(x - img.width / 2), Math.round(y + img.height / 2), img.width, 1);
-      drawCentered(ctx, img, x, y);
+      const w = (img.width / HD) * s, h = (img.height / HD) * s;
+      const px = Math.round((x - w / 2) * HD) / HD, py = Math.round((y - h / 2 - 1) * HD) / HD;
+      // shadow under his feet
+      ctx.fillStyle = p.user ? 'rgba(255,236,39,0.55)' : 'rgba(0,0,0,0.28)';
+      ctx.beginPath();
+      ctx.ellipse(Math.round(x * HD) / HD, py + h - 1 / HD * 2, w * 0.42, 1.1 * s, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.drawImage(img, px, py, w, h);
       if (p.user) { // a little marker over your linebacker
-        const mx = Math.round(x), my = Math.round(y - img.height / 2 - 4);
+        const mx = Math.round(x), my = Math.round(py - 4);
         ctx.fillStyle = C.yellow;
         ctx.fillRect(mx - 2, my, 5, 1);
         ctx.fillRect(mx - 1, my + 1, 3, 1);
@@ -870,7 +916,10 @@ export class Game {
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(Math.round(x - 1), Math.round(y), 3, 1);
     }
-    drawCentered(ctx, ballSprite(), x + (sim.ball.carrier ? 2 : 0), y - h - (sim.ball.carrier ? 1 : 0));
+    if (sim.ball.carrier) return; // the carrier's sprite holds it
+    const img = hdBall(Math.floor(sim.airT * 14));
+    const bw = (img.width / HD) * this.view.s, bh = (img.height / HD) * this.view.s;
+    ctx.drawImage(img, Math.round((x - bw / 2) * HD) / HD, Math.round((y - h - bh / 2) * HD) / HD, bw, bh);
   }
 
   /** Defense: the joystick under your thumb. */
@@ -1044,6 +1093,8 @@ function button(ctx: CanvasRenderingContext2D, b: Rect, label: string, color: st
  * scrimmage (yards from the offense's goal line), which sits at world y LOS_Y.
  * attackingYours: the CPU has the ball, so the end zone at the top is yours.
  */
+let grassPattern: CanvasPattern | null = null;
+
 function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineToGain: number, attackingYours: boolean): void {
   const v = g.view;
   const yOf = (yard: number) => Math.round(g.sy(LOS_Y - (yard - ballOn) * YD));
@@ -1063,6 +1114,17 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
     else if (yard >= 100) ctx.fillStyle = attackingYours ? yourZone : cpuZone;
     else ctx.fillStyle = Math.floor(yard / 5) % 2 ? '#00873f' : '#00954a';
     ctx.fillRect(left, top, fw, bottom - top);
+  }
+  // HD grass: a fine texture over the stripes, anchored to the field so it scrolls with it
+  grassPattern ??= ctx.createPattern(grassTile(), 'repeat');
+  if (grassPattern) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const t = grassTile();
+    grassPattern.setTransform(new DOMMatrix([1, 0, 0, 1, 0, ((yOf(0) * HD) % t.height + t.height) % t.height]));
+    ctx.fillStyle = grassPattern;
+    ctx.fillRect(0, 0, v.w * HD, v.h * HD);
+    ctx.restore();
   }
   const ez = yOf(105);
   if (ez > -10 && ez < v.h + 10) {
