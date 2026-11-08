@@ -424,6 +424,27 @@ const OUT = process.env.SHOT_DIR || '.';
   });
   check(season.phase === 'summary' && season.rounds.join() === '4,2,1' && !!season.champ && season.seasons === 1 && typeof season.prod === 'number',
     `a full season into an 8-team playoff (${season.finish}; state champion ${season.champ})`);
+  // flavor: the state poll, headlines, storylines, the box score, teammates signing, stars frozen after the season
+  const fl = await G(() => {
+    const c = window.__careerUI.career, s = c.s, R = window.__recruiting, sl = c.player.seasons[0];
+    const graded = s.log.filter((l) => l.grade !== null);
+    const before = s.recruit.stars, score = s.recruit.score;
+    c.recruitingUpdate([], 1); // a post-season recruiting week: no re-score
+    R.useDifficulty('pro');
+    const steps = R.STAR_STEPS_BY_DIFFICULTY.pro;
+    const rank4 = R.qbRank({ ...s.recruit, score: (steps[2] + steps[3]) / 2 }, 'TX'), rank4lo = R.qbRank({ ...s.recruit, score: steps[2] + 0.01 }, 'TX');
+    return {
+      poll: (s.poll || []).length, teams: s.teams.length, heads: Array.isArray(s.headlines), stories: s.log.filter((l) => l.story).map((l) => l.story),
+      targets: graded.filter((l) => l.target).length, graded: graded.length, keys: s.log.filter((l) => l.kind === 'full').every((l) => l.keys && l.keys.length === 2),
+      potg: s.log.filter((l) => l.potg).length, signees: (sl.signees || []).length, frozen: s.recruit.stars === before && s.recruit.score === score && sl.stars === before,
+      rank4: rank4.national, rank4lo: rank4lo.national, rank4state: rank4.state,
+    };
+  });
+  check(fl.poll === fl.teams && fl.heads && fl.stories.some((t) => /^RIVALRY WEEK/.test(t)), `the state poll ranks all ${fl.teams} teams; storylines: ${[...new Set(fl.stories)].join(' / ')}`);
+  check(fl.targets === fl.graded && fl.keys && fl.potg > 0, `the box score: your top target in ${fl.targets} games, the coach's keys graded, ${fl.potg} players of the game`);
+  check(fl.signees >= 1 && fl.signees <= 4, `${fl.signees} teammates sign with colleges`);
+  check(fl.frozen, 'after the season your stars hold (the summary and the board agree)');
+  check(fl.rank4 >= 5 && fl.rank4lo <= 35 && fl.rank4state <= fl.rank4, `a 4-star ranks inside the national top 35 (NO.${fl.rank4}, NO.${fl.rank4state} in Texas; a fresh 4-star NO.${fl.rank4lo})`);
   await page.screenshot({ path: `${OUT}/smoke-career-summary.png` });
   await tap({ x: 90, y: 312 }); // OFF-SEASON
   const jr = await G(() => { const c = window.__careerUI.career; return { yr: c.s.year, wk: c.s.week, games: c.s.games.filter((g) => g.hs === undefined).length, scr: window.__careerUI.screen }; });

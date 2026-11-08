@@ -191,6 +191,8 @@ const NEIGHBORS: Record<Region, Region[]> = {
   TEXAS: ['SOUTH', 'PLAINS'], SOUTH: ['TEXAS', 'MIDWEST', 'NE'], PLAINS: ['TEXAS', 'MIDWEST', 'WEST'],
   MIDWEST: ['PLAINS', 'NE', 'SOUTH'], NE: ['MIDWEST', 'SOUTH'], WEST: ['PLAINS'],
 };
+/** How much a school recruits your area (see affinity), for a typical player. */
+export const affinityFor = (c: College, homeState: string) => affinity(c, homeState, 3);
 function affinity(c: College, homeState: string, stars: number): number {
   if (c.state === homeState) return 1.7;
   const home = REGION_OF.get(homeState) ?? 'NE', theirs = REGION_OF.get(c.state) ?? 'NE';
@@ -262,12 +264,24 @@ export function tvReaction(r: RecruitState, grade: number): string[] {
   return [d > 0 ? 'ON TV: COLLEGES NOTICED!' : 'ON TV: A ROUGH NIGHT'];
 }
 
-/** Big football states have more quarterbacks to be ranked against. */
-const BIG_STATES = new Set(['TX', 'CA', 'FL', 'GA']), MID_STATES = new Set(['OH', 'PA', 'NC', 'AL', 'LA', 'IL', 'MI', 'NJ', 'VA', 'TN', 'AZ', 'SC']);
-/** Your QB ranking in your class: nationally and in your state (the recruiting site's list). */
+/** Each state's share of the country's quarterbacks (big football states have more to be ranked against). */
+const STATE_SHARE: Record<string, number> = { TX: 0.12, CA: 0.11, FL: 0.1, GA: 0.06 };
+const MID_STATES = new Set(['OH', 'PA', 'NC', 'AL', 'LA', 'IL', 'MI', 'NJ', 'VA', 'TN', 'AZ', 'SC']);
+/** National QB rank by stars, like the real lists: 5 stars ~ the top 4, 4 stars 5-35, 3 stars 36-150, 2 stars 151-400. */
+const RANK_BANDS: Record<number, [number, number]> = { 5: [4, 1], 4: [35, 5], 3: [150, 36], 2: [400, 151] };
+/**
+ * Your QB ranking in your class (the recruiting site's list): it follows your
+ * stars, and within a star your progress toward the next one. 1 star: unranked (999+).
+ */
 export function qbRank(r: RecruitState, homeState: string): { national: number; state: number } {
-  const S = barScale(r.score);
-  const national = clamp(Math.round(30 * 10 ** ((32 - S) / 12)), 1, 2500);
-  const share = BIG_STATES.has(homeState) ? 0.09 : MID_STATES.has(homeState) ? 0.035 : 0.012;
-  return { national, state: Math.max(1, Math.round(national * share)) };
+  const stars = starsFor(r.score);
+  let national: number;
+  if (stars >= 5) national = clamp(Math.round(4 - (r.score - steps[3]) / 4), 1, 4);
+  else if (stars <= 1) national = 1000 + Math.round(clamp(steps[0] - r.score, 0, 50) * 20);
+  else {
+    const [lo, hi] = RANK_BANDS[stars];
+    national = Math.round(lo - (toNextStar(r.score) / 100) * (lo - hi));
+  }
+  const share = STATE_SHARE[homeState] ?? (MID_STATES.has(homeState) ? 0.035 : 0.012);
+  return { national, state: Math.max(1, Math.ceil(national * share)) };
 }

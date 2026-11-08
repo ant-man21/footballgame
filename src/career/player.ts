@@ -35,6 +35,7 @@ export interface SeasonLine {
   ovr: number; // your overall at season's end
   stars: number;
   prod?: number; // recruiting production at the season's end (see production()); older saves estimate it
+  signees?: { name: string; pos: string; school: string }[]; // teammates (seniors) who signed with colleges
 }
 
 export interface CareerPlayer {
