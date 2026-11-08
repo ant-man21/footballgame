@@ -27,7 +27,7 @@ export function stepper(ctx: CanvasRenderingContext2D, left: Rect, right: Rect, 
 }
 
 /** Relative luminance of a #rrggbb colour (0 dark - 1 light). */
-function lum(hex: string): number {
+export function lum(hex: string): number {
   const n = parseInt(hex.slice(1), 16);
   const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
     const c = v / 255;
@@ -35,7 +35,7 @@ function lum(hex: string): number {
   });
   return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
 }
-function contrast(a: string, b: string): number {
+export function contrast(a: string, b: string): number {
   const x = Math.max(lum(a), lum(b)), y = Math.min(lum(a), lum(b));
   return (x + 0.05) / (y + 0.05);
 }
@@ -72,3 +72,8 @@ export function screenBg(ctx: CanvasRenderingContext2D, w: number, h: number): v
   ctx.fillStyle = C.ink;
   ctx.fillRect(0, 0, w, h);
 }
+
+/** Text colour that reads on a background: the palette's white or ink. */
+export const inkOn = (bg: string) => (contrast(bg, C.white) >= contrast(bg, C.ink) ? C.white : C.ink);
+/** A school's accent colour on its main colour, or a readable fallback. */
+export const accentOn = (colors: [string, string]) => (contrast(colors[1], colors[0]) >= 2.5 ? colors[1] : inkOn(colors[0]));

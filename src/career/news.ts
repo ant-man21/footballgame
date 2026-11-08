@@ -71,7 +71,8 @@ export function rivalOf(teams: Team[], mySchool: number, seed: number): number {
   const others = teams.filter((t) => t.region === region && t.id !== mySchool).map((t) => t.id);
   return others[Math.abs(seed) % others.length];
 }
-export const rivalryName = (seed: number) => `THE BATTLE FOR THE ${TROPHIES[Math.abs(seed >> 3) % TROPHIES.length]}`;
+export const rivalTrophy = (seed: number) => `THE ${TROPHIES[Math.abs(seed >> 3) % TROPHIES.length]}`;
+export const rivalryName = (seed: number) => `THE BATTLE FOR ${rivalTrophy(seed)}`;
 
 export interface StoryInput {
   rec: GameRec; teams: Team[]; games: GameRec[]; mySchool: number; seed: number; year: number; poll?: number[];

@@ -36,6 +36,9 @@ export interface SeasonLine {
   stars: number;
   prod?: number; // recruiting production at the season's end (see production()); older saves estimate it
   signees?: { name: string; pos: string; school: string }[]; // teammates (seniors) who signed with colleges
+  avg?: number; // average game grade
+  balls?: { grade: number; label: string }[]; // game balls: games graded A or better
+  rival?: 'W' | 'L'; // the rivalry game
 }
 
 export interface CareerPlayer {
@@ -58,6 +61,8 @@ export function createPlayer(first: string, last: string, archetype: Archetype):
 
 export const displayName = (p: CareerPlayer) => `${p.first[0]}.${p.last}`;
 export const qbOvr = (p: CareerPlayer) => overall('QB', p.r);
+/** Your jersey number (from your name, so it never changes). */
+export const jerseyNo = (p: CareerPlayer) => [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19][[...(p.first + p.last)].reduce((t, ch) => (t * 31 + ch.charCodeAt(0)) % 100003, 7) % 18];
 
 /** Your player as a roster player (the QB slot). */
 export const asRosterPlayer = (p: CareerPlayer): Player => ({ slot: 'QB', pos: 'QB', name: displayName(p), r: { ...p.r }, ovr: qbOvr(p) });

@@ -391,9 +391,13 @@ const OUT = process.env.SHOT_DIR || '.';
   });
   check(simd.kind === 'full' && / DRIVE$/.test(simd.banner || '') && simd.scr === 'result', `DEFENSE: SIMULATED: ${simd.banner} (${simd.detail}); SIM REST OF GAME finishes it`);
   // PLAYS: YOU CALL: a career game runs like an exhibition, with your own calls in the huddle on both sides
-  const ycl = await G(() => { const ui = window.__careerUI; ui.screen = 'hub'; window.__game.showCareer(ui); return ui.hubLayout(window.__game.view).calls; });
-  await tap({ x: ycl.x + ycl.w / 2, y: ycl.y + ycl.h / 2 });
-  check(await G(() => window.__careerUI.career.s.calls === 'you' && JSON.parse(localStorage.getItem('footballgame.career.v1')).calls === 'you'), 'PLAYS: YOU CALL toggles on the hub and saves');
+  const gpb = await G(() => { const ui = window.__careerUI; ui.screen = 'hub'; window.__game.showCareer(ui); return ui.hubLayout(window.__game.view).gamePlan; });
+  await tap({ x: gpb.x + gpb.w / 2, y: gpb.y + gpb.h / 2 });
+  const ycl = await G(() => { const ui = window.__careerUI; return ui.screen === 'gameplan' && { you: ui.gamePlanLayout(window.__game.view).callsYou, done: ui.bottomButton(window.__game.view) }; });
+  check(!!ycl, 'GAME PLAN on the hub opens the game plan screen');
+  await tap({ x: ycl.you.x + ycl.you.w / 2, y: ycl.you.y + ycl.you.h / 2 });
+  await tap({ x: ycl.done.x + ycl.done.w / 2, y: ycl.done.y + ycl.done.h / 2 });
+  check(await G(() => window.__careerUI.screen === 'hub' && window.__careerUI.career.s.calls === 'you' && JSON.parse(localStorage.getItem('footballgame.career.v1')).calls === 'you'), 'GAME PLAN: YOU CALL is picked, saved, and DONE returns to the hub');
   const own = await G(() => {
     const ui = window.__careerUI, g = window.__game, c = ui.career;
     c.s.role = 'starter'; c.s.defense = 'play';
@@ -530,6 +534,8 @@ const OUT = process.env.SHOT_DIR || '.';
   const sg = await G(() => { const ui = window.__careerUI, rr = ui.signingRows(window.__game.view)[0]; return { id: rr.c.id, x: rr.r.x + rr.r.w / 2, y: rr.r.y + rr.r.h / 2 }; });
   await tap({ x: sg.x, y: sg.y }); await tap({ x: sg.x, y: sg.y });
   check(await G((id) => { const c = window.__careerUI.career; return c.s.phase === 'done' && c.s.recruit.signed === id && window.__careerUI.screen === 'done'; }, sg.id), `signed with ${sg.id}: high school is done`);
+  const tc = await G(() => { const p = window.__careerUI.career.player; return p.seasons.map((sl) => ({ balls: (sl.balls || []).length, rival: sl.rival, avg: sl.avg })); });
+  check(tc.length === 3 && tc.every((t) => t.rival === 'W' || t.rival === 'L') && tc.some((t) => typeof t.avg === 'number'), `the trophy case: game balls ${tc.map((t) => t.balls).join('/')}, rivalry ${tc.map((t) => t.rival).join('')}`);
   await page.screenshot({ path: `${OUT}/smoke-career-done.png` });
   // a save from before recruiting (v1, mid senior year) is upgraded and caught up
   await G(() => {

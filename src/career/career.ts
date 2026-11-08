@@ -24,7 +24,7 @@ import {
 } from './recruiting';
 import { type Units, overtimeWinner, simGame, simToEnd, simUntil } from './quicksim';
 import { Rng, newSeed } from './rng';
-import { type Key, type TargetLine, headlines, keyMet, keysFor, statePoll, storyline, targetLine, teammateSignees } from './news';
+import { type Key, type TargetLine, headlines, keyMet, keysFor, rivalOf, statePoll, storyline, targetLine, teammateSignees } from './news';
 import { CAREER_VERSION, saveCareer } from './save';
 
 export const HS_YEARS = 3;
@@ -414,9 +414,20 @@ export class Career {
       year: s.year, school: this.school.name, role: gs >= 5 ? 'STARTER' : 'BACKUP', gp, gs, stats: line,
       record: rec.text, finish, ovr: qbOvr(p), stars, prod: Math.round(this.productionNow() * 10) / 10,
       signees: teammateSignees(s.roster, s.state, (this.school.off + this.school.def) / 2),
+      avg: graded ? Math.round(avg) : undefined,
+      balls: s.log.filter((l) => l.grade !== null && l.grade >= 80).sort((a, b) => b.grade! - a.grade!).slice(0, 4)
+        .map((l) => ({ grade: l.grade!, label: l.round === 'F' ? 'TITLE' : l.round ?? `${l.home ? 'VS' : 'AT'} ${this.team(l.opp).abbr}` })),
+      rival: this.rivalResult(),
     });
     news.push(`SEASON OVER: ${finish}`);
     s.phase = 'summary';
+  }
+
+  /** The rivalry game this season: won or lost (undefined before it's played). */
+  rivalResult(): 'W' | 'L' | undefined {
+    const s = this.s, rid = rivalOf(s.teams, s.schoolId, s.seed);
+    const g = s.games.find((x) => !x.round && played(x) && ((x.home === s.schoolId && x.away === rid) || (x.away === s.schoolId && x.home === rid)));
+    return g ? (winnerOf(g) === s.schoolId ? 'W' : 'L') : undefined;
   }
 
   /** From the season summary: the off-season, then the next season (or the end of high school). */
