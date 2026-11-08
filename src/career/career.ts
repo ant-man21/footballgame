@@ -18,7 +18,10 @@ import {
   classNorm, practice, production, qbNormOvr, qbOvr, seasonProduction,
 } from './player';
 import { loadSettings } from '../settings';
-import { MAX_VISITS, type RecruitState, SCORE_FORMULA, college, newRecruiting, officialVisit, recruitingWeek, rollNeeds, starsFor, useDifficulty } from './recruiting';
+import {
+  MAX_VISITS, type RecruitState, SCORE_FORMULA, college, newRecruiting, officialVisit, pickScout, qbRank, recruitingWeek, rollNeeds,
+  scoutReaction, starsFor, tvReaction, useDifficulty,
+} from './recruiting';
 import { type Units, overtimeWinner, simGame, simToEnd, simUntil } from './quicksim';
 import { Rng, newSeed } from './rng';
 import { CAREER_VERSION, saveCareer } from './save';
@@ -47,6 +50,7 @@ export interface WeekLog {
   battle: number | null; // the QB battle meter after the game (backups)
   gains: Partial<Record<RatingKey, number>>; // rating points gained this week
   news: string[]; // e.g. "YOU WON THE STARTING JOB!"
+  spotlight?: number; // how much this game's grade counts toward your stars (a recruiting site 2, TV 1.5)
 }
 
 export interface CareerSave {
@@ -64,6 +68,7 @@ export interface CareerSave {
   battle: number; // 0-100
   starter: { name: string; ovr: number } | null; // the QB ahead of you
   log: WeekLog[]; // your team's games this season
+  events?: GameEvent[]; // this season's spotlight games (juniors and seniors)
   dry: number; // weeks in a row you didn't get in (backups)
   phase: 'season' | 'summary' | 'signing' | 'done'; // summary: the season is over, showing it; signing: signing day
   recruit: RecruitState; // colleges recruiting you
@@ -73,6 +78,11 @@ export interface CareerSave {
   calls: 'coach' | 'you'; // who calls the plays: the coach, or you in the huddle (like an exhibition game)
   quarter: number; // quarter length in seconds for this career's games
 }
+
+/** A spotlight game: a college scout in the stands, the recruiting site evaluating you, or a TV game. */
+export type EventKind = 'scout' | 'site' | 'tv';
+export interface GameEvent { week: number; kind: EventKind; school?: string }
+export const SITE_NAME = 'PREP ZONE';
 
 /** A game day ready to play: the match (maybe already in progress) and how you're in it. */
 export interface GamePlan {
@@ -94,6 +104,7 @@ export class Career {
   constructor(public s: CareerSave) {
     useDifficulty(loadSettings().difficulty); // star steps follow the difficulty setting
     if (!s.recruit) this.catchUpRecruiting(); // a save from before recruiting existed
+    if (!s.events && s.phase === 'season') this.scheduleEvents(s.week); // a save from before events: the rest of this season
     else if ((s.recruit.formula ?? 1) < SCORE_FORMULA) { // scored by an older formula: re-score once
       if (s.phase === 'season' && !s.recruit.signed) {
         s.recruit.score = this.recruitScore();
@@ -173,6 +184,7 @@ export class Career {
     s.week = 1;
     s.log = [];
     s.dry = 0;
+    this.scheduleEvents();
     s.phase = 'season';
     const school = this.school;
     s.roster = makeRoster(school.name, (school.off + school.def) / 2, HS_TIER);
@@ -260,12 +272,21 @@ export class Career {
       }
       s.dry = plan.kind === 'none' ? s.dry + 1 : 0;
     }
+    const ev = this.eventFor(rec);
     const log: WeekLog = {
       week: rec.week, round: rec.round, opp: plan.opp.id, home, us, them, ot, kind: plan.kind, label: plan.label,
       line, grade, battle, gains, news,
     };
+    if (ev && grade !== null && ev.kind !== 'scout') log.spotlight = ev.kind === 'site' ? 2 : 1.5;
     s.log.push(log);
+    if (ev && grade === null) news.push(ev.kind === 'scout' ? 'THE SCOUT SAW YOU ON THE SIDELINE' : ev.kind === 'tv' ? 'ON TV, BUT YOU DID NOT PLAY' : `${SITE_NAME} CAME, BUT YOU DID NOT PLAY`);
+    else if (ev?.kind === 'scout' && ev.school && grade !== null) news.push(...scoutReaction(s.recruit, college(ev.school)!, grade));
+    else if (ev?.kind === 'tv' && grade !== null) news.push(...tvReaction(s.recruit, grade));
     this.recruitingUpdate(news, 1);
+    if (ev?.kind === 'site' && grade !== null) {
+      const rk = qbRank(s.recruit, s.state);
+      news.push(rk.national > 999 ? `${SITE_NAME}: NOT RANKED YET` : `${SITE_NAME}: NO.${rk.national} QB IN THE NATION, NO.${rk.state} IN ${s.state}`);
+    }
     this.simWeek(rec.week);
     this.advance(news);
     saveCareer(s);
@@ -396,12 +417,57 @@ export class Career {
 
   // ---------- recruiting ----------
 
+  // ---------- events ----------
+
+  /**
+   * This season's spotlight games (juniors and seniors), from week `from` on:
+   * two scout games, one or two recruiting site evaluations (two as a senior),
+   * one or two TV games. Playoff semifinals and the state title are always on TV.
+   */
+  private scheduleEvents(from = 1): void {
+    const s = this.s;
+    s.events = [];
+    if (s.year < 1) return;
+    const weeks = Array.from({ length: REGULAR_WEEKS - from + 1 }, (_, i) => from + i).sort(() => Math.random() - 0.5);
+    const kinds: EventKind[] = ['scout', 'scout', 'site', ...(s.year >= 2 ? ['site' as EventKind] : []), 'tv', ...(Math.random() < 0.5 ? ['tv' as EventKind] : [])];
+    kinds.forEach((kind, i) => { if (i < weeks.length) s.events!.push({ week: weeks[i], kind }); });
+    s.events.sort((a, b) => a.week - b.week);
+  }
+
+  /** The spotlight for a game (the scout's school is picked when the week comes, so it fits who you are then). */
+  eventFor(g: GameRec): GameEvent | null {
+    const s = this.s;
+    if (g.round === 'SF' || g.round === 'F') return { week: g.week, kind: 'tv' };
+    if (g.round) return null;
+    const ev = s.events?.find((e) => e.week === g.week) ?? null;
+    if (ev?.kind === 'scout' && !ev.school) {
+      const c = pickScout(s.recruit, s.state);
+      if (c) ev.school = c.id; else ev.kind = 'site';
+      saveCareer(s);
+    }
+    return ev;
+  }
+
+  /** The event coming up this week, in words for the hub and game day (null = none). */
+  eventText(g: GameRec | null): { tag: string; text: string } | null {
+    const ev = g ? this.eventFor(g) : null;
+    if (!ev) return null;
+    if (ev.kind === 'scout') { const c = college(ev.school!)!; return { tag: `${c.abbr} SCOUT`, text: `A ${c.name} SCOUT IS IN THE STANDS` }; }
+    if (ev.kind === 'site') return { tag: SITE_NAME, text: `${SITE_NAME} IS HERE TO EVALUATE YOU: THIS GAME COUNTS DOUBLE` };
+    return { tag: 'ON TV', text: 'THIS GAME IS ON TV: COLLEGES ARE WATCHING' };
+  }
+
+  /** Your QB ranking (juniors and seniors). */
+  rank(): { national: number; state: number } | null { return this.s.year >= 1 ? qbRank(this.s.recruit, this.s.state) : null; }
+
   /** This season's production so far (grades, wins as the starter, playoff wins, a title). */
   productionNow(): number {
     const s = this.s;
     const graded = s.log.filter((l) => l.grade !== null);
     const starts = s.log.filter((l) => l.kind === 'full');
-    const avg = graded.length ? graded.reduce((t, l) => t + l.grade!, 0) / graded.length : 55;
+    // spotlight games (the recruiting site, TV) weigh more in the average
+    const wsum = graded.reduce((t, l) => t + (l.spotlight ?? 1), 0);
+    const avg = graded.length ? graded.reduce((t, l) => t + l.grade! * (l.spotlight ?? 1), 0) / wsum : 55;
     const champ = starts.some((l) => l.round === 'F' && l.us > l.them);
     return production(avg, starts.length, starts.filter((l) => l.us > l.them).length,
       starts.filter((l) => l.round && l.us > l.them).length, champ);

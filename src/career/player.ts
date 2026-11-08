@@ -108,6 +108,16 @@ export const WIN_VALUE = 1.2;
 /** Grade points a sack costs (see gradeGame). */
 export const SACK_COST = 1;
 
+/**
+ * A game grade as a letter. An average game in this game grades ~60, a B-; a
+ * strong one (75) an A-; 90+ an A+; below ~40 a D or worse.
+ */
+export function letterGrade(g: number): string {
+  const steps: [number, string][] = [[90, 'A+'], [80, 'A'], [74, 'A-'], [69, 'B+'], [64, 'B'], [59, 'B-'], [55, 'C+'], [50, 'C'], [45, 'C-'], [40, 'D+'], [35, 'D'], [30, 'D-']];
+  for (const [min, l] of steps) if (g >= min) return l;
+  return 'F';
+}
+
 /** NFL-style passer rating (0-158.3). */
 export function passerRating(s: TeamStats): number {
   if (!s.att) return 0;

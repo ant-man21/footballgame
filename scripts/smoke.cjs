@@ -428,6 +428,22 @@ const OUT = process.env.SHOT_DIR || '.';
   await tap({ x: 90, y: 312 }); // OFF-SEASON
   const jr = await G(() => { const c = window.__careerUI.career; return { yr: c.s.year, wk: c.s.week, games: c.s.games.filter((g) => g.hs === undefined).length, scr: window.__careerUI.screen }; });
   check(jr.yr === 1 && jr.wk === 1 && jr.games === 80 && jr.scr === 'hub', 'OFF-SEASON: on to the junior year with a new schedule');
+  // events: the junior year has scouts, a recruiting site evaluation and TV games
+  const evs = await G(() => {
+    const ui = window.__careerUI, c = ui.career, Q = window.__quicksim;
+    const kinds = (c.s.events || []).map((e) => e.kind).sort().join(',');
+    // make this week a scout game and play it (simulated)
+    c.s.role = 'starter'; c.s.events = [{ week: c.s.week, kind: 'scout' }, { week: c.s.week + 1, kind: 'site' }];
+    const g1 = c.nextGame; const tag = c.eventText(g1);
+    let p = c.prepareGame(); Q.simToEnd(p.match, p.units); const l1 = c.finishGame(p);
+    p = c.prepareGame(); Q.simToEnd(p.match, p.units); const l2 = c.finishGame(p);
+    const sf = c.eventFor({ week: 12, round: 'SF', home: 0, away: 1 });
+    return { kinds, tag: tag && tag.tag, scoutNews: l1.news.find((n) => / SCOUT: /.test(n)), siteNews: l2.news.find((n) => n.startsWith('PREP ZONE: ')), spot: l2.spotlight, sf: sf && sf.kind, grade: l1.grade };
+  });
+  check(/scout,scout/.test(evs.kinds) && /site/.test(evs.kinds) && /tv/.test(evs.kinds), `junior year events scheduled: ${evs.kinds}`);
+  check(!!evs.tag && !!evs.scoutNews, `a scout game: "${evs.tag}" on the hub, then "${evs.scoutNews}" (grade ${evs.grade})`);
+  check(evs.spot === 2 && !!evs.siteNews, `the recruiting site's game counts double and ranks you: "${evs.siteNews}"`);
+  check(evs.sf === 'tv', 'playoff semifinals are on TV');
   // Recruiting: stars move week to week, colleges offer, commit from the board, signing day after the senior year
   const jrRec = await G(() => {
     const ui = window.__careerUI, c = ui.career, Q = window.__quicksim; const scores = []; let n = 0;
@@ -455,7 +471,11 @@ const OUT = process.env.SHOT_DIR || '.';
   // official visits: pick a school that hasn't offered, VISIT raises its interest; one visit a week
   const vrow = await G(() => {
     const ui = window.__careerUI, rs = ui.career.s.recruit;
-    const rr = ui.recruitRows(window.__game.view).find((x) => !rs.offers.includes(x.c.id) && !rs.visits.includes(x.c.id));
+    let rr = null; // a school that hasn't offered yet, on whatever page it is
+    for (let pg = 0; pg < ui.recruitPages(window.__game.view) && !rr; pg++) {
+      ui.listPage = pg;
+      rr = ui.recruitRows(window.__game.view).find((x) => !rs.offers.includes(x.c.id) && !rs.visits.includes(x.c.id));
+    }
     return rr && { id: rr.c.id, x: rr.r.x + rr.r.w / 2, y: rr.r.y + rr.r.h / 2, before: rs.interest[rr.c.id] || 0 };
   });
   await tap({ x: vrow.x, y: vrow.y });

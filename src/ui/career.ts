@@ -3,11 +3,11 @@
 // stats, the season summary and the end of high school. Each screen lays
 // itself out for portrait (180x320) and landscape (~400x180).
 import { C } from '../config';
-import { Career, type GamePlan, HS_YEARS, type WeekLog } from '../career/career';
+import { Career, type GamePlan, HS_YEARS, SITE_NAME, type WeekLog } from '../career/career';
 import { STATES, randomName } from '../career/hsnames';
 import { type GameRec, PLAYOFF_ROUNDS, REGION_NAMES, ROUND_NAMES, played, regionOrder } from '../career/league';
 import {
-  ARCHETYPES, type Archetype, CLASS_NAMES, CLASS_SHORT, FOCUSES, displayName, passerRating, qbOvr,
+  ARCHETYPES, type Archetype, CLASS_NAMES, CLASS_SHORT, FOCUSES, displayName, letterGrade, passerRating, qbOvr,
 } from '../career/player';
 import { type College, MAX_VISITS, TIER_NAMES, board, college, offerList, toNextStar, walkOns } from '../career/recruiting';
 import { deleteCareer, loadCareer, saveCareer } from '../career/save';
@@ -26,7 +26,7 @@ type Screen = 'start' | 'create' | 'hub' | 'gameday' | 'result' | 'schedule' | '
 const r = (x: number, y: number, w: number, h: number): Rect => ({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
 const cleanName = (s: string) => s.toUpperCase().replace(/[^A-Z' -]/g, '').trim().slice(0, 10);
 const line = (s: TeamStats) => `${s.cmp}/${s.att}  ${s.yards} YDS  ${s.tds} TD  ${s.int} INT`;
-const gradeColor = (g: number) => (g >= 75 ? C.green : g >= 60 ? C.yellow : g >= 45 ? C.white : C.orange);
+const gradeColor = (g: number) => (g >= 74 ? C.green : g >= 59 ? C.yellow : g >= 45 ? C.white : C.orange);
 
 /** Splits text into lines of at most n characters. */
 function wrap(text: string, n: number): string[] {
@@ -420,6 +420,8 @@ export class CareerScreens {
       drawText(ctx, c.weekName, x + 4, P.next + 4, { color: C.yellow });
       drawText(ctx, `${home ? 'VS' : 'AT'} ${o.name} ${o.mascot}`, x + 4, P.next + 14);
       drawText(ctx, `${c.record(o.id).text} - ${REGION_NAMES[o.region]}${g.round ? '' : o.region === sc.region && g.week > 3 ? ' REGION GAME' : ''}`, x + 4, P.next + 24, { color: C.grey });
+      const ev = c.eventText(g); // this week's spotlight: a scout, the recruiting site, TV
+      if (ev) drawText(ctx, ev.tag, x + w - 4, P.next + 24, { align: 'right', color: C.yellow });
       badge(ctx, x + w - badgeWidth(o.abbr) - 4, P.next + 4, o.abbr, o.colors);
     } else drawText(ctx, 'SEASON OVER', x + 4, P.next + 4, { color: C.grey });
 
@@ -470,6 +472,8 @@ export class CareerScreens {
     const c = this.career!, plan = this.plan!, m = plan.match, sc = c.school;
     let y = this.title(ctx, v, plan.label, plan.kind === 'full' ? C.green : C.yellow);
     for (const t of wrap(plan.detail, v.landscape ? 60 : 40)) { drawText(ctx, t, v.w / 2, y, { align: 'center', color: C.grey }); y += 9; }
+    const ev = plan.kind !== 'none' ? c.eventText(plan.rec) : null;
+    if (ev) for (const t of wrap(ev.text, v.landscape ? 60 : 40)) { drawText(ctx, t, v.w / 2, y, { align: 'center', color: C.yellow }); y += 9; }
     y += v.landscape ? 6 : 20;
     const mid = v.w / 2;
     badge(ctx, mid - 60, y, sc.abbr, sc.colors, 2);
@@ -509,7 +513,7 @@ export class CareerScreens {
     else {
       drawText(ctx, line(l.line), mid, y, { align: 'center' });
       y += 10;
-      if (l.grade !== null) { drawText(ctx, `GRADE ${l.grade}`, mid, y, { align: 'center', color: gradeColor(l.grade) }); y += 10; }
+      if (l.grade !== null) { drawText(ctx, `GRADE ${letterGrade(l.grade)}`, mid, y, { align: 'center', color: gradeColor(l.grade), scale: 2 }); y += 16; }
     }
     if (l.battle !== null && this.battleBefore !== null) {
       y += 2;
@@ -639,7 +643,7 @@ export class CareerScreens {
       drawText(ctx, `${l.round ?? `W${l.week}`} ${l.home ? 'VS' : 'AT'} ${o.abbr}`, x, y, { color: C.grey });
       drawText(ctx, `${l.us > l.them ? 'W' : 'L'} ${l.us}-${l.them}`, x + 44, y, { color: l.us > l.them ? C.green : C.red });
       drawText(ctx, l.kind === 'none' ? 'DNP' : `${l.line.cmp}/${l.line.att} ${l.line.yards} ${l.line.tds}TD ${l.line.int}I`, x + 84, y);
-      if (l.grade !== null) drawText(ctx, String(l.grade), x + w, y, { align: 'right', color: gradeColor(l.grade) });
+      if (l.grade !== null) drawText(ctx, letterGrade(l.grade), x + w, y, { align: 'right', color: gradeColor(l.grade) });
       y += 8;
     }
     if (!s.log.length) { drawText(ctx, 'NO GAMES YET', x, y, { color: C.darkGrey }); y += 8; }
@@ -780,7 +784,10 @@ export class CareerScreens {
       : `${rs.offers.length} OFFER${rs.offers.length === 1 ? '' : 'S'} - ${left} VISIT${left === 1 ? '' : 'S'} LEFT - TAP A SCHOOL`;
     drawText(ctx, status, x, y, { color: rs.committed ? C.green : C.grey });
     y += 10;
-    if (!v.landscape) drawText(ctx, 'STARS MOVE WEEKLY: PLAY WELL AND WIN', x, y, { color: C.darkGrey });
+    const rk = c.rank();
+    const rankText = !rk ? 'STARS MOVE WEEKLY: PLAY WELL AND WIN' : rk.national > 999 ? `${SITE_NAME}: UNRANKED QB` : `${SITE_NAME}: NO.${rk.national} QB NATIONALLY, NO.${rk.state} IN ${c.s.state}`;
+    if (!v.landscape) drawText(ctx, rankText, x, y, { color: rk ? C.white : C.darkGrey });
+    else drawText(ctx, rankText, Math.floor(v.w * 0.6) + 2, y0 + 10, { color: rk ? C.white : C.darkGrey });
     const rows = this.recruitRows(v);
     if (!rows.length) drawText(ctx, 'NO COLLEGES WATCHING YET', x, rows.length ? 0 : (v.landscape ? 44 : 70), { color: C.darkGrey });
     for (const { c: col, r: rr } of rows) {

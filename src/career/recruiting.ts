@@ -6,6 +6,7 @@
 // day after your senior season. Colleges come from src/data/colleges.json.
 import data from '../data/colleges.json';
 import type { Difficulty } from '../settings';
+import { type Region, STATES } from './hsnames';
 import { clamp, rand } from '../util';
 
 export type Tier = 'P4' | 'G5' | 'FCS';
@@ -137,26 +138,64 @@ const offerReach = (score: number) => 5 + Math.max(0, score) * 0.3;
 export function recruitingWeek(r: RecruitState, homeState: string, canOffer: boolean): string[] {
   const news: string[] = [];
   const S = barScale(r.score); // on the colleges' bar scale
+  const stars = starsFor(r.score);
   for (const c of COLLEGES) {
-    const T = bar(c), gap = S - T;
+    const T = bar(c), gap = S - T, inState = c.state === homeState;
+    const elite = c.prestige >= ELITE;
+    const need = effectiveNeed(r, c, stars, inState);
+    // when they start watching: the big programs track top players early, in-state schools earlier still
+    const notice = -6 - (elite && stars >= 4 ? 8 : 0) - (inState ? 4 : 0);
     let v = r.interest[c.id] ?? 0;
-    if (gap < -6) v *= 0.9; // you're not at their level (yet)
+    if (gap < notice) v *= 0.9; // you're not on their radar (yet)
     else {
-      let gain = (4 + gap * 0.8 + rand(0, 4)) * (r.need[c.id] ?? 0.5);
-      if (c.state === homeState) gain *= 1.4; // in-state schools watch you closest
-      if (gap > 14) gain *= 0.3; // you're out of their league: they'd love to, but don't bother much
+      let gain = (4 + gap * 0.8 + rand(0, 4)) * need * affinity(c, homeState, stars);
+      if (stars >= 4) gain *= 1 + 0.3 * (stars - 3); // everyone watches the top players closely
+      if (gap > 14 && !(elite || stars >= 5)) gain *= 0.3; // you're out of their league: they'd love to, but don't bother much
       if (r.committed && r.committed !== c.id) gain *= 0.4; // you're committed elsewhere
-      v += Math.max(0, gain);
+      v += Math.max(gain, gap < 0 ? 1 : 0); // a school that's watching keeps building a little interest
     }
     v = clamp(v, 0, canOffer ? 100 : 30); // sophomores only get noticed
     r.interest[c.id] = Math.round(v * 10) / 10;
-    if (canOffer && !r.offers.includes(c.id) && v >= 60 && gap >= -2 && gap <= offerReach(S)
-      && (r.need[c.id] ?? 0) >= 0.5 && Math.random() < OFFER_CHANCE) {
+    const lowest = inState ? -4 : -2, highest = stars >= 5 && c.tier === 'P4' ? Infinity : offerReach(S);
+    const chance = Math.min(0.5, OFFER_CHANCE * (stars >= 5 ? 2.5 : stars >= 4 ? 1.6 : 1) * (inState ? 1.5 : 1));
+    if (canOffer && !r.offers.includes(c.id) && v >= 60 && gap >= lowest && gap <= highest && need >= 0.5 && Math.random() < chance) {
       r.offers.push(c.id);
       news.push(`OFFER: ${c.name}!`);
     }
   }
   return news;
+}
+
+/** Programs that recruit the top players nationally (Alabama, Ohio State, Georgia, Texas...). */
+const ELITE = 85;
+
+/**
+ * How badly a school wants a QB like you this year: its need, but a top
+ * recruit makes room: strong Power 4 programs (and in-state ones) take a 5-star,
+ * the elite and in-state ones take a 4-star.
+ */
+function effectiveNeed(r: RecruitState, c: College, stars: number, inState: boolean): number {
+  let need = r.need[c.id] ?? 0.3;
+  if (c.tier === 'P4' && stars >= 5 && (c.prestige >= 75 || inState)) need = Math.max(need, 0.9);
+  else if (c.tier === 'P4' && stars >= 4 && (inState || c.prestige >= ELITE)) need = Math.max(need, 0.6);
+  return need;
+}
+
+/**
+ * Recruiting footprint: schools recruit hardest in their own state, then their
+ * region and the regions next to it (Texas schools and the SEC / Big 12 for a
+ * Texas kid). The elite programs recruit top players anywhere.
+ */
+const REGION_OF = new Map(STATES.map((st) => [st.id, st.region]));
+const NEIGHBORS: Record<Region, Region[]> = {
+  TEXAS: ['SOUTH', 'PLAINS'], SOUTH: ['TEXAS', 'MIDWEST', 'NE'], PLAINS: ['TEXAS', 'MIDWEST', 'WEST'],
+  MIDWEST: ['PLAINS', 'NE', 'SOUTH'], NE: ['MIDWEST', 'SOUTH'], WEST: ['PLAINS'],
+};
+function affinity(c: College, homeState: string, stars: number): number {
+  if (c.state === homeState) return 1.7;
+  const home = REGION_OF.get(homeState) ?? 'NE', theirs = REGION_OF.get(c.state) ?? 'NE';
+  const near = theirs === home ? 1.3 : NEIGHBORS[home].includes(theirs) ? 1.15 : 0.85;
+  return c.prestige >= ELITE && stars >= 4 ? Math.max(near, 1.2) : near;
 }
 
 /** The schools showing the most interest, best first (offers on top). */
@@ -176,4 +215,59 @@ export function walkOns(r: RecruitState, homeState: string): College[] {
   const S = barScale(r.score); // on the colleges' bar scale
   const key = (c: College) => Math.abs(bar(c) - S - 3) - (c.state === homeState ? 2 : 0);
   return [...COLLEGES].sort((a, b) => key(a) - key(b)).slice(0, 4);
+}
+
+// ---------- events: scouts, the recruiting site, TV games ----------
+
+/** A college to send a scout: near your level or a bit above it, from your state and region first. */
+export function pickScout(r: RecruitState, homeState: string): College | null {
+  const S = barScale(r.score), stars = starsFor(r.score);
+  const pool = COLLEGES.filter((c) => !r.offers.includes(c.id) && c.id !== r.committed
+    && (c.tier !== 'FCS' || stars <= 2) && bar(c) >= S - 6 && bar(c) <= S + (stars >= 4 ? 14 : 10));
+  if (!pool.length) return null;
+  const weight = (c: College) => affinity(c, homeState, stars) * (1 + c.prestige / 50) * (c.prestige >= ELITE && stars >= 4 ? 2 : 1);
+  let x = Math.random() * pool.reduce((t, c) => t + weight(c), 0);
+  for (const c of pool) { x -= weight(c); if (x <= 0) return c; }
+  return pool[0];
+}
+
+/**
+ * How a scout's school reacts to the game they watched (grade 0-100). An A
+ * range game sells them: interest jumps, they decide they want you, and if
+ * you're at their level they may offer on the spot. A bad game costs you.
+ */
+export function scoutReaction(r: RecruitState, c: College, grade: number): string[] {
+  const v = r.interest[c.id] ?? 0;
+  if (grade >= 74) {
+    r.interest[c.id] = Math.min(100, v + 35);
+    r.need[c.id] = Math.max(r.need[c.id] ?? 0, 0.7);
+    const gap = barScale(r.score) - bar(c);
+    if (!r.offers.includes(c.id) && gap >= -4 && Math.random() < 0.6) {
+      r.offers.push(c.id);
+      return [`${c.name} SCOUT: IMPRESSED`, `OFFER: ${c.name}!`];
+    }
+    return [`${c.name} SCOUT: IMPRESSED`];
+  }
+  if (grade >= 59) { r.interest[c.id] = Math.min(100, v + 15); return [`${c.name} SCOUT: SOLID NIGHT`]; }
+  if (grade >= 45) { r.interest[c.id] = Math.min(100, v + 5); return [`${c.name} SCOUT: SAW ENOUGH`]; }
+  r.interest[c.id] = Math.max(0, v - 20);
+  return [`${c.name} SCOUT: NOT IMPRESSED`];
+}
+
+/** A televised game: every college watching you sees it. */
+export function tvReaction(r: RecruitState, grade: number): string[] {
+  const d = grade >= 69 ? 8 : grade < 45 ? -5 : 0;
+  if (!d) return ['ON TV: A SOLID NIGHT'];
+  for (const c of COLLEGES) if ((r.interest[c.id] ?? 0) >= 10) r.interest[c.id] = clamp((r.interest[c.id] ?? 0) + d, 0, 100);
+  return [d > 0 ? 'ON TV: COLLEGES NOTICED!' : 'ON TV: A ROUGH NIGHT'];
+}
+
+/** Big football states have more quarterbacks to be ranked against. */
+const BIG_STATES = new Set(['TX', 'CA', 'FL', 'GA']), MID_STATES = new Set(['OH', 'PA', 'NC', 'AL', 'LA', 'IL', 'MI', 'NJ', 'VA', 'TN', 'AZ', 'SC']);
+/** Your QB ranking in your class: nationally and in your state (the recruiting site's list). */
+export function qbRank(r: RecruitState, homeState: string): { national: number; state: number } {
+  const S = barScale(r.score);
+  const national = clamp(Math.round(30 * 10 ** ((32 - S) / 12)), 1, 2500);
+  const share = BIG_STATES.has(homeState) ? 0.09 : MID_STATES.has(homeState) ? 0.035 : 0.012;
+  return { national, state: Math.max(1, Math.round(national * share)) };
 }
