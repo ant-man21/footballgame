@@ -23,6 +23,8 @@ import { Rng, newSeed } from './rng';
 import { CAREER_VERSION, saveCareer } from './save';
 
 export const HS_YEARS = 3;
+/** How much last season keeps counting toward your stars once this season is under way. */
+const RESUME = 0.4;
 const TEAMS = 16;
 
 export type Role = 'backup' | 'starter';
@@ -411,8 +413,9 @@ export class Career {
     const now = this.productionNow();
     const last = p.seasons[p.seasons.length - 1];
     const prev = last ? seasonProduction(last) : 0;
+    // early in a season last season carries the score; it stays on the resume (RESUME) all year
     const w = clamp(graded.length / 6, 0, 1);
-    return Math.round((talent + w * now + (1 - w) * prev) * 10) / 10;
+    return Math.round((talent + w * now + ((1 - w) + w * RESUME) * prev) * 10) / 10;
   }
 
   /** Re-scores you and runs weeks of college interest; adds the news. */

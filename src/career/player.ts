@@ -102,6 +102,9 @@ export function offseason(p: CareerPlayer): void {
   addXp(p, 'spd', rand(0, 1.5));
 }
 
+/** Recruiting score per win as the starter (see production). */
+export const WIN_VALUE = 1.2;
+
 /** Grade points a sack costs (see gradeGame). */
 export const SACK_COST = 1;
 
@@ -137,7 +140,7 @@ export const classNorm = (year: number, week = 1) => qbNormOvr(HS_TIER) - 4 + (y
  * started 5 games), wins as the starter, playoff wins and a state title.
  */
 export function production(avgGrade: number, starts: number, winsAsStarter: number, playoffWins: number, champion: boolean): number {
-  return (avgGrade - 55) * 0.5 * clamp(starts / 5, 0.3, 1) + winsAsStarter * 0.8 + playoffWins * 1.5 + (champion ? 4 : 0);
+  return (avgGrade - 55) * 0.5 * clamp(starts / 5, 0.3, 1) + winsAsStarter * WIN_VALUE + playoffWins * 1.5 + (champion ? 4 : 0);
 }
 
 /** A finished season's production (for saves from before recruiting tracked it week by week). */

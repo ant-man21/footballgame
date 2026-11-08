@@ -306,7 +306,7 @@ const OUT = process.env.SHOT_DIR || '.';
   check(ot.second.off !== ot.first && ot.second.ballOn === 75 && !ot.second.over, 'a stop on downs: the other team gets its turn at the 25');
   check(ot.end.over && ot.end.you !== ot.end.cpu, `a score on the second possession wins it (${ot.end.you}-${ot.end.cpu})`);
   check(ot.ots >= 380 && ot.ties === 0 && ot.maxOt <= 14, `quick-simmed overtimes always end with a winner (${ot.ots}/400 went to OT, ${ot.ties} ties, longest OT${ot.maxOt}: one-play shootouts from OT3)`);
-  check(ot.simTd >= 15 && ot.simTd <= 40, `simulated defense: an even opponent scores a TD on ${ot.simTd}% of drives from its 25 (target ~27%)`);
+  check(ot.simTd >= 20 && ot.simTd <= 48, `simulated defense: an even opponent scores a TD on ${ot.simTd}% of drives from its 25 (target ~35%, before the game's form)`);
 
   // 9. Career: create a QB from the title screen, the hub, a backup scenario played on the field (coach calls the
   // plays), the save round-trip, simulated defense, a full season into the playoffs and the next season.

@@ -25,9 +25,15 @@ const DEF_PRESNAP = 2.2; // seconds after you call your defense before the CPU s
 const STICK_RANGE = 22; // joystick: drag this far (screen px) for full speed
 const BETWEEN_RATE = 2.5; // game seconds that run off per real second between plays (clock running)
 const USER_DEFENDER = 'MIKE';
-/** Simulated defense (career): how your defense fares on the other team's simulated drives. See scripts/balance/simdefense.cjs. */
-export const SIM_DEF = { bonus: 7, runoff: 20 };
+/**
+ * Simulated defense (career): how your defense fares on the other team's simulated drives
+ * (bonus: rating points for your defense; runoff: seconds between their plays; formSd: how hot
+ * or cold an opponent's offense runs from game to game). See scripts/balance/simdefense.cjs.
+ */
+export const SIM_DEF = { bonus: 4, runoff: 14, formSd: 4 };
 type Rect = { x: number; y: number; w: number; h: number };
+/** A standard normal random number. */
+const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random() * 0.999)) * Math.cos(Math.random() * Math.PI * 2);
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
 
@@ -44,6 +50,7 @@ export interface CareerGameSetup {
   endAtHalf: boolean; // a two-minute drill: your stint ends at halftime
   label: string; // shown as you take the field
   kits?: Record<Side, Kit>; // the two schools' uniforms (otherwise blue vs red)
+  form?: number; // simulated defense: the opponent offense's form this game (rating points), set when the game starts
   onDone: (m: Match, stint?: TeamStats) => void; // stint: your team's stats when your part ended early
 }
 
@@ -198,6 +205,7 @@ export class Game {
   /** Plays a career game: the coach calls the plays, you run them (and play the MIKE, unless the defense is simulated). */
   playCareerGame(setup: CareerGameSetup): void {
     this.careerGame = setup;
+    setup.form ??= gauss() * SIM_DEF.formSd; // this week the other offense is hot, cold or in between
     this.match = setup.match;
     this.cpuTeam = setup.opp;
     this.history = [];
@@ -301,7 +309,7 @@ export class Game {
       const before = m.score.cpu;
       // a simulated opponent drive: a run-heavy high school offense (the clock keeps running) against your
       // whole defense, so it scores at a football rate, not the arcade passing rate of a played drive
-      const u = { ...cg.units, you: { ...cg.units.you, def: cg.units.you.def + SIM_DEF.bonus } };
+      const u = { you: { ...cg.units.you, def: cg.units.you.def + SIM_DEF.bonus }, cpu: { ...cg.units.cpu, off: cg.units.cpu.off + (cg.form ?? 0) } };
       const r = simDrive(m, u, { runoff: SIM_DEF.runoff });
       const name = m.names.cpu;
       const what = { td: 'TOUCHDOWN', punt: 'PUNT', int: 'INTERCEPTED!', downs: 'STOPPED ON DOWNS', half: 'END OF HALF', end: 'END OF GAME' }[r.end];

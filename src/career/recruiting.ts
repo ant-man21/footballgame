@@ -26,9 +26,27 @@ const BY_ID = new Map(COLLEGES.map((c) => [c.id, c]));
 export const college = (id: string): College | undefined => BY_ID.get(id);
 export const TIER_NAMES: Record<Tier, string> = { P4: 'POWER 4', G5: 'GROUP OF 5', FCS: 'FCS' };
 
-/** Stars from a recruiting score: 2 stars from 0, 3 from 10, 4 from 22, 5 from 32. */
-export const STAR_STEPS = [-Infinity, 0, 10, 22, 32];
-export const starsFor = (score: number) => (score >= 32 ? 5 : score >= 22 ? 4 : score >= 10 ? 3 : score >= 0 ? 2 : 1);
+/** Stars from a recruiting score: 2 stars from 5, 3 from 14, 4 from 24, 5 from 48. */
+export const STAR_STEPS = [-Infinity, 5, 14, 24, 48];
+export const starsFor = (score: number) => (score >= 48 ? 5 : score >= 24 ? 4 : score >= 14 ? 3 : score >= 5 ? 2 : 1);
+
+/**
+ * Colleges' bars (bar()) are on the original score scale, where the star steps
+ * were 0 / 10 / 22 / 32. This maps a score onto that scale through the star
+ * steps, so a 4-star draws the same schools whatever the scoring formula.
+ */
+const NEW_STEPS = [5, 14, 24, 48], OLD_STEPS = [0, 10, 22, 32];
+export function barScale(score: number): number {
+  if (score <= NEW_STEPS[0]) return OLD_STEPS[0] + (score - NEW_STEPS[0]);
+  for (let i = 1; i < NEW_STEPS.length; i++) {
+    if (score <= NEW_STEPS[i]) {
+      const f = (score - NEW_STEPS[i - 1]) / (NEW_STEPS[i] - NEW_STEPS[i - 1]);
+      return OLD_STEPS[i - 1] + f * (OLD_STEPS[i] - OLD_STEPS[i - 1]);
+    }
+  }
+  return OLD_STEPS[3] + (score - NEW_STEPS[3]) * ((OLD_STEPS[3] - OLD_STEPS[2]) / (NEW_STEPS[3] - NEW_STEPS[2]));
+}
+
 /** How far you are from the next star (0-100), for a progress bar. */
 export function toNextStar(score: number): number {
   const s = starsFor(score);
@@ -61,7 +79,7 @@ export interface RecruitState {
 }
 
 /** Bump when the recruiting score changes: saves scored by an older formula are re-scored once on load. */
-export const SCORE_FORMULA = 2;
+export const SCORE_FORMULA = 3;
 
 /** Official visits: five in a career, juniors and seniors, one a week. */
 export const MAX_VISITS = 5;
@@ -76,8 +94,8 @@ export function officialVisit(r: RecruitState, c: College): string[] {
   r.visits.push(c.id);
   r.interest[c.id] = Math.min(100, (r.interest[c.id] ?? 0) + 30);
   if (Math.random() < 0.5) r.need[c.id] = Math.max(r.need[c.id] ?? 0, 0.6);
-  const gap = r.score - bar(c);
-  if (!r.offers.includes(c.id) && gap >= -4 && gap <= offerReach(r.score) + 4 && (r.need[c.id] ?? 0) >= 0.5 && Math.random() < 0.45) {
+  const S = barScale(r.score), gap = S - bar(c);
+  if (!r.offers.includes(c.id) && gap >= -4 && gap <= offerReach(S) + 4 && (r.need[c.id] ?? 0) >= 0.5 && Math.random() < 0.45) {
     r.offers.push(c.id);
     news.push(`OFFER: ${c.name}!`);
   } else if (!r.offers.includes(c.id)) news.push(gap < -4 ? 'GREAT VISIT, BUT THEY WANT MORE' : 'GREAT VISIT: THEY ARE INTERESTED');
@@ -105,7 +123,7 @@ const offerReach = (score: number) => 5 + Math.max(0, score) * 0.3;
  */
 export function recruitingWeek(r: RecruitState, homeState: string, canOffer: boolean): string[] {
   const news: string[] = [];
-  const S = r.score;
+  const S = barScale(r.score); // on the colleges' bar scale
   for (const c of COLLEGES) {
     const T = bar(c), gap = S - T;
     let v = r.interest[c.id] ?? 0;
@@ -142,7 +160,7 @@ export const offerList = (r: RecruitState) => r.offers.map((id) => college(id)!)
 
 /** No offers on signing day: schools that would take you as a preferred walk-on (the closest ones above your level). */
 export function walkOns(r: RecruitState, homeState: string): College[] {
-  const S = r.score;
+  const S = barScale(r.score); // on the colleges' bar scale
   const key = (c: College) => Math.abs(bar(c) - S - 3) - (c.state === homeState ? 2 : 0);
   return [...COLLEGES].sort((a, b) => key(a) - key(b)).slice(0, 4);
 }
