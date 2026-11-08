@@ -17,7 +17,8 @@ import {
   type Archetype, type CareerPlayer, type Focus, HS_TIER, asRosterPlayer, createPlayer, gameXp, gradeGame, offseason,
   classNorm, practice, production, qbNormOvr, qbOvr, seasonProduction,
 } from './player';
-import { MAX_VISITS, type RecruitState, SCORE_FORMULA, college, newRecruiting, officialVisit, recruitingWeek, rollNeeds, starsFor } from './recruiting';
+import { loadSettings } from '../settings';
+import { MAX_VISITS, type RecruitState, SCORE_FORMULA, college, newRecruiting, officialVisit, recruitingWeek, rollNeeds, starsFor, useDifficulty } from './recruiting';
 import { type Units, overtimeWinner, simGame, simToEnd, simUntil } from './quicksim';
 import { Rng, newSeed } from './rng';
 import { CAREER_VERSION, saveCareer } from './save';
@@ -91,6 +92,7 @@ const STARTER_LAST = ['BAKER', 'COLLINS', 'DUNN', 'EVANS', 'FISHER', 'GRIFFIN', 
 
 export class Career {
   constructor(public s: CareerSave) {
+    useDifficulty(loadSettings().difficulty); // star steps follow the difficulty setting
     if (!s.recruit) this.catchUpRecruiting(); // a save from before recruiting existed
     else if ((s.recruit.formula ?? 1) < SCORE_FORMULA) { // scored by an older formula: re-score once
       if (s.phase === 'season' && !s.recruit.signed) {
@@ -422,6 +424,7 @@ export class Career {
   private recruitingUpdate(news: string[], weeks: number): void {
     const s = this.s, r = s.recruit;
     const before = r.stars;
+    useDifficulty(loadSettings().difficulty);
     r.score = this.recruitScore();
     r.stars = starsFor(r.score);
     if (r.stars !== before && before > 0) news.push(r.stars > before ? `NOW A ${r.stars}-STAR RECRUIT!` : `DOWN TO ${r.stars} STARS`);

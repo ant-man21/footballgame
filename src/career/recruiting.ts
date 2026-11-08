@@ -5,6 +5,7 @@
 // and they offer. Commit any time to a school that offered; you sign on signing
 // day after your senior season. Colleges come from src/data/colleges.json.
 import data from '../data/colleges.json';
+import type { Difficulty } from '../settings';
 import { clamp, rand } from '../util';
 
 export type Tier = 'P4' | 'G5' | 'FCS';
@@ -26,32 +27,44 @@ const BY_ID = new Map(COLLEGES.map((c) => [c.id, c]));
 export const college = (id: string): College | undefined => BY_ID.get(id);
 export const TIER_NAMES: Record<Tier, string> = { P4: 'POWER 4', G5: 'GROUP OF 5', FCS: 'FCS' };
 
-/** Stars from a recruiting score: 2 stars from 5, 3 from 14, 4 from 24, 5 from 48. */
-export const STAR_STEPS = [-Infinity, 5, 14, 24, 48];
-export const starsFor = (score: number) => (score >= 48 ? 5 : score >= 24 ? 4 : score >= 14 ? 3 : score >= 5 ? 2 : 1);
+/**
+ * The recruiting score each star starts at (2, 3, 4, 5 stars), per difficulty.
+ * Tuned so a person's season (grades ~65 a game) lands about a quarter of
+ * careers at 4+ stars on PRO: a 7-0 defending champion is a 4-star, a title
+ * run with better grades is a 5-star, a lazy season stays a 3-star.
+ */
+export const STAR_STEPS_BY_DIFFICULTY: Record<Difficulty, number[]> = {
+  rookie: [3, 11, 23, 40],
+  pro: [5, 14, 28, 46],
+  allpro: [8, 18, 33, 52],
+};
+let steps = STAR_STEPS_BY_DIFFICULTY.pro;
+/** Which difficulty's star steps to use (the career calls this from the current settings). */
+export function useDifficulty(d: Difficulty): void { steps = STAR_STEPS_BY_DIFFICULTY[d] ?? STAR_STEPS_BY_DIFFICULTY.pro; }
+export const starsFor = (score: number) => (score >= steps[3] ? 5 : score >= steps[2] ? 4 : score >= steps[1] ? 3 : score >= steps[0] ? 2 : 1);
 
 /**
  * Colleges' bars (bar()) are on the original score scale, where the star steps
  * were 0 / 10 / 22 / 32. This maps a score onto that scale through the star
- * steps, so a 4-star draws the same schools whatever the scoring formula.
+ * steps, so an N-star draws the same schools on any difficulty or formula.
  */
-const NEW_STEPS = [5, 14, 24, 48], OLD_STEPS = [0, 10, 22, 32];
+const OLD_STEPS = [0, 10, 22, 32];
 export function barScale(score: number): number {
-  if (score <= NEW_STEPS[0]) return OLD_STEPS[0] + (score - NEW_STEPS[0]);
-  for (let i = 1; i < NEW_STEPS.length; i++) {
-    if (score <= NEW_STEPS[i]) {
-      const f = (score - NEW_STEPS[i - 1]) / (NEW_STEPS[i] - NEW_STEPS[i - 1]);
+  if (score <= steps[0]) return OLD_STEPS[0] + (score - steps[0]);
+  for (let i = 1; i < steps.length; i++) {
+    if (score <= steps[i]) {
+      const f = (score - steps[i - 1]) / (steps[i] - steps[i - 1]);
       return OLD_STEPS[i - 1] + f * (OLD_STEPS[i] - OLD_STEPS[i - 1]);
     }
   }
-  return OLD_STEPS[3] + (score - NEW_STEPS[3]) * ((OLD_STEPS[3] - OLD_STEPS[2]) / (NEW_STEPS[3] - NEW_STEPS[2]));
+  return OLD_STEPS[3] + (score - steps[3]) * ((OLD_STEPS[3] - OLD_STEPS[2]) / (steps[3] - steps[2]));
 }
 
 /** How far you are from the next star (0-100), for a progress bar. */
 export function toNextStar(score: number): number {
   const s = starsFor(score);
   if (s >= 5) return 100;
-  const lo = s === 1 ? -10 : STAR_STEPS[s - 1], hi = STAR_STEPS[s];
+  const lo = s === 1 ? steps[0] - 10 : steps[s - 2], hi = steps[s - 1];
   return clamp(((score - lo) / (hi - lo)) * 100, 0, 100);
 }
 
@@ -79,7 +92,7 @@ export interface RecruitState {
 }
 
 /** Bump when the recruiting score changes: saves scored by an older formula are re-scored once on load. */
-export const SCORE_FORMULA = 3;
+export const SCORE_FORMULA = 4;
 
 /** Official visits: five in a career, juniors and seniors, one a week. */
 export const MAX_VISITS = 5;

@@ -140,7 +140,10 @@ export const classNorm = (year: number, week = 1) => qbNormOvr(HS_TIER) - 4 + (y
  * started 5 games), wins as the starter, playoff wins and a state title.
  */
 export function production(avgGrade: number, starts: number, winsAsStarter: number, playoffWins: number, champion: boolean): number {
-  return (avgGrade - 55) * 0.5 * clamp(starts / 5, 0.3, 1) + winsAsStarter * WIN_VALUE + playoffWins * 1.5 + (champion ? 4 : 0);
+  // wins count as a winning rate on a 10-game pace: 7-0 reads like 10-0, not like 7 of 10
+  const seen = clamp(starts / 5, 0.3, 1);
+  const pace = starts ? (winsAsStarter / starts) * 10 : 0;
+  return (avgGrade - 55) * 0.5 * seen + pace * WIN_VALUE * seen + playoffWins * 1.5 + (champion ? 4 : 0);
 }
 
 /** A finished season's production (for saves from before recruiting tracked it week by week). */
