@@ -10,7 +10,8 @@ import { type Kit, type TeamColor, shade } from './sprites';
 export const HD = 3;
 
 export type Build = 'qb' | 'skill' | 'big';
-export type Facing = 'up' | 'down';
+/** up = his back to you (offense), down = facing you (defense), left/right = side view, running across. */
+export type Facing = 'up' | 'down' | 'left' | 'right';
 /** stand / run (with frame 0-3) / stance (3-point) / block / throw / hold / carry / catch / down (on the ground). */
 export type Pose = 'stand' | 'run' | 'stance' | 'block' | 'throw' | 'hold' | 'carry' | 'catch' | 'down';
 
@@ -18,6 +19,7 @@ const OUTLINE = '#111d2b';
 const SHOE = '#1d1d24';
 const MASK = '#c2c3c7';
 const BALL = '#9b4a2c', BALL_HI = '#c46a3f', LACE = '#fff1e8';
+const INK = OUTLINE;
 export const SKINS = ['#f1c7a1', '#d9a06f', '#a86d45', '#7a4b2e', '#5a3620'];
 
 const DIGITS: Record<string, string> = {
@@ -57,6 +59,7 @@ function palette(t: TeamColor, build: Build, skin: string): Pal {
 /** A small pixel grid with an automatic dark outline. */
 class Grid {
   px: (string | null)[];
+  hand: { x: number; y: number } | null = null; // where the ball goes when he has it
   constructor(public w: number, public h: number) { this.px = new Array(w * h).fill(null); }
   set(x: number, y: number, c: string): void {
     if (x >= 0 && y >= 0 && x < this.w && y < this.h) this.px[y * this.w + x] = c;
@@ -82,6 +85,13 @@ class Grid {
     g.px = g.px.map((c) => c || null);
     return g;
   }
+  /** Mirrored left to right (a side view facing the other way). */
+  mirrored(): Grid {
+    const g = new Grid(this.w, this.h);
+    for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) g.px[y * this.w + x] = this.get(this.w - 1 - x, y);
+    g.hand = this.hand && { x: this.w - 1 - this.hand.x, y: this.hand.y };
+    return g;
+  }
   bake(): HTMLCanvasElement {
     const c = document.createElement('canvas');
     c.width = this.w; c.height = this.h;
@@ -103,12 +113,6 @@ function digits(g: Grid, n: number, cx: number, y: number, color: string): void 
     for (let i = 0; i < 15; i++) if (d[i] === '1') g.set(x + (i % 3), y + Math.floor(i / 3), color);
     x += 4;
   }
-}
-
-function football(g: Grid, x: number, y: number, laces: boolean): void { // 4 x 3 at (x, y)
-  g.rect(x + 1, y, 2, 1, BALL); g.rect(x, y + 1, 4, 1, BALL); g.rect(x + 1, y + 2, 2, 1, BALL);
-  g.set(x + 1, y, BALL_HI);
-  if (laces) g.set(x + 2, y + 1, LACE);
 }
 
 export interface PlayerLook {
@@ -206,14 +210,14 @@ function drawPlayer(l: PlayerLook): Grid {
   const swing = f === 0 ? ['swing-b', 'swing-f'] : f === 2 ? ['swing-f', 'swing-b'] : ['down', 'down'];
   switch (pose) {
     case 'run': arm(-1, swing[0] as 'down'); arm(1, swing[1] as 'down'); break;
-    case 'carry': arm(-1, swing[0] as 'down'); arm(1, 'tuck'); football(g, cx + 1, ty + 2, false); break;
+    case 'carry': arm(-1, swing[0] as 'down'); arm(1, 'tuck'); g.hand = { x: cx + 2, y: ty + 3 }; break;
     case 'stance': arm(-1, 'down'); arm(1, big ? 'ground' : 'down'); break;
     case 'block': arm(-1, 'out'); arm(1, 'out'); break;
     case 'catch': arm(-1, 'up'); arm(1, 'up'); break;
-    case 'hold': arm(-1, 'tuck'); arm(1, 'tuck'); football(g, cx - 1, ty + 2, true); break;
+    case 'hold': arm(-1, 'tuck'); arm(1, 'tuck'); g.hand = { x: cx, y: ty + 3 }; break;
     case 'throw':
       arm(-1, 'out'); arm(1, 'high');
-      football(g, sx + sw, ty - 7, true);
+      g.hand = { x: sx + sw + 1, y: ty - 5 };
       break;
     default: arm(-1, 'down'); arm(1, 'down');
   }
@@ -241,22 +245,143 @@ function drawPlayer(l: PlayerLook): Grid {
   return g;
 }
 
-const cache = new Map<string, HTMLCanvasElement>();
+
+/** Thick pixel line (legs and arms in the side view). */
+function limb(g: Grid, x0: number, y0: number, x1: number, y1: number, w: number, c: string): void {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
+  for (let i = 0; i <= n; i++) {
+    const x = Math.round(x0 + ((x1 - x0) * i) / n), y = Math.round(y0 + ((y1 - y0) * i) / n);
+    g.rect(x, y, w, 1, c);
+  }
+}
+
+/**
+ * Side view, facing right (mirrored for left): a profile with the facemask in
+ * front, a forward lean, and legs that scissor through a 4-frame stride.
+ */
+function drawSide(l: PlayerLook): Grid {
+  const big = l.build === 'big';
+  const W = big ? 21 : 17, H = 24;
+  const g = new Grid(W, H);
+  const p = palette(l.team, l.build, SKINS[l.skin % SKINS.length]);
+  const cx = Math.floor(W / 2) - 1;
+  const pose = l.pose;
+  const f = l.frame & 3;
+  const bob = f === 1 || f === 3 ? -1 : 0;
+  const hy = 1 + bob + (pose === 'block' ? 1 : 0);
+  const ty = hy + 6, py = ty + 6, ly = py + 3;
+  const half = big ? 3 : 2; // half body depth (narrower than the shoulders seen from behind)
+  const lw = big ? 3 : 2; // leg thickness
+  const sockFar = shade(p.sock, -0.3), pantsFar = shade(p.pants, -0.3);
+
+  // legs: far leg first (darker), near leg over it
+  const leg = (near: boolean, footX: number, footY: number, kneeX: number) => {
+    const pc = near ? p.pants : pantsFar, sc = near ? p.sock : sockFar;
+    const hipX = cx - 1 + (near ? 0 : -1);
+    limb(g, hipX, ly, kneeX, ly + 2, lw, pc);
+    limb(g, kneeX, ly + 2, footX, footY - 1, lw, sc);
+    g.rect(footX, footY, lw + 1, 1, SHOE); // cleat points forward
+  };
+  const stride = pose === 'run' || pose === 'carry' || pose === 'catch';
+  type Leg = [number, number, number]; // foot x, foot y, knee x
+  const front: Leg = [cx + 3, ly + 5, cx + 2], back: Leg = [cx - 5, ly + 4, cx - 3];
+  const plant: Leg = [cx, ly + 5, cx], swing: Leg = [cx - 3, ly + 3, cx + 1];
+  let near: Leg, far: Leg;
+  if (!stride) { near = [cx + 1, ly + 5, cx]; far = [cx - 2, ly + 5, cx - 2]; }
+  else if (f === 0) { near = front; far = back; }
+  else if (f === 2) { near = back; far = front; }
+  else if (f === 1) { near = plant; far = swing; }
+  else { near = swing; far = plant; }
+  leg(false, ...far);
+  leg(true, ...near);
+
+  // pants
+  g.rect(cx - half, py, half * 2 + 1, 3, p.pants);
+  g.rect(cx - half, py, half * 2 + 1, 1, p.pantsLo);
+  g.rect(cx - 1, py + 1, 1, 2, p.stripe); // side stripe
+
+  // far arm (behind the body)
+  const armFar = shade(p.jersey, -0.35), skinFar = shade(p.skin, -0.25);
+  const swingF = f === 0 ? 1 : f === 2 ? -1 : 0; // near arm forward on 0, back on 2
+  if (pose === 'run') { limb(g, cx, ty + 1, cx - 3 * swingF, ty + 3, 1, armFar); g.set(cx - 3 * swingF, ty + 4, skinFar); }
+
+  // torso: leaning into the run
+  const lean = pose === 'block' ? 2 : 1;
+  for (let r = 0; r < 6; r++) {
+    const off = Math.round(lean * (1 - r / 5));
+    g.rect(cx - half + off, ty + r, half * 2 + 1, 1, p.jersey);
+    g.set(cx - half + off, ty + r, p.jerseyLo); // back
+  }
+  g.rect(cx - half + lean - 1, ty, half * 2 + 3, 2, p.jersey); // shoulder pad
+  g.rect(cx - half + lean, ty, half * 2 + 1, 1, p.jerseyHi);
+  g.rect(cx + lean - 1, ty + 2, 3, 1, p.stripe); // sleeve stripe
+  g.rect(cx - half, ty + 5, half * 2 + 1, 1, p.jerseyLo);
+
+  // near arm
+  const sh = { x: cx + lean, y: ty + 1 };
+  switch (pose) {
+    case 'carry': // ball tucked high and tight
+      limb(g, sh.x, sh.y, sh.x + 1, sh.y + 2, 1, p.jersey); g.set(sh.x + 2, sh.y + 3, p.skin);
+      g.hand = { x: sh.x + 2, y: sh.y + 2 };
+      break;
+    case 'block':
+      limb(g, sh.x, sh.y, sh.x + 3, sh.y + 1, 1, p.jersey); g.rect(sh.x + 4, sh.y, 1, 2, p.skin);
+      break;
+    case 'catch':
+      limb(g, sh.x, sh.y, sh.x + 2, sh.y - 3, 1, p.jersey); g.rect(sh.x + 3, sh.y - 5, 1, 2, p.skin);
+      break;
+    default: {
+      const hx = sh.x + 3 * swingF;
+      limb(g, sh.x, sh.y, hx, sh.y + 2, 1, p.jersey); g.rect(hx, sh.y + 3, 1, 1, p.skin);
+    }
+  }
+
+  // helmet in profile: a dome, the stripe running front to back, the facemask cage out front
+  const hx = cx + lean; // middle of the helmet shell
+  g.rect(hx - 2, hy, 5, 1, p.helmet);
+  g.rect(hx - 3, hy + 1, 7, 3, p.helmet);
+  g.rect(hx - 3, hy + 4, 6, 1, p.helmet);
+  g.rect(hx - 2, hy + 5, 4, 1, p.helmetLo);
+  g.set(hx - 3, hy + 4, p.helmetLo); g.set(hx - 3, hy + 3, p.helmetLo); // back of the shell in shade
+  g.rect(hx - 2, hy, 4, 1, p.stripe); g.set(hx - 3, hy + 1, p.stripe); // stripe over the crown
+  g.set(hx - 1, hy + 1, p.helmetHi); g.set(hx, hy + 1, p.helmetHi); g.set(hx + 1, hy + 1, p.helmetHi);
+  g.set(hx - 1, hy + 3, p.helmetLo); // ear hole
+  g.rect(hx + 3, hy + 2, 1, 3, p.skin); // face behind the cage
+  g.set(hx + 3, hy + 2, INK); // eye
+  g.rect(hx + 4, hy + 2, 1, 4, MASK); // facemask cage
+  g.rect(hx + 3, hy + 4, 2, 1, MASK);
+  g.set(hx + 3, hy + 5, MASK);
+  g.rect(hx - 1, hy + 6, 2, 1, p.skin); // neck
+
+  g.outline();
+  return g;
+}
+
+const cache = new Map<string, { img: HTMLCanvasElement; hand: { x: number; y: number } | null }>();
 const teamKey = (t: TeamColor) => (typeof t === 'string' ? t : `${t.jersey}${t.trim}${t.helmet}${t.pants}`);
 
-/** A baked HD player (sprite pixels = canvas pixels; draw it at 1/HD logical px per pixel). */
-export function hdPlayer(l: PlayerLook): HTMLCanvasElement {
-  const run = l.pose === 'run' || l.pose === 'carry';
-  const key = `${teamKey(l.team)}/${l.build}/${l.facing}/${l.pose}/${run ? l.frame & 3 : 0}/${l.lean}/${l.num}/${l.skin}`;
-  let img = cache.get(key);
-  if (!img) {
-    if (l.pose === 'down') {
-      const g = drawPlayer({ ...l, pose: 'stand', lean: 0 }).rotated();
-      img = g.bake();
-    } else img = drawPlayer(l).bake();
-    cache.set(key, img);
+const SIDE_POSES: Pose[] = ['run', 'carry', 'block', 'catch', 'stand'];
+
+/**
+ * A baked HD player (sprite pixels = canvas pixels; draw it at 1/HD logical px
+ * per pixel) and where his ball hand is, in sprite pixels, if he has the ball.
+ */
+export function hdPlayer(l: PlayerLook): { img: HTMLCanvasElement; hand: { x: number; y: number } | null } {
+  const side = l.facing === 'left' || l.facing === 'right';
+  const look = side && !SIDE_POSES.includes(l.pose) ? { ...l, facing: 'up' as Facing } : l;
+  const run = look.pose === 'run' || look.pose === 'carry' || (side && look.pose === 'catch');
+  const key = `${teamKey(look.team)}/${look.build}/${look.facing}/${look.pose}/${run ? look.frame & 3 : 0}/${look.lean}/${look.num}/${look.skin}`;
+  let hit = cache.get(key);
+  if (!hit) {
+    let g: Grid;
+    if (look.pose === 'down') g = drawPlayer({ ...look, facing: 'up', pose: 'stand', lean: 0 }).rotated();
+    else if (look.facing === 'right') g = drawSide(look);
+    else if (look.facing === 'left') g = drawSide(look).mirrored();
+    else g = drawPlayer(look);
+    hit = { img: g.bake(), hand: g.hand };
+    cache.set(key, hit);
   }
-  return img;
+  return hit;
 }
 
 let balls: HTMLCanvasElement[] | null = null;

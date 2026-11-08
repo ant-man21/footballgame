@@ -737,7 +737,9 @@ export class Game {
   }
 
   /** Per-player animation: where he was last frame, how fast he's moving, how far through his stride. */
-  private anim = new WeakMap<Actor, { x: number; y: number; t: number; vx: number; vy: number; stride: number }>();
+  private anim = new WeakMap<Actor, { x: number; y: number; t: number; vx: number; vy: number; stride: number; side: boolean }>();
+  /** Screen spot of the ball carrier's (or the QB's) ball hand this frame: the ball is drawn there. */
+  private ballHand: Vec | null = null;
 
   private poseFor(p: Actor, speed: number): Pose {
     const sim = this.sim;
@@ -765,11 +767,12 @@ export class Game {
     const offColor = kits ? (this.attackingYours ? kits.cpu : kits.you) : this.attackingYours ? 'red' : 'blue';
     const defColor = kits ? (this.attackingYours ? kits.you : kits.cpu) : this.attackingYours ? 'blue' : 'red';
     const s = this.view.s;
+    this.ballHand = null;
     for (const p of [...this.sim.actors].sort((a, b) => a.y - b.y)) {
       const build = p.kind === 'qb' ? 'qb' : p.kind === 'ol' || p.kind === 'dl' ? 'big' : 'skill';
       // movement since the last frame drives the run cycle, the lean and which way he faces
       let a = this.anim.get(p);
-      if (!a) { a = { x: p.x, y: p.y, t: this.clock, vx: 0, vy: 0, stride: Math.random() * 4 }; this.anim.set(p, a); }
+      if (!a) { a = { x: p.x, y: p.y, t: this.clock, vx: 0, vy: 0, stride: Math.random() * 4, side: false }; this.anim.set(p, a); }
       const dt = this.clock - a.t;
       if (dt > 0) {
         const k = Math.min(1, dt * 12);
@@ -780,11 +783,18 @@ export class Game {
       }
       const speed = Math.hypot(a.vx, a.vy);
       const pose = this.poseFor(p, speed);
+      // running across the field: the side view (with a little hysteresis so he doesn't flicker on diagonals)
+      const moving = pose === 'run' || pose === 'carry' || pose === 'catch';
+      const ax = Math.abs(a.vx), ay = Math.abs(a.vy);
+      if (!moving || speed < 12) a.side = false;
+      else if (ax > ay * 1.3) a.side = true;
+      else if (ay > ax * 0.9) a.side = false;
       let facing: Facing = p.team === 'off' ? 'up' : 'down';
-      if (pose === 'run' && speed > 12 && Math.abs(a.vy) > Math.abs(a.vx) * 0.7) facing = a.vy < 0 ? 'up' : 'down'; // turned to run
-      const lean = pose === 'run' || pose === 'carry' ? (a.vx > 14 && Math.abs(a.vx) > Math.abs(a.vy) * 0.6 ? 1 : a.vx < -14 && Math.abs(a.vx) > Math.abs(a.vy) * 0.6 ? -1 : 0) : 0;
+      if (a.side) facing = a.vx > 0 ? 'right' : 'left';
+      else if (pose === 'run' && speed > 12 && ay > ax * 0.7) facing = a.vy < 0 ? 'up' : 'down'; // turned to run
+      const lean = !a.side && (pose === 'run' || pose === 'carry') ? (a.vx > 14 && ax > ay * 0.6 ? 1 : a.vx < -14 && ax > ay * 0.6 ? -1 : 0) : 0;
       const id = identity(p.pl?.name ?? p.id, p.kind);
-      const img = hdPlayer({ team: p.team === 'off' ? offColor : defColor, build, facing, pose, frame: Math.floor(a.stride) & 3, lean, num: id.num, skin: id.skin });
+      const { img, hand } = hdPlayer({ team: p.team === 'off' ? offColor : defColor, build, facing, pose, frame: Math.floor(a.stride) & 3, lean, num: id.num, skin: id.skin });
       const x = this.sx(p.x), y = this.sy(p.y);
       const w = (img.width / HD) * s, h = (img.height / HD) * s;
       const px = Math.round((x - w / 2) * HD) / HD, py = Math.round((y - h / 2 - 1) * HD) / HD;
@@ -794,6 +804,8 @@ export class Game {
       ctx.ellipse(Math.round(x * HD) / HD, py + h - 1 / HD * 2, w * 0.42, 1.1 * s, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.drawImage(img, px, py, w, h);
+      const sim = this.sim;
+      if (hand && (p === sim.ball?.carrier || (p === sim.qb && !sim.ball))) this.ballHand = { x: px + ((hand.x + 0.5) / HD) * s, y: py + ((hand.y + 0.5) / HD) * s };
       if (p.user) { // a little marker over your linebacker
         const mx = Math.round(x), my = Math.round(py - 4);
         ctx.fillStyle = C.yellow;
@@ -907,19 +919,22 @@ export class Game {
   }
 
   private renderBall(ctx: CanvasRenderingContext2D): void {
-    const sim = this.sim;
-    if (!sim.ball) return;
-    const g = sim.ballGround();
-    const h = sim.ballHeight() * this.view.s;
-    const x = this.sx(g.x), y = this.sy(g.y);
-    if (!sim.ball.carrier) {
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.fillRect(Math.round(x - 1), Math.round(y), 3, 1);
+    const sim = this.sim, s = this.view.s;
+    const draw = (img: HTMLCanvasElement, x: number, y: number) => {
+      const bw = (img.width / HD) * s, bh = (img.height / HD) * s;
+      ctx.drawImage(img, Math.round((x - bw / 2) * HD) / HD, Math.round((y - bh / 2) * HD) / HD, bw, bh);
+    };
+    // in someone's hands: the one ball, drawn at his ball hand (sprites have no ball of their own)
+    if (!sim.ball || sim.ball.carrier) {
+      if (this.ballHand) draw(hdBall(0), this.ballHand.x, this.ballHand.y);
+      return;
     }
-    if (sim.ball.carrier) return; // the carrier's sprite holds it
-    const img = hdBall(Math.floor(sim.airT * 14));
-    const bw = (img.width / HD) * this.view.s, bh = (img.height / HD) * this.view.s;
-    ctx.drawImage(img, Math.round((x - bw / 2) * HD) / HD, Math.round((y - h - bh / 2) * HD) / HD, bw, bh);
+    const g = sim.ballGround();
+    const h = sim.ballHeight() * s;
+    const x = this.sx(g.x), y = this.sy(g.y);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(Math.round(x - 1), Math.round(y), 3, 1);
+    draw(hdBall(Math.floor(sim.airT * 14)), x, y - h);
   }
 
   /** Defense: the joystick under your thumb. */
