@@ -18,7 +18,7 @@ const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && 
 export type MenuAction =
   | { type: 'pick'; play: Play }
   | { type: 'pickCall'; call: Call }
-  | { type: 'same' } | { type: 'auto' } | { type: 'punt' }
+  | { type: 'same' } | { type: 'auto' } | { type: 'punt' } | { type: 'fg' }
   | { type: 'close' } | { type: 'settings' } | { type: 'start' } | { type: 'team' } | { type: 'career' }
   | null;
 
@@ -28,6 +28,7 @@ export interface MenuOptions {
   settings: Settings;
   subtitle?: string; // e.g. "2ND & 7 - OWN 35 - Q2 1:48"
   fourthDown?: boolean; // offense: show PUNT
+  fieldGoal?: number | null; // offense: show FG (the kick's distance in yards)
   settingsOnly?: boolean; // opened from pause: just the settings panel
   title?: boolean; // the start screen: PLAY NOW, CAREER, TEAM, SETTINGS (game options live in SETTINGS)
 }
@@ -92,10 +93,11 @@ export class Menu {
     }));
     // quick buttons along the bottom
     const by = v.h - 18;
-    const labels: { type: 'same' | 'auto' | 'punt'; label: string }[] = [];
+    const labels: { type: 'same' | 'auto' | 'punt' | 'fg'; label: string }[] = [];
     if (this.o.kind === 'defense') labels.push({ type: 'auto', label: 'AUTO' });
     if (this.o.selectedId) labels.push({ type: 'same', label: this.o.kind === 'offense' ? 'SAME PLAY' : 'SAME CALL' });
     if (this.o.fourthDown) labels.push({ type: 'punt', label: 'PUNT' });
+    if (this.o.fieldGoal) labels.push({ type: 'fg', label: `FG ${this.o.fieldGoal}` });
     const bw = 52, total = labels.length * bw + (labels.length - 1) * 4;
     const quick = labels.map((l, i) => ({ ...l, r: { x: Math.round(v.w / 2 - total / 2 + i * (bw + 4)), y: by, w: bw, h: 14 } }));
     const prev = pages > 1 ? { x: 4, y: by, w: 22, h: 14 } : null;

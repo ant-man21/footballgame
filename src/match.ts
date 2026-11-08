@@ -9,12 +9,14 @@
 // a timeout stops it.
 import { C } from './config';
 import { Drive, type PlayRaw, START_YARD, type TeamStats, newStats } from './drive';
+import { fgDistance, fgOdds } from './cpu';
 import { clamp, rand } from './util';
 
 export type Side = 'you' | 'cpu';
 export const QUARTER_SECONDS = 180;
 export const PLAY_CLOCK = 25; // most seconds that can run off between plays
-const TD_POINTS = 7;
+const TD_POINTS = 6;
+const PAT_ODDS = 0.92; // the extra point is simulated
 const TIMEOUTS = 3; // per team, per half
 const OT_YARD = 75; // overtime possessions start at the other team's 25
 const SHOOTOUT_POINTS = 2; // ...worth 2
@@ -109,15 +111,19 @@ export class Match {
     let b: Banner;
 
     switch (o.event.kind) {
-      case 'td':
-        const pts = this.ot >= 3 ? SHOOTOUT_POINTS : TD_POINTS; // a shootout score is a two-point try
+      case 'td': {
+        const shootout = this.ot >= 3; // a shootout score is a two-point try
+        const pat = !shootout && Math.random() < PAT_ODDS; // then the extra point
+        const pts = shootout ? SHOOTOUT_POINTS : TD_POINTS + (pat ? 1 : 0);
         this.score[off] += pts;
         b = {
-          headline: mine ? (pts === TD_POINTS ? 'TOUCHDOWN!' : 'GOOD!') : pts === TD_POINTS ? `${N.cpu} TOUCHDOWN` : `${N.cpu} SCORES`, color: mine ? C.yellow : C.red,
-          detail: pts === TD_POINTS ? `${yds} - ${o.playsInDrive} PLAY DRIVE` : 'TWO-POINT SHOOTOUT', note: `${mine ? N.you : N.cpu} +${pts}`,
+          headline: mine ? (shootout ? 'GOOD!' : 'TOUCHDOWN!') : shootout ? `${N.cpu} SCORES` : `${N.cpu} TOUCHDOWN`, color: mine ? C.yellow : C.red,
+          detail: shootout ? 'TWO-POINT SHOOTOUT' : `${yds} - ${o.playsInDrive} PLAY DRIVE`,
+          note: `${mine ? N.you : N.cpu} +${pts}${shootout ? '' : pat ? ' - XP GOOD' : ' - XP NO GOOD'}`,
         };
         this.changePossession(START_YARD);
         break;
+      }
       case 'int': {
         const at = o.event.atYard;
         const spot = at >= 100 ? 20 : clamp(Math.round(100 - at), 1, 99); // picked in the end zone: touchback
@@ -203,6 +209,26 @@ export class Match {
       detail: lands >= 100 ? `${dist} YD PUNT - TOUCHBACK` : `${dist} YD PUNT`,
       note: `${receiver === 'you' ? 'YOUR' : this.names.cpu} BALL AT ${spot === 50 ? '50' : `${receiver === 'you' ? 'OWN' : 'THEIR'} ${spot}`}`,
     };
+  }
+
+  /** The offense kicks a field goal (simulated): 3 points, or the other team's ball at the spot of the kick. */
+  fieldGoal(): Banner {
+    const kicker = this.offense, mine = kicker === 'you', from = this.drive.ballOn;
+    const dist = fgDistance(from);
+    const good = Math.random() < fgOdds(dist);
+    const who = mine ? this.names.you : this.names.cpu;
+    if (good) this.score[kicker] += 3;
+    const b: Banner = {
+      headline: good ? (mine ? 'FIELD GOAL!' : `${this.names.cpu} FIELD GOAL`) : 'NO GOOD!',
+      color: good === mine ? C.green : C.red,
+      detail: `${dist} YARD FIELD GOAL${good ? '' : ' - MISSED'}`,
+      note: good ? `${who} +3` : undefined,
+    };
+    if (this.ot) { this.otPossessionOver(kicker, b); return b; }
+    this.changePossession(good ? START_YARD : Math.max(20, 100 - (from - 7))); // a miss: their ball at the spot of the kick
+    this.tick(5);
+    this.clockRunning = false;
+    return b;
   }
 
   private changePossession(newBallOn: number): void {

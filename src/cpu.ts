@@ -140,11 +140,27 @@ export function callPlay(drive: Drive): Play {
   return pool[0].p;
 }
 
-/** Should the CPU go for it on 4th down? (Otherwise it punts.) */
-export function cpuGoesForIt(drive: Drive, cpuLead: number, quarter: number, clock: number): boolean {
-  if (quarter >= 5) return true; // overtime: no punting
-  if (quarter === 4 && cpuLead < 0 && clock < 150) return true; // desperate
-  if (drive.toGo <= 2 && drive.ballOn >= 45) return true;
-  if (drive.toGo <= 4 && drive.ballOn >= 65) return true;
-  return false;
+/** Field goal distance (yards) from a yard line: the end zone plus the hold, 7 yards back. */
+export const fgDistance = (ballOn: number) => Math.round(100 - ballOn + 17);
+/** The longest field goal anyone tries. */
+export const FG_MAX = 55;
+/** Chance a field goal is good: ~95% from 20 yards, ~75% from 30, ~55% from 40, ~35% from 50. */
+export const fgOdds = (dist: number) => clamp(0.95 - (dist - 20) * 0.019, 0.05, 0.97);
+
+/**
+ * 4th down for the CPU (or your coach): go for it, kick a field goal or punt.
+ * No punting inside the other team's 30. Late in the game, trailing, only kick
+ * if 3 points ties or wins it. In overtime there's no punting; from the third
+ * overtime (the two-point shootout) it's go only.
+ */
+export function fourthDownCall(drive: Drive, lead: number, quarter: number, clock: number, ot = 0): 'go' | 'fg' | 'punt' {
+  if (ot >= 3) return 'go';
+  const inRange = fgDistance(drive.ballOn) <= 50;
+  if (ot) return inRange && drive.toGo > 2 ? 'fg' : 'go';
+  if (quarter === 4 && lead < 0 && clock < 150) return lead >= -3 && inRange ? 'fg' : 'go'; // need points now
+  if (drive.ballOn >= 70) return drive.toGo <= 2 && Math.random() < 0.5 ? 'go' : inRange ? 'fg' : 'go'; // no punting in their 30
+  if (inRange && drive.toGo > 2) return 'fg';
+  if (drive.toGo <= 2 && drive.ballOn >= 45) return 'go';
+  if (drive.toGo <= 4 && drive.ballOn >= 65) return 'go';
+  return 'punt';
 }

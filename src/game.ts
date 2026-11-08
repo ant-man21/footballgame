@@ -2,7 +2,7 @@
 // both sides of the ball), the clock between plays, timeouts, pause, input,
 // aiming, the CPU quarterback when you're on defense, and drawing.
 import { C, CX, FIELD_LEFT, FIELD_RIGHT, LOS_Y, PULL_POWER, RESULT_TIME, TIME_SCALE, W, YD, fx } from './config';
-import { CpuQb, callPlay, cpuGoesForIt } from './cpu';
+import { CpuQb, FG_MAX, callPlay, fgDistance, fourthDownCall } from './cpu';
 import { type Call, beats, rushLabel } from './defense/calls';
 import { drawText, textWidth } from './font';
 import { type Units, simDrive } from './career/quicksim';
@@ -273,14 +273,19 @@ export class Game {
     if (cg && !this.autoplay && this.careerHuddle(cg)) return;
     if (this.onOffense) {
       if (this.autoplay) {
-        if (d.down === 4 && !cpuGoesForIt(d, m.score.you - m.score.cpu, m.quarter, m.clock)) { this.showPunt(); return; }
+        if (d.down === 4 && this.cpuFourthDown(m.score.you - m.score.cpu)) return;
         this.play = callPlay(d);
         this.setupSnap();
         return;
       }
-      this.menu = new Menu({ kind: 'offense', selectedId: this.lastPlayId, settings: this.settings, subtitle: this.situation(), fourthDown: d.down === 4 && !m.ot });
+      const fg = fgDistance(d.ballOn);
+      this.menu = new Menu({
+        kind: 'offense', selectedId: this.lastPlayId, settings: this.settings, subtitle: this.situation(),
+        fourthDown: d.down === 4 && !m.ot && d.ballOn < 70, // no punting in their 30 (or in overtime)
+        fieldGoal: d.down === 4 && m.ot < 3 && fg <= FG_MAX ? fg : null,
+      });
     } else {
-      if (d.down === 4 && !cpuGoesForIt(d, m.score.cpu - m.score.you, m.quarter, m.clock)) { this.showPunt(); return; }
+      if (d.down === 4 && this.cpuFourthDown(m.score.cpu - m.score.you)) return;
       if (this.autoplay) { this.defCall = null; this.setupSnap(); return; }
       this.menu = new Menu({ kind: 'defense', selectedId: this.lastCallId, settings: this.settings, subtitle: this.situation() });
     }
@@ -295,7 +300,7 @@ export class Game {
     const m = this.match, d = m.drive;
     if (this.onOffense) {
       if (!cg.coachCalls) return false;
-      if (d.down === 4 && !cpuGoesForIt(d, m.score.you - m.score.cpu, m.quarter, m.clock)) { this.showPunt(); return true; }
+      if (d.down === 4 && this.cpuFourthDown(m.score.you - m.score.cpu)) return true;
       let play = callPlay(d);
       for (let i = 0; i < 3 && play.id === this.lastPlayId; i++) play = callPlay(d); // coach mixes it up
       this.play = play;
@@ -312,10 +317,10 @@ export class Game {
       const u = { you: { ...cg.units.you, def: cg.units.you.def + SIM_DEF.bonus }, cpu: { ...cg.units.cpu, off: cg.units.cpu.off + (cg.form ?? 0) } };
       const r = simDrive(m, u, { runoff: SIM_DEF.runoff });
       const name = m.names.cpu;
-      const what = { td: 'TOUCHDOWN', punt: 'PUNT', int: 'INTERCEPTED!', downs: 'STOPPED ON DOWNS', half: 'END OF HALF', end: 'END OF GAME' }[r.end];
-      const good = r.end === 'int' || r.end === 'downs';
+      const what = { td: 'TOUCHDOWN', fg: 'FIELD GOAL', fgmiss: 'MISSED FG', punt: 'PUNT', int: 'INTERCEPTED!', downs: 'STOPPED ON DOWNS', half: 'END OF HALF', end: 'END OF GAME' }[r.end];
+      const good = r.end === 'int' || r.end === 'downs' || r.end === 'fgmiss';
       this.banner = {
-        headline: `${name} DRIVE`, color: r.end === 'td' ? C.red : good ? C.green : C.grey,
+        headline: `${name} DRIVE`, color: r.end === 'td' || r.end === 'fg' ? C.red : good ? C.green : C.grey,
         detail: `${what} - ${r.plays} PLAYS ${r.yards} YDS`,
         note: m.score.cpu > before ? `${name} +${m.score.cpu - before}` : m.over ? 'FINAL' : undefined, kind: 'note',
       };
@@ -326,7 +331,7 @@ export class Game {
       return true;
     }
     if (!cg.coachCalls) return false;
-    if (d.down === 4 && !cpuGoesForIt(d, m.score.cpu - m.score.you, m.quarter, m.clock)) { this.showPunt(); return true; }
+    if (d.down === 4 && this.cpuFourthDown(m.score.cpu - m.score.you)) return true;
     this.defCall = null; // the coordinator's call; you play the MIKE
     this.setupSnap();
     return true;
@@ -374,6 +379,24 @@ export class Game {
     }
   }
 
+  /** 4th down decided by the CPU or your coach: punts or kicks (true), or goes for it (false). */
+  private cpuFourthDown(lead: number): boolean {
+    const m = this.match;
+    const call = fourthDownCall(m.drive, lead, m.quarter, m.clock, m.ot);
+    if (call === 'punt') { this.showPunt(); return true; }
+    if (call === 'fg') { this.showFieldGoal(); return true; }
+    return false;
+  }
+
+  /** A field goal try (simulated). */
+  private showFieldGoal(): void {
+    this.menu = null;
+    this.banner = { ...this.match.fieldGoal(), kind: 'punt' };
+    this.screen = 'banner';
+    this.bannerAt = this.clock;
+    this.runoff = 0;
+  }
+
   private showPunt(): void {
     this.menu = null;
     this.banner = { ...this.match.punt(), kind: 'punt' };
@@ -401,6 +424,7 @@ export class Game {
         else this.setupSnap(); // keeps the last defensive call
         break;
       case 'punt': this.showPunt(); break;
+      case 'fg': this.showFieldGoal(); break;
     }
   }
 

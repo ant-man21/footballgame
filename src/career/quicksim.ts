@@ -2,7 +2,7 @@
 // unit ratings. It drives a real Match with made-up play outcomes, so the clock
 // rules, downs, punts, possession and stats are exactly the played game's.
 // Calibrated against auto-played games (scripts/balance/quicksim.cjs).
-import { cpuGoesForIt } from '../cpu';
+import { fgDistance, fourthDownCall } from '../cpu';
 import { type Side, Match } from '../match';
 import { clamp, rand } from '../util';
 
@@ -27,7 +27,9 @@ export function simPlay(m: Match, u: Record<Side, Units>, o: SimOptions = {}): b
   const off = m.offense, def = m.defense, d = m.drive;
   if (d.down === 4) {
     const lead = m.score[off] - m.score[def];
-    if (!cpuGoesForIt(d, lead, m.quarter, m.clock)) { m.punt(); return !m.over; }
+    const call = fourthDownCall(d, lead, m.quarter, m.clock, m.ot);
+    if (call === 'punt') { m.punt(); return !m.over; }
+    if (call === 'fg') { m.fieldGoal(); return !m.over; }
   }
   const e = clamp(u[off].off - u[def].def, -EDGE_MAX, EDGE_MAX);
   const toGoal = 100 - d.ballOn;
@@ -66,24 +68,25 @@ export function simUntil(m: Match, u: Record<Side, Units>, stop: (m: Match) => b
   while (!m.over && !stop(m) && guard++ < 2000) simPlay(m, u, o);
 }
 
-export type DriveEnd = 'td' | 'punt' | 'int' | 'downs' | 'half' | 'end';
+export type DriveEnd = 'td' | 'fg' | 'fgmiss' | 'punt' | 'int' | 'downs' | 'half' | 'end';
 export interface DriveSummary { team: Side; end: DriveEnd; plays: number; yards: number; secs: number; startOn: number }
 
 /** Simulates the rest of the current drive: until the ball changes hands, the half ends or the game ends. */
 export function simDrive(m: Match, u: Record<Side, Units>, o: SimOptions = {}): DriveSummary {
   const team = m.offense, startOn = m.drive.ballOn, half = m.quarter <= 2 ? 1 : 2;
   const t0 = elapsed(m), score0 = m.score[team], int0 = m.stats[team].int, yds0 = m.stats[team].yards, plays0 = m.stats[team].plays;
-  let punted = false;
+  let kick: 'punt' | 'fg' | null = null;
   let guard = 0;
   while (!m.over && m.offense === team && (m.quarter <= 2 ? 1 : 2) === half && guard++ < 200) {
-    const down4 = m.drive.down === 4;
+    const down4 = m.drive.down === 4, spot = m.drive.ballOn;
     const before = m.stats[team].plays;
     simPlay(m, u, o);
-    if (down4 && m.stats[team].plays === before) punted = true;
+    if (down4 && m.stats[team].plays === before) kick = fgDistance(spot) <= 50 ? 'fg' : 'punt'; // (fourthDownCall kicks a FG whenever in range)
   }
   const halfOver = (m.quarter <= 2 ? 1 : 2) !== half;
-  const end: DriveEnd = m.score[team] > score0 ? 'td' : m.stats[team].int > int0 ? 'int' : punted ? 'punt'
-    : m.over ? 'end' : halfOver ? 'half' : 'downs';
+  const pts = m.score[team] - score0;
+  const end: DriveEnd = pts >= 6 || (pts > 0 && m.ot >= 3) ? 'td' : pts === 3 ? 'fg' : m.stats[team].int > int0 ? 'int'
+    : kick === 'fg' ? 'fgmiss' : kick === 'punt' ? 'punt' : m.over ? 'end' : halfOver ? 'half' : 'downs';
   return { team, end, plays: m.stats[team].plays - plays0, yards: m.stats[team].yards - yds0, secs: elapsed(m) - t0, startOn };
 }
 
