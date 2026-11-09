@@ -124,6 +124,7 @@ export class CareerScreens {
       match: plan.match, you: c.rosterWithYou(), opp: plan.oppRoster,
       units: { you: plan.units.you, cpu: { off: plan.units.cpu.off + shift, def: plan.units.cpu.def + shift } },
       kits: this.kits(plan),
+      crowd: plan.rec.home === c.s.schoolId ? { home: c.school.colors, away: plan.opp.colors } : { home: plan.opp.colors, away: c.school.colors },
       simDefense: c.s.defense === 'sim', coachCalls: c.s.calls !== 'you', endAtHalf: plan.endAtHalf, label: plan.label,
       onDone: (_m, stint) => this.finish(stint),
     });

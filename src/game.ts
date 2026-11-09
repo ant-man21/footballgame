@@ -14,6 +14,7 @@ import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './s
 import { type Actor, HASH_YD, Sim, arcHeight, flightFor, throwSpread } from './sim';
 import { type Facing, HD, type Pose, grassTile, hdBall, hdPlayer, identity } from './hd';
 import { type Kit, shade } from './sprites';
+import { type Crowd, drawEndStands, drawGoalpost, drawSideStands, padColor } from './stadium';
 import { type Vec, clamp, dist, lerp } from './util';
 import { type Roster, loadRoster, makeRoster, saveRoster } from './ratings';
 import { RosterView } from './roster';
@@ -51,6 +52,7 @@ export interface CareerGameSetup {
   endAtHalf: boolean; // a two-minute drill: your stint ends at halftime
   label: string; // shown as you take the field
   kits?: Record<Side, Kit>; // the two schools' uniforms (otherwise blue vs red)
+  crowd?: { home: [string, string]; away: [string, string] }; // the schools' colours: the home crowd fills the stadium
   form?: number; // simulated defense: the opponent offense's form this game (rating points), set when the game starts
   onDone: (m: Match, stint?: TeamStats) => void; // stint: your team's stats when your part ended early
 }
@@ -136,14 +138,15 @@ export class Game {
   }
 
   /**
-   * The camera never scrolls past the back of the end zone: near the goal line
-   * the field shifts up so the end zone stays at the top of the screen.
-   * This is the largest camY that keeps the end line at (or above) the top.
+   * The camera stops a little past the back of the end zone: near the goal line
+   * the field shifts so the end zone sits near the top of the screen, with the
+   * goalposts and the first rows of the stands above it.
+   * This is the largest camY that keeps the end line that far down.
    */
   camLimit(): number {
     const v = this.view;
     const endLine = LOS_Y - (110 - this.fieldBallOn) * YD; // back of the end zone, world y
-    const top = v.landscape ? 0 : 19; // below the portrait scoreboard
+    const top = v.landscape ? 26 : 19 + 34; // below the portrait scoreboard, plus a view of the stands
     return (top - v.oy) / v.s - endLine;
   }
   /** Where the camera rests before the snap: normally 0, shifted up in the red zone. */
@@ -738,6 +741,23 @@ export class Game {
 
   /** Per-player animation: where he was last frame, how fast he's moving, how far through his stride. */
   private anim = new WeakMap<Actor, { x: number; y: number; t: number; vx: number; vy: number; stride: number; side: boolean }>();
+  private hype = 0;
+  private hypeClock = 0;
+  /** The crowd: the home school's colours, and how loud it is (follows the play: a catch and run, a pick, a touchdown). */
+  crowd(): Crowd {
+    const sim = this.sim, done = sim.phase === 'done';
+    const target = !(this.screen === 'play' || this.screen === 'banner') ? 0
+      : done && sim.touchdown ? 1 : done && sim.result === 'int' ? 0.7 : sim.phase === 'run' ? 0.35 : sim.phase === 'air' ? 0.12 : 0;
+    const dt = Math.max(0, this.clock - this.hypeClock);
+    this.hypeClock = this.clock;
+    this.hype += (target - this.hype) * Math.min(1, dt * (target > this.hype ? 6 : 0.8));
+    const cc = this.careerGame?.crowd;
+    return {
+      home: cc?.home ?? ['#29adff', '#1d2b53'], away: cc?.away ?? ['#ff004d', '#7e2553'],
+      hype: this.hype, t: this.clock,
+    };
+  }
+
   /** Screen spot of the ball carrier's (or the QB's) ball hand this frame: the ball is drawn there. */
   private ballHand: Vec | null = null;
 
@@ -977,10 +997,13 @@ export class Game {
       for (let i = 0; i < 3; i++) { ctx.fillStyle = i < n ? color : C.darkGrey; ctx.fillRect(x + i * 4, y, 3, 2); }
     };
 
-    if (v.landscape) {
-      ctx.fillStyle = C.ink;
-      ctx.fillRect(0, 0, v.panel, v.h);
-      ctx.fillRect(v.w - v.panel, 0, v.panel, v.h);
+    if (v.landscape) { // the sideline stands fill the panels, dimmed under the HUD
+      const crowd = this.crowd(), anchor = this.sy(LOS_Y + this.fieldBallOn * YD);
+      drawSideStands(ctx, crowd, v.panel, -1, v.panel, v.h, anchor);
+      drawSideStands(ctx, crowd, v.w - v.panel, 1, v.panel, v.h, anchor);
+      ctx.fillStyle = 'rgba(17,29,43,0.7)';
+      ctx.fillRect(0, 0, v.panel - 1, v.h);
+      ctx.fillRect(v.w - v.panel + 1, 0, v.panel - 1, v.h);
       const lx = 3;
       drawText(ctx, `${m.names.you} ${m.score.you}`, lx, 5, { color: C.blue });
       pips(lx + 30, 7, m.timeouts.you, C.blue);
@@ -1141,6 +1164,17 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
     ctx.fillRect(0, 0, v.w * HD, v.h * HD);
     ctx.restore();
   }
+  // the stadium: stands behind each end line, the wall pads along the sidelines (portrait)
+  const crowd = g.crowd();
+  const far = yOf(110), near = yOf(-10);
+  if (far > 0) drawEndStands(ctx, crowd, far, -1, v.w, v.h, v.s);
+  if (near < v.h) drawEndStands(ctx, crowd, near, 1, v.w, v.h, v.s);
+  if (!v.landscape) {
+    const top = Math.max(0, far - Math.round(4 * YD)), bot = Math.min(v.h, near + Math.round(4 * YD));
+    ctx.fillStyle = padColor(crowd);
+    ctx.fillRect(0, top, 2, bot - top);
+    ctx.fillRect(v.w - 2, top, 2, bot - top);
+  }
   const ez = yOf(105);
   if (ez > -10 && ez < v.h + 10) {
     drawText(ctx, attackingYours ? g.match.names.you : g.match.names.cpu, g.sx(W / 2), ez - 5, { scale: 2, color: attackingYours ? C.blue : C.pink, align: 'center' });
@@ -1173,8 +1207,10 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
     ctx.fillRect(left, y, 1, 1);
     ctx.fillRect(right - 1, y, 1, 1);
   }
-  ctx.fillRect(left - 1, 0, 1, v.h);
-  ctx.fillRect(right, 0, 1, v.h);
+  { // sidelines, end line to end line
+    const top = Math.max(0, yOf(110)), bot = Math.min(v.h, yOf(-10) + 1);
+    if (bot > top) { ctx.fillRect(left - 1, top, 1, bot - top); ctx.fillRect(right, top, 1, bot - top); }
+  }
 
   // line of scrimmage (blue) and line to gain (yellow)
   ctx.fillStyle = C.blue;
@@ -1183,4 +1219,6 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
     ctx.fillStyle = C.yellow;
     ctx.fillRect(left, yOf(lineToGain), fw, 1);
   }
+  // goalposts on the end lines
+  for (const y of [yOf(110), yOf(-10)]) if (y > -40 && y < v.h + 10) drawGoalpost(ctx, g.sx(CX), y, v.s);
 }
