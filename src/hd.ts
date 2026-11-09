@@ -78,6 +78,15 @@ class Grid {
     }
     for (const i of add) this.px[i] = OUTLINE;
   }
+  /** Darkens the edge pixels a touch: the shape reads without a black outline. */
+  soften(): void {
+    const edge: number[] = [];
+    for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
+      if (!this.get(x, y)) continue;
+      if (!this.get(x - 1, y) || !this.get(x + 1, y) || !this.get(x, y + 1)) edge.push(y * this.w + x);
+    }
+    for (const i of edge) { const c = this.px[i]!; if (c !== SHOE && c !== INK) this.px[i] = shade(c, -0.18); }
+  }
   /** Rotated a quarter turn (a player lying on the ground). */
   rotated(): Grid {
     const g = new Grid(this.h, this.w);
@@ -123,13 +132,17 @@ export interface PlayerLook {
   skin: number; // index into SKINS
 }
 
+type Arm = 'down' | 'fwd' | 'back' | 'ground' | 'up' | 'high' | 'out' | 'tuck' | 'hold';
+
 /**
- * Draws one player. Sizes (in sprite pixels, before the outline): skill players
- * are 11 wide at the shoulders and about 19 tall, linemen 15 wide.
+ * Draws one player, front (facing down) or back (facing up): a big helmet,
+ * wide shoulder pads, a short torso with the number, 2-pixel arms that hang
+ * at his sides and swing, and short sturdy legs. Skill players are 15 sprite
+ * pixels across the pads, linemen 19.
  */
 function drawPlayer(l: PlayerLook): Grid {
   const big = l.build === 'big';
-  const W = big ? 21 : 17, H = 24;
+  const W = big ? 25 : 19, H = 26;
   const g = new Grid(W, H);
   const p = palette(l.team, l.build, SKINS[l.skin % SKINS.length]);
   const cx = Math.floor(W / 2);
@@ -138,114 +151,118 @@ function drawPlayer(l: PlayerLook): Grid {
   const run = pose === 'run' || pose === 'carry';
   const f = l.frame & 3;
   const bob = run && (f === 1 || f === 3) ? -1 : 0;
-  const crouch = pose === 'stance' ? 3 : pose === 'block' ? 1 : 0;
-  const lean = l.lean;
+  const crouch = pose === 'stance' ? 2 : pose === 'block' ? 1 : 0;
+  const sw = big ? 9 : 7, tw = big ? 7 : 5, aw = big ? 3 : 2, pw = big ? 6 : 4, lw = big ? 5 : 4;
+  const hy = 3 + bob + crouch, ty = hy + 6, py = ty + 7, ly = py + 3;
+  const hx = cx + l.lean;
+  const hand = shade(p.skin, -0.18);
+  const spread = pose === 'stance' || pose === 'block' ? 1 : 0;
 
-  const sw = big ? 7 : 5; // half shoulder width
-  const tw = big ? 5 : 4; // half torso width
-  const hy = 1 + bob + crouch; // helmet top
-  const ty = hy + 6; // shoulders
-  const py = ty + 6; // pants
-  const ly = py + 3; // legs
-
-  // legs and shoes (drawn first so the body overlaps them)
-  const legW = big ? 4 : 3;
-  const legGap = big ? 1 : 1;
-  const stanceWide = pose === 'stance' || pose === 'block' ? 1 : 0;
+  // legs: a knee of pants, socks, cleats; striding legs reach and push
   for (const side of [-1, 1] as const) {
-    let len = 3; // sock length
-    if (run) { // stride: one leg reaches, the other pushes off
+    let len = 2;
+    if (run) {
       const reach = (f === 0 && side < 0) || (f === 2 && side > 0);
       const push = (f === 0 && side > 0) || (f === 2 && side < 0);
-      len = reach ? (front ? 4 : 2) : push ? (front ? 2 : 4) : 3;
+      if (reach) len = front ? 3 : 1;
+      if (push) len = front ? 1 : 3;
     }
-    const lx = side < 0 ? cx - legGap - legW + 1 - stanceWide : cx + legGap + stanceWide;
-    const top = ly;
-    g.rect(lx, top, legW, len - 1, p.pants); // thigh
-    g.rect(lx, top + len - 1, legW, 2, p.sock);
-    if (side > 0) g.set(lx + legW - 1, top + len - 1, shade(p.sock, -0.25));
-    g.rect(lx, top + len + 1, legW, 1, SHOE);
+    const x = side < 0 ? cx - pw - spread : cx + pw - lw + 1 + spread;
+    g.rect(x, ly, lw, 1, p.pants);
+    g.rect(x, ly + 1, lw, len, p.sock);
+    g.rect(side < 0 ? x : x + lw - 1, ly + 1, 1, len, shade(p.sock, -0.25));
+    g.rect(x, ly + 1 + len, lw, 1, SHOE);
   }
 
-  // pants
-  const pw = big ? 5 : 4;
-  g.rect(cx - pw + 1, py, pw * 2 - 1, 3, p.pants);
-  g.rect(cx + pw - 2, py, 1, 3, p.pantsLo);
-  g.set(cx - pw + 1, py, p.stripe); g.set(cx - pw + 1, py + 1, p.stripe); // pant stripes
-  g.set(cx + pw - 1, py, p.stripe); g.set(cx + pw - 1, py + 1, p.stripe);
-  g.rect(cx - pw + 1, py, pw * 2 - 1, 1, p.pantsLo); // belt line
-  g.set(cx, py, p.stripe);
+  // pants with side stripes and a belt
+  g.rect(cx - pw, py, pw * 2 + 1, 3, p.pants);
+  g.rect(cx + pw - 1, py, 2, 3, p.pantsLo);
+  g.rect(cx - pw, py, pw * 2 + 1, 1, shade(p.jersey, -0.35));
+  g.rect(cx - pw, py + 1, 1, 2, p.stripe); g.rect(cx + pw, py + 1, 1, 2, p.stripe);
 
-  // torso and shoulder pads
-  const sx = cx + lean;
-  g.rect(cx - tw, ty + 2, tw * 2 + 1, 4, p.jersey);
-  g.rect(sx - sw, ty, sw * 2 + 1, 2, p.jersey);
-  g.rect(sx - sw + 1, ty, sw * 2 - 1, 1, p.jerseyHi); // pads catch the light
-  g.rect(cx + tw - 1, ty + 2, 2, 4, p.jerseyLo); // shaded side
-  g.rect(cx - tw, ty + 5, tw * 2 + 1, 1, p.jerseyLo);
-  digits(g, l.num, cx + (lean > 0 ? 1 : 0), ty + (front ? 1 : 1), p.num);
+  // torso and number
+  g.rect(cx - tw, ty + 1, tw * 2 + 1, 6, p.jersey);
+  g.rect(cx + tw - 1, ty + 1, 2, 6, p.jerseyLo);
+  digits(g, l.num, cx, ty + 2, p.num);
+
+  // shoulder pads: wide and rounded, lit on top
+  g.rect(cx - sw + 1, ty, sw * 2 - 1, 1, p.jerseyHi);
+  g.rect(cx - sw, ty + 1, sw * 2 + 1, 2, p.jersey);
+  g.rect(cx + sw - 1, ty + 1, 2, 2, p.jerseyLo);
+  g.rect(cx - sw + 1, ty + 1, 2, 1, p.jerseyHi);
 
   // arms
-  const arm = (side: -1 | 1, kind: 'down' | 'swing-f' | 'swing-b' | 'up' | 'out' | 'ground' | 'tuck' | 'high') => {
-    const ax = sx + side * (sw + 1);
+  const arm = (side: -1 | 1, kind: Arm) => {
+    const x = side < 0 ? cx - sw : cx + sw - aw + 1; // the arm's columns, outside the torso
+    const sleeve = (y: number, h: number) => { g.rect(x, y, aw, h, p.jersey); g.rect(x, y + h - 1, aw, 1, p.stripe); };
     switch (kind) {
-      case 'down': g.rect(ax, ty + 1, 1, 2, p.jersey); g.rect(ax, ty + 3, 1, 2, p.skin); break;
-      case 'swing-f': g.rect(ax, ty + 1, 1, 2, p.jersey); g.rect(ax, ty + 3, 1, 3, p.skin); break;
-      case 'swing-b': g.rect(ax, ty, 1, 2, p.jersey); g.rect(ax, ty + 2, 1, 1, p.skin); break;
-      case 'ground': g.rect(ax, ty + 1, 1, 2, p.jersey); g.rect(ax, ty + 3, 1, 6, p.skin); g.set(ax, ty + 9, p.skin); break;
-      case 'tuck': g.rect(ax, ty + 1, 1, 2, p.jersey); g.rect(ax - side, ty + 3, 1, 1, p.skin); break;
-      case 'out': // hands out front: punch / engage
-        g.rect(ax, ty, 1, 2, p.jersey);
-        if (front) { g.rect(ax - side, ty + 2, 1, 1, p.jersey); g.rect(ax - side * 2, ty + 3, 2, 1, p.skin); }
-        else { g.rect(ax, ty - 2, 1, 2, p.skin); g.set(ax - side, ty - 3, p.skin); }
+      case 'down': case 'fwd': case 'back': {
+        const len = kind === 'down' ? 2 : (kind === 'fwd') === front ? 3 : 1;
+        sleeve(ty + 1, 3); g.rect(x, ty + 4, aw, len, p.skin); g.rect(x, ty + 4 + len, aw, 1, hand);
         break;
-      case 'up': // reaching for a ball
-        g.rect(ax, ty - 2, 1, 3, p.jersey); g.rect(ax - side, ty - 5, 1, 3, p.skin); g.rect(ax - side, ty - 6, 1, 1, p.skin);
+      }
+      case 'ground': sleeve(ty + 1, 3); g.rect(x, ty + 4, aw, ly + 2 - ty - 4, p.skin); g.rect(x, ly + 2, aw, 1, hand); break;
+      case 'up': { // reaching up for the ball, both hands above the helmet
+        const ax = side < 0 ? cx - sw + 1 : cx + sw - aw;
+        g.rect(ax, ty - 2, aw, 3, p.jersey); g.rect(ax, ty - 2, aw, 1, p.stripe);
+        g.rect(ax, hy - 1, aw, ty - 2 - (hy - 1), p.skin); g.rect(ax, hy - 3, aw, 2, hand);
         break;
-      case 'high': // throwing arm cocked back over the shoulder
-        g.rect(ax, ty - 1, 1, 2, p.jersey); g.rect(ax, ty - 4, 1, 3, p.skin);
+      }
+      case 'high': { // throwing arm cocked by the helmet
+        const ax = cx + sw - aw;
+        g.rect(ax, ty - 1, aw, 3, p.jersey); g.rect(ax, hy + 1, aw, ty - 1 - (hy + 1), p.skin); g.rect(ax, hy, aw, 1, hand);
+        g.hand = { x: ax + aw - 1, y: hy - 1 };
         break;
+      }
+      case 'out': // arms out in front: engaging a block
+        if (front) { sleeve(ty + 1, 2); g.rect(side < 0 ? cx - tw : cx + tw - 1, ty + 3, 2, 2, hand); g.rect(x, ty + 3, aw, 1, p.skin); }
+        else { const ax = side < 0 ? cx - sw + 1 : cx + sw - aw; g.rect(ax, ty - 1, aw, 2, p.jersey); g.rect(ax, hy + 3, aw, 2, hand); }
+        break;
+      case 'tuck': case 'hold': { // forearm across the body: the ball goes in this hand
+        sleeve(ty + 1, 3);
+        const to = kind === 'hold' ? cx + side : cx + side * (tw - 2);
+        const x0 = Math.min(x, to), x1 = Math.max(x + aw - 1, to);
+        g.rect(x0, ty + 4, x1 - x0 + 1, 1, p.skin); g.rect(to, ty + 4, 1, 2, hand);
+        if (kind === 'tuck' || side > 0) g.hand = { x: kind === 'hold' ? cx : to, y: ty + 4 };
+        break;
+      }
     }
   };
-  const swing = f === 0 ? ['swing-b', 'swing-f'] : f === 2 ? ['swing-f', 'swing-b'] : ['down', 'down'];
+  const a = f === 0 ? ['back', 'fwd'] as const : f === 2 ? ['fwd', 'back'] as const : ['down', 'down'] as const;
   switch (pose) {
-    case 'run': arm(-1, swing[0] as 'down'); arm(1, swing[1] as 'down'); break;
-    case 'carry': arm(-1, swing[0] as 'down'); arm(1, 'tuck'); g.hand = { x: cx + 2, y: ty + 3 }; break;
+    case 'run': arm(-1, a[0]); arm(1, a[1]); break;
+    case 'carry': arm(-1, a[0]); arm(1, 'tuck'); break;
     case 'stance': arm(-1, 'down'); arm(1, big ? 'ground' : 'down'); break;
     case 'block': arm(-1, 'out'); arm(1, 'out'); break;
     case 'catch': arm(-1, 'up'); arm(1, 'up'); break;
-    case 'hold': arm(-1, 'tuck'); arm(1, 'tuck'); g.hand = { x: cx, y: ty + 3 }; break;
-    case 'throw':
-      arm(-1, 'out'); arm(1, 'high');
-      g.hand = { x: sx + sw + 1, y: ty - 5 };
-      break;
+    case 'hold': arm(-1, 'hold'); arm(1, 'hold'); break;
+    case 'throw': arm(-1, 'out'); arm(1, 'high'); break;
     default: arm(-1, 'down'); arm(1, 'down');
   }
 
-  // helmet
-  const hx = cx + lean * 2;
+  // helmet: big and round, a stripe down the middle
   g.rect(hx - 2, hy, 5, 1, p.helmet);
-  g.rect(hx - 3, hy + 1, 7, 4, p.helmet);
-  g.rect(hx - 2, hy + 5, 5, 1, p.helmetLo);
-  g.rect(hx + 2, hy + 2, 1, 3, p.helmetLo);
-  g.set(hx - 2, hy + 1, p.helmetHi); g.set(hx - 1, hy + 1, p.helmetHi); g.set(hx - 2, hy + 2, p.helmetHi);
+  g.rect(hx - 3, hy + 1, 7, 1, p.helmet);
+  g.rect(hx - 4, hy + 2, 9, 4, p.helmet);
+  g.rect(hx - 3, hy + 6, 7, 1, p.helmetLo);
+  g.rect(hx + 4, hy + 3, 1, 3, p.helmetLo); g.set(hx + 3, hy + 5, p.helmetLo);
+  g.rect(hx - 2, hy + 1, 2, 1, p.helmetHi); g.set(hx - 3, hy + 2, p.helmetHi); g.set(hx - 3, hy + 3, p.helmetHi);
   if (front) {
-    g.rect(hx - 2, hy + 3, 5, 2, p.skin); // face
-    g.set(hx - 1, hy + 3, OUTLINE); g.set(hx + 1, hy + 3, OUTLINE); // eyes
-    g.rect(hx - 2, hy + 4, 5, 1, MASK); // facemask bar
-    g.set(hx, hy + 5, MASK); g.set(hx - 2, hy + 5, MASK); g.set(hx + 2, hy + 5, MASK);
-    g.set(hx, hy, p.stripe); g.set(hx, hy + 1, p.stripe); g.set(hx, hy + 2, p.stripe);
+    g.rect(hx, hy, 1, 3, p.stripe);
+    g.rect(hx - 2, hy + 3, 5, 3, p.skin); // face
+    g.set(hx - 1, hy + 3, INK); g.set(hx + 1, hy + 3, INK); // eyes
+    g.rect(hx - 3, hy + 4, 7, 1, MASK); // facemask
+    g.rect(hx, hy + 4, 1, 3, MASK);
+    g.rect(hx - 2, hy + 6, 5, 1, MASK);
   } else {
-    g.set(hx, hy, p.stripe); g.set(hx, hy + 1, p.stripe); g.set(hx, hy + 2, p.stripe); g.set(hx, hy + 3, p.stripe); g.set(hx, hy + 4, p.stripe);
-    g.set(hx - 3, hy + 4, MASK); g.set(hx + 3, hy + 4, MASK); // the mask peeks out at the sides
-    g.rect(hx - 1, hy + 6, 3, 1, p.skin); // neck
+    g.rect(hx, hy, 1, 6, p.stripe);
+    g.set(hx - 4, hy + 5, MASK); g.set(hx + 4, hy + 5, MASK); // the mask shows at the sides
   }
-
-  return g; // no outline: the shading carries the shape
+  g.soften();
+  return g;
 }
 
-
-/** Thick pixel line (legs and arms in the side view). */
+/** Thick pixel line (legs in the side view). */
 function limb(g: Grid, x0: number, y0: number, x1: number, y1: number, w: number, c: string): void {
   const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
   for (let i = 0; i <= n; i++) {
@@ -255,103 +272,99 @@ function limb(g: Grid, x0: number, y0: number, x1: number, y1: number, w: number
 }
 
 /**
- * Side view, facing right (mirrored for left): a profile with the facemask in
- * front, a forward lean, and legs that scissor through a 4-frame stride.
+ * Side view, facing right (mirrored for left): the helmet in profile with the
+ * facemask out front, leaning into the run, 2-pixel arms pumping and legs that
+ * scissor through a 4-frame stride.
  */
 function drawSide(l: PlayerLook): Grid {
   const big = l.build === 'big';
-  const W = big ? 21 : 17, H = 24;
+  const W = big ? 25 : 19, H = 26;
   const g = new Grid(W, H);
   const p = palette(l.team, l.build, SKINS[l.skin % SKINS.length]);
   const cx = Math.floor(W / 2) - 1;
   const pose = l.pose;
   const f = l.frame & 3;
-  const bob = f === 1 || f === 3 ? -1 : 0;
-  const hy = 1 + bob + (pose === 'block' ? 1 : 0);
-  const ty = hy + 6, py = ty + 6, ly = py + 3;
-  const half = big ? 3 : 2; // half body depth (narrower than the shoulders seen from behind)
-  const lw = big ? 3 : 2; // leg thickness
-  const sockFar = shade(p.sock, -0.3), pantsFar = shade(p.pants, -0.3);
+  const moving = pose === 'run' || pose === 'carry' || pose === 'catch';
+  const bob = moving && (f === 1 || f === 3) ? -1 : 0;
+  const hy = 3 + bob + (pose === 'block' ? 1 : 0), ty = hy + 6, py = ty + 7, ly = py + 3;
+  const d = big ? 6 : 4; // half body depth
+  const lw = big ? 4 : 3;
+  const lean = pose === 'block' ? 2 : moving ? 1 : 0;
+  const hand = shade(p.skin, -0.18);
+  const farSock = shade(p.sock, -0.3), farPants = shade(p.pants, -0.3), farSkin = shade(p.skin, -0.3), farJersey = shade(p.jersey, -0.35);
 
   // legs: far leg first (darker), near leg over it
-  const leg = (near: boolean, footX: number, footY: number, kneeX: number) => {
-    const pc = near ? p.pants : pantsFar, sc = near ? p.sock : sockFar;
-    const hipX = cx - 1 + (near ? 0 : -1);
-    limb(g, hipX, ly, kneeX, ly + 2, lw, pc);
-    limb(g, kneeX, ly + 2, footX, footY - 1, lw, sc);
-    g.rect(footX, footY, lw + 1, 1, SHOE); // cleat points forward
-  };
-  const stride = pose === 'run' || pose === 'carry' || pose === 'catch';
   type Leg = [number, number, number]; // foot x, foot y, knee x
-  const front: Leg = [cx + 3, ly + 5, cx + 2], back: Leg = [cx - 5, ly + 4, cx - 3];
-  const plant: Leg = [cx, ly + 5, cx], swing: Leg = [cx - 3, ly + 3, cx + 1];
-  let near: Leg, far: Leg;
-  if (!stride) { near = [cx + 1, ly + 5, cx]; far = [cx - 2, ly + 5, cx - 2]; }
-  else if (f === 0) { near = front; far = back; }
-  else if (f === 2) { near = back; far = front; }
-  else if (f === 1) { near = plant; far = swing; }
-  else { near = swing; far = plant; }
-  leg(false, ...far);
-  leg(true, ...near);
+  const leg = (near: boolean, [fx, fy, kx]: Leg) => {
+    const hip = cx - 1;
+    limb(g, hip, ly, kx, ly + 1, lw, near ? p.pants : farPants);
+    limb(g, kx, ly + 2, fx, fy - 1, lw, near ? p.sock : farSock);
+    g.rect(fx, fy, lw + 1, 1, SHOE);
+  };
+  const reach: Leg = [cx + 3, ly + 4, cx + 1], push: Leg = [cx - 5, ly + 3, cx - 2];
+  const plant: Leg = [cx - 1, ly + 4, cx - 1], tuck: Leg = [cx - 4, ly + 2, cx + 1];
+  const stand: [Leg, Leg] = [[cx - 3, ly + 4, cx - 2], [cx, ly + 4, cx]];
+  const [far, near]: [Leg, Leg] = !moving ? stand : f === 0 ? [push, reach] : f === 2 ? [reach, push] : f === 1 ? [tuck, plant] : [plant, tuck];
+  leg(false, far); leg(true, near);
 
   // pants
-  g.rect(cx - half, py, half * 2 + 1, 3, p.pants);
-  g.rect(cx - half, py, half * 2 + 1, 1, p.pantsLo);
-  g.rect(cx - 1, py + 1, 1, 2, p.stripe); // side stripe
+  g.rect(cx - d, py, d * 2 + 1, 3, p.pants);
+  g.rect(cx - d, py, d * 2 + 1, 1, shade(p.jersey, -0.35));
+  g.rect(cx - d, py + 1, 1, 2, p.pantsLo);
+  g.rect(cx, py + 1, 1, 2, p.stripe);
 
-  // far arm (behind the body)
-  const armFar = shade(p.jersey, -0.35), skinFar = shade(p.skin, -0.25);
-  const swingF = f === 0 ? 1 : f === 2 ? -1 : 0; // near arm forward on 0, back on 2
-  if (pose === 'run') { limb(g, cx, ty + 1, cx - 3 * swingF, ty + 3, 1, armFar); g.set(cx - 3 * swingF, ty + 4, skinFar); }
+  // far arm, behind the body: swings opposite the near one
+  const swing = f === 0 ? 1 : f === 2 ? -1 : 0; // near arm forward on 0, back on 2
+  if (pose === 'run') g.rect(cx - 2 * swing + lean, ty + 4, 2, 2, farSkin);
+  if (pose === 'run' || pose === 'carry') g.rect(cx - 1 + lean, ty + 1, 2, 2, farJersey);
 
-  // torso: leaning into the run
-  const lean = pose === 'block' ? 2 : 1;
-  for (let r = 0; r < 6; r++) {
-    const off = Math.round(lean * (1 - r / 5));
-    g.rect(cx - half + off, ty + r, half * 2 + 1, 1, p.jersey);
-    g.set(cx - half + off, ty + r, p.jerseyLo); // back
+  // torso and pads, leaning into the run
+  for (let r = 0; r < 7; r++) {
+    const off = r < 3 ? lean : r < 5 ? Math.min(lean, 1) : 0;
+    g.rect(cx - d + off, ty + r, d * 2 + 1, 1, p.jersey);
+    g.set(cx - d + off, ty + r, p.jerseyLo);
   }
-  g.rect(cx - half + lean - 1, ty, half * 2 + 3, 2, p.jersey); // shoulder pad
-  g.rect(cx - half + lean, ty, half * 2 + 1, 1, p.jerseyHi);
-  g.rect(cx + lean - 1, ty + 2, 3, 1, p.stripe); // sleeve stripe
-  g.rect(cx - half, ty + 5, half * 2 + 1, 1, p.jerseyLo);
+  g.rect(cx - d - 1 + lean, ty, d * 2 + 3, 2, p.jersey); // pads stick out front and back
+  g.rect(cx - d + lean, ty, d * 2 + 1, 1, p.jerseyHi);
 
-  // near arm
-  const sh = { x: cx + lean, y: ty + 1 };
+  // near arm (2 wide): sleeve at the shoulder, then the forearm
+  const sx = cx - 1 + lean;
+  const sleeve = () => { g.rect(sx, ty + 1, 2, 3, p.jersey); g.rect(sx, ty + 3, 2, 1, p.stripe); };
   switch (pose) {
     case 'carry': // ball tucked high and tight
-      limb(g, sh.x, sh.y, sh.x + 1, sh.y + 2, 1, p.jersey); g.set(sh.x + 2, sh.y + 3, p.skin);
-      g.hand = { x: sh.x + 2, y: sh.y + 2 };
+      sleeve(); g.rect(sx + 2, ty + 3, 2, 2, p.skin); g.set(sx + 4, ty + 3, hand);
+      g.hand = { x: sx + 3, y: ty + 3 };
       break;
     case 'block':
-      limb(g, sh.x, sh.y, sh.x + 3, sh.y + 1, 1, p.jersey); g.rect(sh.x + 4, sh.y, 1, 2, p.skin);
+      g.rect(sx, ty + 1, 2, 2, p.jersey); g.rect(sx + 2, ty + 1, 3, 2, p.skin); g.rect(sx + 5, ty, 1, 3, hand);
       break;
     case 'catch':
-      limb(g, sh.x, sh.y, sh.x + 2, sh.y - 3, 1, p.jersey); g.rect(sh.x + 3, sh.y - 5, 1, 2, p.skin);
+      g.rect(sx + 1, ty - 2, 2, 3, p.jersey); g.rect(sx + 2, hy - 1, 2, ty - 2 - (hy - 1), p.skin); g.rect(sx + 2, hy - 3, 2, 2, hand);
       break;
-    default: {
-      const hx = sh.x + 3 * swingF;
-      limb(g, sh.x, sh.y, hx, sh.y + 2, 1, p.jersey); g.rect(hx, sh.y + 3, 1, 1, p.skin);
+    case 'run': {
+      sleeve();
+      const fx = sx + 2 * swing;
+      g.rect(fx, ty + 4, 2, 2, p.skin); g.rect(fx + (swing > 0 ? 1 : 0), ty + 6, swing ? 1 : 2, 1, hand);
+      break;
     }
+    default: sleeve(); g.rect(sx, ty + 4, 2, 2, p.skin); g.rect(sx, ty + 6, 2, 1, hand);
   }
 
-  // helmet in profile: a dome, the stripe running front to back, the facemask cage out front
-  const hx = cx + lean; // middle of the helmet shell
-  g.rect(hx - 2, hy, 5, 1, p.helmet);
-  g.rect(hx - 3, hy + 1, 7, 3, p.helmet);
-  g.rect(hx - 3, hy + 4, 6, 1, p.helmet);
-  g.rect(hx - 2, hy + 5, 4, 1, p.helmetLo);
-  g.set(hx - 3, hy + 4, p.helmetLo); g.set(hx - 3, hy + 3, p.helmetLo); // back of the shell in shade
-  g.rect(hx - 2, hy, 4, 1, p.stripe); g.set(hx - 3, hy + 1, p.stripe); // stripe over the crown
-  g.set(hx - 1, hy + 1, p.helmetHi); g.set(hx, hy + 1, p.helmetHi); g.set(hx + 1, hy + 1, p.helmetHi);
-  g.set(hx - 1, hy + 3, p.helmetLo); // ear hole
-  g.rect(hx + 3, hy + 2, 1, 3, p.skin); // face behind the cage
-  g.set(hx + 3, hy + 2, INK); // eye
-  g.rect(hx + 4, hy + 2, 1, 4, MASK); // facemask cage
-  g.rect(hx + 3, hy + 4, 2, 1, MASK);
-  g.set(hx + 3, hy + 5, MASK);
-  g.rect(hx - 1, hy + 6, 2, 1, p.skin); // neck
-
+  // helmet in profile: a dome, the stripe front to back, the cage out front
+  const hx = cx + lean;
+  g.rect(hx - 2, hy, 4, 1, p.helmet);
+  g.rect(hx - 3, hy + 1, 6, 1, p.helmet);
+  g.rect(hx - 4, hy + 2, 8, 4, p.helmet);
+  g.rect(hx - 3, hy + 6, 5, 1, p.helmetLo);
+  g.rect(hx - 4, hy + 4, 1, 2, p.helmetLo);
+  g.rect(hx - 2, hy, 3, 1, p.stripe); g.rect(hx - 3, hy + 1, 1, 1, p.stripe);
+  g.rect(hx - 1, hy + 1, 2, 1, p.helmetHi); g.set(hx - 2, hy + 2, p.helmetHi);
+  g.set(hx - 1, hy + 4, p.helmetLo); // ear hole
+  g.rect(hx + 2, hy + 3, 2, 3, p.skin); // face behind the cage
+  g.set(hx + 2, hy + 3, INK); // eye
+  g.rect(hx + 4, hy + 3, 1, 4, MASK); // facemask cage
+  g.rect(hx + 2, hy + 5, 2, 1, MASK);
+  g.soften();
   return g;
 }
 
