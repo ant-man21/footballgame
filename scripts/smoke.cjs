@@ -93,6 +93,38 @@ const OUT = process.env.SHOT_DIR || '.';
   });
   check(adapt.seen < adapt.base * 0.6, `defense adapts: Cover 2 looks vs Smash ${Math.round(adapt.base * 100)}% fresh -> ${Math.round(adapt.seen * 100)}% after 8 straight calls`);
 
+  // 1c. Boundaries: a runner who steps out at the 1 is out of bounds there (no touchdown); one who breaks the plane
+  // before stepping out scores; a ball thrown past the end line is incomplete.
+  const lines = await G(() => {
+    const g = window.__game, out = {};
+    const setup = () => {
+      g.paused = true; g.match.offense = 'you'; g.match.drive.ballOn = 95; g.match.drive.down = 1;
+      g.startHuddle(); g.pickPlay(window.__plays.find((q) => q.id === 'mesh')); g.paused = true;
+      const sim = g.sim; sim.snap(); for (let i = 0; i < 20; i++) sim.update(0.02);
+      return sim;
+    };
+    const run = (x, toGoal, vel) => {
+      const sim = setup(), c = sim.receivers[0];
+      sim.ball = { aim: c, from: c, to: c, t: 1, dur: 1, peak: 0, carrier: c }; sim.carrier = c; sim.phase = 'run'; sim.result = 'catch'; sim.runT = 1; sim.runStart = 1;
+      c.x = x; c.y = sim.goalY + toGoal; c.vel = vel;
+      for (let i = 0; i < 40 && sim.phase === 'run'; i++) sim.update(0.02);
+      return { td: sim.touchdown, oob: sim.outOfBounds, x: c.x };
+    };
+    out.side = run(7.4, 3, { x: -60, y: -12 });
+    out.pylon = run(9, 1, { x: -10, y: -60 });
+    out.back = 0;
+    for (let k = 0; k < 10; k++) {
+      const sim = setup(), c = sim.receivers[0];
+      sim.throwTo({ x: 90, y: sim.endLineY - 6 });
+      for (let i = 0; i < 200 && sim.phase === 'air'; i++) { c.x = 90; c.y = sim.endLineY + 2; sim.update(0.02); }
+      if (sim.result === 'inc') out.back++;
+    }
+    g.paused = false; g.match.drive.ballOn = 25; g.startHuddle();
+    return out;
+  });
+  check(!lines.side.td && lines.side.oob && lines.side.x >= 7 && lines.pylon.td && lines.back === 10,
+    `boundaries: out at the 1 is no TD (stopped on the line), breaking the plane first is, past the end line is incomplete (${JSON.stringify(lines)})`);
+
   // 2. Drive starts at our own 25, 1st & 10.
   check(await G(() => window.__game.match.drive.spotText === 'OWN 25' && window.__game.match.drive.downText === '1ST & 10' && window.__game.match.quarter === 1), 'game starts in Q1, 1ST & 10 at OWN 25');
   // keep the tests below on offense regardless of what happens (e.g. an interception)

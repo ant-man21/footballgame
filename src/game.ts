@@ -14,7 +14,7 @@ import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './s
 import { type Actor, HASH_YD, Sim, arcHeight, flightFor, throwSpread } from './sim';
 import { type Facing, HD, type Pose, grassTile, hdBall, hdPlayer, identity } from './hd';
 import { type Kit, type TeamColor, shade } from './sprites';
-import { type Crowd, drawEndStands, drawGoalpost, drawSideStands, padColor } from './stadium';
+import { type Crowd, drawEndStands, drawGoalpost, padColor } from './stadium';
 import { Intro, type IntroInfo } from './intro';
 import { type Vec, clamp, dist, lerp } from './util';
 import { type Roster, loadRoster, makeRoster, saveRoster } from './ratings';
@@ -1035,13 +1035,16 @@ export class Game {
       for (let i = 0; i < 3; i++) { ctx.fillStyle = i < n ? color : C.darkGrey; ctx.fillRect(x + i * 4, y, 3, 2); }
     };
 
-    if (v.landscape) { // the sideline stands fill the panels, dimmed under the HUD
-      const crowd = this.crowd(), anchor = this.sy(LOS_Y + this.fieldBallOn * YD);
-      drawSideStands(ctx, crowd, v.panel, -1, v.panel, v.h, anchor);
-      drawSideStands(ctx, crowd, v.w - v.panel, 1, v.panel, v.h, anchor);
-      ctx.fillStyle = 'rgba(17,29,43,0.7)';
-      ctx.fillRect(0, 0, v.panel - 1, v.h);
-      ctx.fillRect(v.w - v.panel + 1, 0, v.panel - 1, v.h);
+    if (v.landscape) { // plain panels for the HUD, edged by the low sideline wall
+      ctx.fillStyle = C.ink;
+      ctx.fillRect(0, 0, v.panel, v.h);
+      ctx.fillRect(v.w - v.panel, 0, v.panel, v.h);
+      ctx.fillStyle = '#1d2b53';
+      ctx.fillRect(v.panel - 2, 0, 2, v.h);
+      ctx.fillRect(v.w - v.panel, 0, 2, v.h);
+      ctx.fillStyle = padColor(this.crowd());
+      ctx.fillRect(v.panel - 1 / HD, 0, 1 / HD, v.h);
+      ctx.fillRect(v.w - v.panel, 0, 1 / HD, v.h);
       const lx = 3;
       drawText(ctx, `${m.names.you} ${m.score.you}`, lx, 5, { color: C.blue });
       pips(lx + 30, 7, m.timeouts.you, C.blue);

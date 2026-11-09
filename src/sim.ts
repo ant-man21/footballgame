@@ -18,6 +18,7 @@ const SPEED: Record<Kind, number> = { qb: 0, ol: 6, wr: 8.0, te: 7.1, rb: 7.6, d
 
 // Catching
 const CATCH_RADIUS = 7; // receivers attack the ball
+const SIDELINE = 1; // px: a ball carrier this close to the sideline has a foot on it (out of bounds)
 /** How far a defender can reach to play the ball: quick throws are on top of him before he reacts. */
 const defenderReach = (throwLen: number) => clamp(3.5 + throwLen / 45, 4, 6.5);
 const BALL_HAWK = 22; // a receiver this close to the landing spot always goes for it
@@ -841,6 +842,8 @@ export class Sim {
     // The catch is decided where the ball comes down: whoever is at the spot
     // when it gets there. (Defenders jump routes by breaking to that spot.)
     if (s >= 1) {
+      // past the end line it's out of the back of the end zone: nobody can come down with it in bounds
+      if (pos.y < this.endLineY) { this.finish('inc', this.qb.y); return; }
       // nearest receiver and nearest defender who can reach the ball
       const defReach = defenderReach(dist(ball.from, ball.to));
       const reachOf = (p: Actor) => p.team === 'off' ? CATCH_RADIUS * clamp(1 + this.rd(p, 'hnd') * 0.006, 0.85, 1.15) : defReach;
@@ -932,11 +935,25 @@ export class Sim {
       y: lerp(c.vel.y, (want.y / wl) * speed, turn),
     };
     const vl = Math.hypot(c.vel.x, c.vel.y) || 1;
+    const x0 = c.x, y0 = c.y;
     c.x += (c.vel.x / vl) * speed * dt;
     c.y += (c.vel.y / vl) * speed * dt;
 
-    if (c.y <= this.goalY) { this.touchdown = true; this.finish('catch', c.y); return; }
-    if (c.x < FIELD_LEFT || c.x > FIELD_RIGHT) { this.outOfBounds = true; this.finish('catch', c.y); return; }
+    // Out of bounds the moment his foot touches the sideline; a touchdown only
+    // if he breaks the plane in bounds. Both in one step: whichever came first.
+    const left = FIELD_LEFT + SIDELINE, right = FIELD_RIGHT - SIDELINE;
+    const out = c.x < left || c.x > right;
+    const scored = c.y <= this.goalY;
+    if (out) {
+      const edge = c.x < left ? left : right;
+      const tOut = c.x === x0 ? 0 : (edge - x0) / (c.x - x0); // fraction of this step when he stepped out
+      const tGoal = scored ? (y0 - this.goalY) / (y0 - c.y || 1) : Infinity;
+      if (tGoal < tOut) { this.touchdown = true; this.finish('catch', this.goalY); return; }
+      const yOut = y0 + (c.y - y0) * clamp(tOut, 0, 1);
+      c.x = edge; c.y = yOut;
+      this.outOfBounds = true; this.finish('catch', Math.max(yOut, this.goalY + 1)); return;
+    }
+    if (scored) { this.touchdown = true; this.finish('catch', c.y); return; }
 
     // Other receivers try to get in the way of the nearest pursuers.
     const screened = new Set<Actor>();

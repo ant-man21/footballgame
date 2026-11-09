@@ -1,9 +1,8 @@
 // The stadium around the field, drawn on the HD grid (canvas pixels): behind
 // each end line a padded wall with the home school's name painted on it, a
 // packed lower bowl of fans (darker toward the back), the facade, light towers
-// and the night sky; goalposts on the end lines; in landscape the sideline
-// stands behind the HUD panels. The crowd wears the home school's colours (a
-// few visitors' too) and jumps when something big happens.
+// and the night sky; goalposts on the end lines. The crowd wears the home
+// school's colours (a few visitors' too) and jumps when something big happens.
 import { YD } from './config';
 import { drawText, textWidth } from './font';
 import { HD } from './hd';
@@ -147,35 +146,6 @@ export function drawEndStands(ctx: CanvasRenderingContext2D, c: Crowd, endLine: 
     const ty = Math.round((wy + (dir < 0 ? 0 : 2) + (wall - 2 - 5 * HD) / 2) / HD); // centred between the stripe and the edge
     for (let x = ((w / 2 - tw / 2) % (tw + 40)) - (tw + 40); x < w; x += tw + 40) {
       drawText(ctx, name, x, ty, { color: '#fff1e8' });
-    }
-  }
-  ctx.restore();
-}
-
-/**
- * Landscape: sideline stands filling a side panel (behind the HUD, which dims
- * them). edge = screen x of the panel's field side; dir = -1 left, +1 right.
- * anchor = screen y of a fixed spot on the field, so the seats scroll with it.
- */
-export function drawSideStands(ctx: CanvasRenderingContext2D, c: Crowd, edge: number, dir: -1 | 1, panel: number, h: number, anchor: number): void {
-  const X = Math.round(edge * HD), P = Math.round(panel * HD), H = Math.ceil(h * HD);
-  const x0 = dir < 0 ? X - P : X;
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#0b1220'; ctx.fillRect(x0, 0, P, H);
-  const wall = 5, colW = 7, seatH = 5;
-  ctx.fillStyle = '#1d2b53'; ctx.fillRect(dir < 0 ? X - wall : X, 0, wall, H);
-  ctx.fillStyle = padColor(c); ctx.fillRect(dir < 0 ? X - 2 : X, 0, 2, H);
-  const A = Math.round(anchor * HD);
-  const first = Math.floor(-A / seatH) - 1, last = Math.ceil((H - A) / seatH) + 1;
-  for (let col = 0; (col + 1) * colW + wall < P; col++) {
-    const cx = dir < 0 ? X - wall - (col + 1) * colW : X + wall + col * colW;
-    ctx.fillStyle = col & 1 ? '#262c3a' : '#2b3242'; ctx.fillRect(cx, 0, colW, H);
-    for (let j = first; j <= last; j++) {
-      const f = fan(c, col + 100 * (dir < 0 ? 1 : 2), j, true);
-      if (f.empty) continue;
-      const up = c.hype > 0.05 ? Math.round(Math.max(0, Math.sin(c.t * 11 + f.ph * 6.283)) * c.hype) : 0;
-      drawFan(ctx, f, cx + 2, A + j * seatH + 4 - up, 0, false);
     }
   }
   ctx.restore();

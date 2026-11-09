@@ -34,6 +34,7 @@ export interface IntroHost {
 const PAN_END = 2.8, RUN_END = 6.6, TOSS_END = 10.2;
 const CAM_START = 104, CAM_RUN = 86, CAM_TOSS = 58;
 const TUNNEL_YD = 108, BANNER_YD = 104;
+const TUNNEL_X = -15; // yards across: the tunnel sits off to the side of the goalpost
 const RUN_SPEED = 8.5; // yards per second
 const N_RUNNERS = 10;
 
@@ -108,16 +109,16 @@ export class Intro {
     // smoke from the tunnel
     if (this.t >= this.nextPuff && this.t < PAN_END + 2.2) {
       this.nextPuff = this.t + 0.07;
-      this.puffs.push({ x: (Math.random() - 0.5) * 4, y: TUNNEL_YD - 0.5, r: 1.2, life: 1 });
+      this.puffs.push({ x: TUNNEL_X + (Math.random() - 0.5) * 4, y: TUNNEL_YD - 0.5, r: 1.2, life: 1 });
     }
-    for (const p of this.puffs) { p.y -= 1.2 * dt; p.x += p.x * 0.8 * dt; p.r += 3.2 * dt; p.life -= dt * 0.55; }
+    for (const p of this.puffs) { p.y -= 1.2 * dt; p.x += (p.x - TUNNEL_X) * 0.8 * dt; p.r += 3.2 * dt; p.life -= dt * 0.55; }
     this.puffs = this.puffs.filter((p) => p.life > 0);
     // the banner tears when the first man gets there
     if (!this.torn && this.runnerAt(this.runners[0]).yd <= BANNER_YD) {
       this.torn = true;
       for (let i = 0; i < 40; i++) {
         const side = i % 2 ? 1 : -1;
-        this.bits.push({ x: side * Math.random() * 5, y: BANNER_YD, vx: side * (2 + Math.random() * 5), vy: (Math.random() - 0.3) * 6, life: 1, color: i % 3 ? colors[0] : colors[1] });
+        this.bits.push({ x: TUNNEL_X + side * Math.random() * 5, y: BANNER_YD, vx: side * (2 + Math.random() * 5), vy: (Math.random() - 0.3) * 6, life: 1, color: i % 3 ? colors[0] : colors[1] });
       }
     }
     for (const b of this.bits) { b.x += b.vx * dt; b.y += b.vy * dt; b.vx *= 0.92; b.vy *= 0.92; b.life -= dt * 0.6; }
@@ -127,16 +128,16 @@ export class Intro {
   /** Where a runner is (lateral yards, yard line) and which way he's heading. */
   private runnerAt(r: Intro['runners'][number]): { x: number; yd: number; dx: number; dyd: number; on: boolean } {
     const d = (this.t - r.delay) * RUN_SPEED; // yards run
-    if (d < 0) return { x: 0, yd: TUNNEL_YD, dx: 0, dyd: -1, on: false };
+    if (d < 0) return { x: TUNNEL_X, yd: TUNNEL_YD, dx: 0, dyd: -1, on: false };
     const straight = TUNNEL_YD - BANNER_YD + 2; // out of the tunnel and through the banner
-    if (d < straight) return { x: 0, yd: TUNNEL_YD - d, dx: 0, dyd: -1, on: true };
+    if (d < straight) return { x: TUNNEL_X, yd: TUNNEL_YD - d, dx: 0, dyd: -1, on: true };
     // then fan out down the field, and peel off to the home sideline
     const e = d - straight, fanLen = BANNER_YD - 2 - r.exitYd;
     if (e < fanLen) {
       const toLane = Math.min(1, e / 6);
-      return { x: r.lane * 2.2 * toLane, yd: BANNER_YD - 2 - e, dx: e < 6 ? r.lane * 0.35 : 0, dyd: -1, on: true };
+      return { x: TUNNEL_X + (5 + r.lane * 1.6) * toLane, yd: BANNER_YD - 2 - e, dx: e < 6 ? (5 + r.lane * 1.6) * 0.1 : 0, dyd: -1, on: true };
     }
-    const e2 = (e - fanLen) * 1.4, x = r.lane * 2.2 - e2; // a burst of speed to the sideline
+    const e2 = (e - fanLen) * 1.4, x = TUNNEL_X + 5 + r.lane * 1.6 - e2; // a burst of speed to the sideline
     return { x, yd: r.exitYd - e2 * 0.12, dx: -1, dyd: -0.12, on: x > -34 };
   }
 
@@ -161,7 +162,7 @@ export class Intro {
 
     if (this.t < RUN_END + 1) {
       // the inflatable tunnel: a tube in the home colour from the wall into the end zone
-      const tx0 = X(-2.4), tx1 = X(2.4), ty0 = Y(110 + 3.2), ty1 = Y(TUNNEL_YD);
+      const tx0 = X(TUNNEL_X - 2.4), tx1 = X(TUNNEL_X + 2.4), ty0 = Y(110 + 3.2), ty1 = Y(TUNNEL_YD);
       ctx.fillStyle = shade(hc[0], -0.2); ctx.fillRect(tx0, ty0, tx1 - tx0, ty1 - ty0);
       ctx.fillStyle = hc[0];
       for (let y = ty0; y < ty1; y += 2) ctx.fillRect(tx0, y, tx1 - tx0, 1); // ribs
@@ -208,7 +209,7 @@ export class Intro {
 
   private drawBanner(ctx: CanvasRenderingContext2D, X: (x: number) => number, Y: (y: number) => number, s: number): void {
     const hc = this.info.colors[this.info.home];
-    const x0 = X(-7), x1 = X(7), y = Y(BANNER_YD), h = 9 * s;
+    const x0 = X(TUNNEL_X - 7), x1 = X(TUNNEL_X + 7), y = Y(BANNER_YD), h = 9 * s;
     // the two holders' poles
     ctx.fillStyle = '#c2c3c7'; ctx.fillRect(x0 - 1, y - h - 1, 1, h + 3); ctx.fillRect(x1, y - h - 1, 1, h + 3);
     const sway = Math.sin(this.t * 6) * 0.4;
