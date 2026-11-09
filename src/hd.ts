@@ -241,8 +241,7 @@ function drawPlayer(l: PlayerLook): Grid {
     g.rect(hx - 1, hy + 6, 3, 1, p.skin); // neck
   }
 
-  g.outline();
-  return g;
+  return g; // no outline: the shading carries the shape
 }
 
 
@@ -353,7 +352,6 @@ function drawSide(l: PlayerLook): Grid {
   g.set(hx + 3, hy + 5, MASK);
   g.rect(hx - 1, hy + 6, 2, 1, p.skin); // neck
 
-  g.outline();
   return g;
 }
 
