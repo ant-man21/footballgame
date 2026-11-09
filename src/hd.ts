@@ -130,6 +130,7 @@ export interface PlayerLook {
   lean: -1 | 0 | 1; // moving sideways: head and shoulders lead
   num: number;
   skin: number; // index into SKINS
+  ref?: boolean; // the referee: striped shirt, no number, no facemask
 }
 
 type Arm = 'down' | 'fwd' | 'back' | 'ground' | 'up' | 'high' | 'out' | 'tuck' | 'hold';
@@ -183,7 +184,7 @@ function drawPlayer(l: PlayerLook): Grid {
   // torso and number
   g.rect(cx - tw, ty + 1, tw * 2 + 1, 6, p.jersey);
   g.rect(cx + tw - 1, ty + 1, 2, 6, p.jerseyLo);
-  digits(g, l.num, cx, ty + 2, p.num);
+  if (!l.ref) digits(g, l.num, cx, ty + 2, p.num);
 
   // shoulder pads: wide and rounded, lit on top
   g.rect(cx - sw + 1, ty, sw * 2 - 1, 1, p.jerseyHi);
@@ -240,6 +241,12 @@ function drawPlayer(l: PlayerLook): Grid {
     default: arm(-1, 'down'); arm(1, 'down');
   }
 
+  if (l.ref) { // referee stripes
+    for (let y = ty; y < py; y++) for (let x = 0; x < W; x += 2) {
+      const c = g.get(x, y);
+      if (c === p.jersey || c === p.jerseyHi || c === p.jerseyLo) g.set(x, y, '#111d2b');
+    }
+  }
   // helmet: big and round, a stripe down the middle
   g.rect(hx - 2, hy, 5, 1, p.helmet);
   g.rect(hx - 3, hy + 1, 7, 1, p.helmet);
@@ -251,9 +258,11 @@ function drawPlayer(l: PlayerLook): Grid {
     g.rect(hx, hy, 1, 3, p.stripe);
     g.rect(hx - 2, hy + 3, 5, 3, p.skin); // face
     g.set(hx - 1, hy + 3, INK); g.set(hx + 1, hy + 3, INK); // eyes
-    g.rect(hx - 3, hy + 4, 7, 1, MASK); // facemask
-    g.rect(hx, hy + 4, 1, 3, MASK);
-    g.rect(hx - 2, hy + 6, 5, 1, MASK);
+    if (!l.ref) {
+      g.rect(hx - 3, hy + 4, 7, 1, MASK); // facemask
+      g.rect(hx, hy + 4, 1, 3, MASK);
+      g.rect(hx - 2, hy + 6, 5, 1, MASK);
+    }
   } else {
     g.rect(hx, hy, 1, 6, p.stripe);
     g.set(hx - 4, hy + 5, MASK); g.set(hx + 4, hy + 5, MASK); // the mask shows at the sides
@@ -381,7 +390,7 @@ export function hdPlayer(l: PlayerLook): { img: HTMLCanvasElement; hand: { x: nu
   const side = l.facing === 'left' || l.facing === 'right';
   const look = side && !SIDE_POSES.includes(l.pose) ? { ...l, facing: 'up' as Facing } : l;
   const run = look.pose === 'run' || look.pose === 'carry' || (side && look.pose === 'catch');
-  const key = `${teamKey(look.team)}/${look.build}/${look.facing}/${look.pose}/${run ? look.frame & 3 : 0}/${look.lean}/${look.num}/${look.skin}`;
+  const key = `${teamKey(look.team)}/${look.build}/${look.facing}/${look.pose}/${run ? look.frame & 3 : 0}/${look.lean}/${look.num}/${look.skin}/${look.ref ? 'ref' : ''}`;
   let hit = cache.get(key);
   if (!hit) {
     let g: Grid;

@@ -57,6 +57,14 @@ const OUT = process.env.SHOT_DIR || '.';
   check(await G(() => !window.__game.rosterView && window.__game.screen === 'title'), 'BACK returns to the title screen');
   await tap(mid(tt.play));
   check(await G(() => window.__game.screen === 'huddle' && window.__game.match.clockText === '3:00'), 'PLAY NOW starts a game with 3:00 quarters');
+  // the pregame show (off by default under automation): it plays, the crowd is up, a tap skips to the huddle
+  check(await G(() => { const g = window.__game; g.introEnabled = true; g.newGame(); return g.screen === 'intro' && !!g.intro; }), 'a new game opens with the pregame show');
+  await page.waitForTimeout(3500);
+  check(await G(() => window.__game.screen === 'intro' && window.__game.intro.t > 2.5 && window.__game.crowd().hype > 0.3), 'pregame: the team runs out, the crowd is on its feet');
+  await page.screenshot({ path: `${OUT}/smoke-intro.png` });
+  await tap({ x: 90, y: 160 });
+  await page.waitForTimeout(100);
+  check(await G(() => { const g = window.__game; const ok = g.screen === 'huddle' && !g.intro && g.match.clockText === '3:00'; g.introEnabled = false; return ok; }), 'pregame: a tap skips to the opening huddle');
   check(await G(() => { const g = window.__game; g.pickPlay(window.__plays[0]); const ok = g.sim.actors.every((a) => a.pl && a.pl.ovr > 0); g.startHuddle(); return ok; }), 'every player on the field has ratings');
 
   // 1. Every defensive call accounts for all 11 defenders, for every play.

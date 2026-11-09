@@ -13,8 +13,9 @@ import { PLAYS, type Play } from './playbook/plays';
 import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
 import { type Actor, HASH_YD, Sim, arcHeight, flightFor, throwSpread } from './sim';
 import { type Facing, HD, type Pose, grassTile, hdBall, hdPlayer, identity } from './hd';
-import { type Kit, shade } from './sprites';
+import { type Kit, type TeamColor, shade } from './sprites';
 import { type Crowd, drawEndStands, drawGoalpost, drawSideStands, padColor } from './stadium';
+import { Intro, type IntroInfo } from './intro';
 import { type Vec, clamp, dist, lerp } from './util';
 import { type Roster, loadRoster, makeRoster, saveRoster } from './ratings';
 import { RosterView } from './roster';
@@ -39,7 +40,7 @@ const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random() * 0.999)) * Math.c
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
 
-type Screen = 'title' | 'huddle' | 'play' | 'banner' | 'final' | 'roster' | 'career';
+type Screen = 'title' | 'intro' | 'huddle' | 'play' | 'banner' | 'final' | 'roster' | 'career';
 
 /** A career game handed to the field: the match (maybe already in progress) and how to run it. */
 export interface CareerGameSetup {
@@ -52,7 +53,8 @@ export interface CareerGameSetup {
   endAtHalf: boolean; // a two-minute drill: your stint ends at halftime
   label: string; // shown as you take the field
   kits?: Record<Side, Kit>; // the two schools' uniforms (otherwise blue vs red)
-  crowd?: { home: [string, string]; away: [string, string] }; // the schools' colours: the home crowd fills the stadium
+  crowd?: { home: [string, string]; away: [string, string]; homeName: string }; // the schools' colours: the home crowd fills the stadium
+  intro?: IntroInfo; // the pregame show (only for a game from the opening kickoff)
   form?: number; // simulated defense: the opponent offense's form this game (rating points), set when the game starts
   onDone: (m: Match, stint?: TeamStats) => void; // stint: your team's stats when your part ended early
 }
@@ -98,6 +100,10 @@ export class Game {
   runoff = 0; // game seconds run off since the last play ended (the play clock)
   camY = 0; // how far (world px) the view has scrolled upfield to follow the ball
   careerGame: CareerGameSetup | null = null; // playing a career game (coach calls the plays)
+  intro: Intro | null = null; // the pregame show
+  private afterIntro: (() => void) | null = null;
+  /** The pregame show plays before a game (automated tests turn it off unless they test it). */
+  introEnabled = !(navigator as unknown as { webdriver?: boolean }).webdriver;
   careerScreens: Screens | null = null; // the career hub and its screens (screen 'career')
   onCareer: (() => void) | null = null; // the title screen's CAREER button (set up in main.ts)
   /** Work that needs the finger to lift first (the clipboard needs a user activation): main.ts runs it on pointerup. */
@@ -218,8 +224,26 @@ export class Game {
     this.runoff = 0;
     this.pauseOpen = false;
     this.confirmSim = false;
-    this.startHuddle();
-    this.showToast(setup.label);
+    const go = () => { this.startHuddle(); this.showToast(setup.label); };
+    if (setup.intro) this.startIntro(setup.intro, go); else go();
+  }
+
+  /** The pregame show, then `then` (the opening huddle). */
+  startIntro(info: IntroInfo, then: () => void): void {
+    if (!this.introEnabled) { then(); return; }
+    const kits: Record<Side, TeamColor> = this.careerGame?.kits ?? { you: 'blue', cpu: 'red' };
+    this.intro = new Intro(info, kits, this.match.offense);
+    this.afterIntro = then;
+    this.screen = 'intro';
+    this.menu = null;
+    this.camY = 0;
+  }
+
+  private endIntro(): void {
+    const then = this.afterIntro;
+    this.intro = null;
+    this.afterIntro = null;
+    then?.();
   }
 
   /** Your part of the career game is over: hand the match back. */
@@ -242,7 +266,10 @@ export class Game {
     this.lastCallId = null;
     this.runoff = 0;
     this.pauseOpen = false;
-    this.startHuddle();
+    this.startIntro({
+      home: 'you', top: 'EXHIBITION', big: false, names: { you: 'YOU', cpu: 'CPU' }, mascots: { you: 'HOME TEAM', cpu: 'VISITORS' },
+      abbrs: { you: 'YOU', cpu: 'CPU' }, colors: { you: ['#29adff', '#1d2b53'], cpu: ['#ff004d', '#7e2553'] },
+    }, () => this.startHuddle());
   }
 
   private situation(): string {
@@ -471,6 +498,7 @@ export class Game {
       if (a === 'back') { this.rosterView = null; if (this.rosterFrom === 'pause') this.pauseOpen = true; }
       return;
     }
+    if (this.screen === 'intro') { this.intro?.skip(); return; } // tap to skip the pregame show
     if (this.screen === 'title' && this.menu) {
       const a = this.menu.tap(p, this.view);
       if (a?.type === 'settings') this.applySettings();
@@ -570,6 +598,11 @@ export class Game {
 
   update(dt: number): void {
     this.clock += dt;
+    if (this.screen === 'intro') {
+      if (this.intro && !this.paused) this.intro.update(dt * SPEED_FACTOR[this.settings.speed]);
+      if (!this.intro || this.intro.done) this.endIntro();
+      return;
+    }
     if (this.paused || this.pauseOpen || this.rosterView || (this.screen !== 'title' && this.menu?.showSettings)) return;
     if (this.screen === 'final' || this.screen === 'title' || this.screen === 'career') return;
     const sim = this.sim;
@@ -676,6 +709,11 @@ export class Game {
       this.menu.render(ctx, this.view);
       return;
     }
+    if (this.screen === 'intro' && this.intro) {
+      this.camY = 0;
+      this.intro.render(ctx, { view: this.view, sx: this.sx, sy: this.sy, field: (c, yard) => drawField(c, this, yard, 200, this.intro?.info.home === 'you', false) });
+      return;
+    }
     if (this.screen === 'huddle' && this.menu) {
       this.menu.render(ctx, this.view);
       this.renderPauseButton(ctx);
@@ -746,14 +784,14 @@ export class Game {
   /** The crowd: the home school's colours, and how loud it is (follows the play: a catch and run, a pick, a touchdown). */
   crowd(): Crowd {
     const sim = this.sim, done = sim.phase === 'done';
-    const target = !(this.screen === 'play' || this.screen === 'banner') ? 0
+    const target = this.screen === 'intro' ? this.intro?.hype ?? 0 : !(this.screen === 'play' || this.screen === 'banner') ? 0
       : done && sim.touchdown ? 1 : done && sim.result === 'int' ? 0.7 : sim.phase === 'run' ? 0.35 : sim.phase === 'air' ? 0.12 : 0;
     const dt = Math.max(0, this.clock - this.hypeClock);
     this.hypeClock = this.clock;
     this.hype += (target - this.hype) * Math.min(1, dt * (target > this.hype ? 6 : 0.8));
     const cc = this.careerGame?.crowd;
     return {
-      home: cc?.home ?? ['#29adff', '#1d2b53'], away: cc?.away ?? ['#ff004d', '#7e2553'],
+      home: cc?.home ?? ['#29adff', '#1d2b53'], away: cc?.away ?? ['#ff004d', '#7e2553'], homeName: cc?.homeName ?? 'PIXEL BOWL',
       hype: this.hype, t: this.clock,
     };
   }
@@ -1133,7 +1171,7 @@ function button(ctx: CanvasRenderingContext2D, b: Rect, label: string, color: st
  */
 let grassPattern: CanvasPattern | null = null;
 
-function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineToGain: number, attackingYours: boolean): void {
+function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineToGain: number, attackingYours: boolean, lines = true): void {
   const v = g.view;
   const yOf = (yard: number) => Math.round(g.sy(LOS_Y - (yard - ballOn) * YD));
   const left = Math.round(g.sx(FIELD_LEFT)), right = Math.round(g.sx(FIELD_RIGHT));
@@ -1171,9 +1209,12 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
   if (near < v.h) drawEndStands(ctx, crowd, near, 1, v.w, v.h, v.s);
   if (!v.landscape) {
     const top = Math.max(0, far - Math.round(4 * YD)), bot = Math.min(v.h, near + Math.round(4 * YD));
-    ctx.fillStyle = padColor(crowd);
+    ctx.fillStyle = '#1d2b53'; // the low wall along each sideline, with a stripe in the home colour
     ctx.fillRect(0, top, 2, bot - top);
     ctx.fillRect(v.w - 2, top, 2, bot - top);
+    ctx.fillStyle = padColor(crowd);
+    ctx.fillRect(2 - 1 / HD, top, 1 / HD, bot - top);
+    ctx.fillRect(v.w - 2, top, 1 / HD, bot - top);
   }
   const ez = yOf(105);
   if (ez > -10 && ez < v.h + 10) {
@@ -1214,8 +1255,8 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
 
   // line of scrimmage (blue) and line to gain (yellow)
   ctx.fillStyle = C.blue;
-  ctx.fillRect(left, yOf(ballOn), fw, 1);
-  if (lineToGain < 100) {
+  if (lines) ctx.fillRect(left, yOf(ballOn), fw, 1);
+  if (lines && lineToGain < 100) {
     ctx.fillStyle = C.yellow;
     ctx.fillRect(left, yOf(lineToGain), fw, 1);
   }

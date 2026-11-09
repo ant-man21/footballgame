@@ -16,6 +16,7 @@ import { copyText, exportText } from './export';
 import { type Kit, kitsFor } from '../sprites';
 import type { TeamStats } from '../drive';
 import type { Game } from '../game';
+import type { IntroInfo } from '../intro';
 import { QUARTERS, cycle } from '../settings';
 import type { Vec } from '../util';
 import type { View } from '../view';
@@ -124,10 +125,26 @@ export class CareerScreens {
       match: plan.match, you: c.rosterWithYou(), opp: plan.oppRoster,
       units: { you: plan.units.you, cpu: { off: plan.units.cpu.off + shift, def: plan.units.cpu.def + shift } },
       kits: this.kits(plan),
-      crowd: plan.rec.home === c.s.schoolId ? { home: c.school.colors, away: plan.opp.colors } : { home: plan.opp.colors, away: c.school.colors },
+      crowd: plan.rec.home === c.s.schoolId
+        ? { home: c.school.colors, away: plan.opp.colors, homeName: c.school.mascot }
+        : { home: plan.opp.colors, away: c.school.colors, homeName: plan.opp.mascot },
+      intro: this.introFor(plan),
       simDefense: c.s.defense === 'sim', coachCalls: c.s.calls !== 'you', endAtHalf: plan.endAtHalf, label: plan.label,
       onDone: (_m, stint) => this.finish(stint),
     });
+  }
+
+  /** The pregame show: only for a game you start from the opening kickoff. */
+  private introFor(plan: GamePlan): IntroInfo | undefined {
+    const c = this.career!, m = plan.match, sc = c.school, o = plan.opp;
+    if (m.quarter > 1 || m.clock < m.quarterSeconds || m.score.you + m.score.cpu > 0) return undefined;
+    const ev = c.eventText(plan.rec);
+    const story = plan.story ?? (ev?.tag === 'ON TV' ? 'FRIDAY NIGHT LIVE' : null);
+    return {
+      home: plan.rec.home === c.s.schoolId ? 'you' : 'cpu', top: story ?? (plan.rec.round ? 'STATE PLAYOFFS' : `WEEK ${plan.rec.week}`), big: !!story,
+      names: { you: sc.name, cpu: o.name }, mascots: { you: sc.mascot, cpu: o.mascot }, abbrs: { you: sc.abbr, cpu: o.abbr },
+      colors: { you: sc.colors, cpu: o.colors },
+    };
   }
 
   /** Uniforms: the home team in its colours, the visitors in white. */
