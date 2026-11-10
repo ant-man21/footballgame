@@ -11,7 +11,7 @@ import {
 } from '../career/player';
 import { type College, MAX_VISITS, TIER_NAMES, board, college, offerList, toNextStar, walkOns } from '../career/recruiting';
 import { deleteCareer, loadCareer, saveCareer } from '../career/save';
-import { frontPage, paperName, playersToWatch, pollRank, rivalOf, rivalTrophy, statePoll, storyline, weatherText } from '../career/news';
+import { frontPage, paperName, playersToWatch, pollRank, recText, rivalOf, rivalTrophy, statePoll, storyline, weatherText, yds } from '../career/news';
 import { copyText, exportText } from './export';
 import { type Kit, kitsFor } from '../sprites';
 import type { TeamStats } from '../drive';
@@ -63,6 +63,7 @@ export class CareerScreens {
   exportNote: { text: string; color: string; until: number } | null = null; // EXPORT SAVE feedback
   flash: { text: string; color: string; until: number } | null = null; // recruiting board: why a visit can't happen, etc.
   standingsTab: 'regions' | 'top10' | 'playoffs' = 'regions';
+  statsTab: 'you' | 'team' | 'state' = 'you';
   private storyCache: { key: string; story: string | null } | null = null; // the hub's storyline for the next game
   // character creation
   first = 'JAKE';
@@ -246,7 +247,15 @@ export class CareerScreens {
         if (hit(this.bottomButton(v), p)) this.screen = 'hub';
         return;
       }
-      case 'schedule': case 'stats':
+      case 'stats': {
+        const L = this.standingsLayout(v);
+        if (hit(L.tabR, p)) this.statsTab = 'you';
+        if (hit(L.tabT, p)) this.statsTab = 'team';
+        if (hit(L.tabP, p)) this.statsTab = 'state';
+        if (hit(this.bottomButton(v), p)) this.screen = 'hub';
+        return;
+      }
+      case 'schedule':
         if (hit(this.bottomButton(v), p)) this.screen = 'hub';
         return;
       case 'summary':
@@ -655,12 +664,13 @@ export class CareerScreens {
     drawText(ctx, `${state} HIGH SCHOOL FOOTBALL - ${CLASS_NAMES[sl.year]} SEASON`, v.w / 2, y - (land ? 4 : 2), { align: 'center', color: C.grey });
     y += land ? 6 : 10;
     const colW = land ? v.w / 2 - 12 : v.w - 16, x = 8, bottom = this.bottomButton(v).y - 4;
-    const card = (cx: number, cy: number, title: string, h: { name: string; pos: string; school: string; you: boolean }, gold: boolean) => {
-      box(ctx, r(cx, cy, colW, 34), h.you ? '#2a2410' : C.navy, gold ? '#ffcc00' : '#3b4a6b');
+    const card = (cx: number, cy: number, title: string, h: { name: string; pos: string; school: string; you: boolean; line?: string }, gold: boolean) => {
+      box(ctx, r(cx, cy, colW, h.line ? 43 : 34), h.you ? '#2a2410' : C.navy, gold ? '#ffcc00' : '#3b4a6b');
+      if (h.line) drawText(ctx, h.line, cx + colW / 2, cy + 35, { align: 'center', color: C.white });
       drawText(ctx, title, cx + colW / 2, cy + 4, { align: 'center', color: gold ? '#ffcc00' : C.grey });
       drawText(ctx, `${h.pos} ${h.name}`, cx + colW / 2, cy + 13, { align: 'center', scale: h.you && textWidth(`${h.pos} ${h.name}`, 2) < colW - 8 ? 2 : 1, color: h.you ? C.yellow : C.white });
       drawText(ctx, h.you ? `${h.school} - THAT'S YOU!` : h.school, cx + colW / 2, cy + 26, { align: 'center', color: h.you ? C.green : C.grey });
-      return cy + 38;
+      return cy + (h.line ? 47 : 38);
     };
     const top = y;
     y = card(x, y, 'MR. FOOTBALL', b.mrFootball, true);
@@ -1029,8 +1039,86 @@ export class CareerScreens {
   }
 
   private renderStats(ctx: CanvasRenderingContext2D, v: View): void {
+    const L = this.standingsLayout(v);
+    if (!v.landscape) this.title(ctx, v, 'STATS');
+    for (const [t, rect, label] of [['you', L.tabR, 'YOU'], ['team', L.tabT, 'TEAM'], ['state', L.tabP, 'STATE']] as const) {
+      const on = this.statsTab === t;
+      box(ctx, rect, on ? C.yellow : C.ink, on ? C.yellow : C.grey);
+      drawText(ctx, label, rect.x + rect.w / 2, rect.y + 4, { align: 'center', color: on ? C.ink : C.grey });
+    }
+    if (this.statsTab === 'team') this.renderTeamStats(ctx, v, L.top);
+    else if (this.statsTab === 'state') this.renderStateStats(ctx, v, L.top);
+    else this.renderMyStats(ctx, v, L.top);
+    button(ctx, this.bottomButton(v), 'BACK');
+  }
+
+  /** TEAM: your teammates this season, receiving and defense. */
+  private renderTeamStats(ctx: CanvasRenderingContext2D, v: View, top: number): void {
+    const c = this.career!, t = c.teamTotals(), land = v.landscape;
+    const colW = land ? (v.w - 24) / 2 : Math.min(v.w - 8, 200), bottom = this.bottomButton(v).y - 4;
+    let x = land ? 8 : (v.w - colW) / 2, y = top;
+    if (!t.rec.length && !t.def.length) { drawText(ctx, 'NO GAMES YET', v.w / 2, y + 10, { align: 'center', color: C.darkGrey }); return; }
+    const head = (title: string, cols: string[]) => {
+      drawText(ctx, title, x, y, { color: C.yellow });
+      cols.forEach((h, i) => drawText(ctx, h, x + colW - (cols.length - 1 - i) * 26, y, { align: 'right', color: C.darkGrey }));
+      y += 9;
+    };
+    const row = (name: string, vals: (string | number)[], hi: boolean) => {
+      drawText(ctx, name, x, y, { color: hi ? C.white : C.grey });
+      vals.forEach((n, i) => drawText(ctx, String(n), x + colW - (vals.length - 1 - i) * 26, y, { align: 'right', color: hi ? C.white : C.grey }));
+      y += 8;
+    };
+    head('RECEIVING', ['REC', 'YDS', 'TD']);
+    t.rec.slice(0, land ? 9 : 7).forEach((r, i) => row(`${r.pos} ${r.name}`, [r.rec, yds(r.yds), r.td], i === 0));
+    if (land) { x = 16 + colW; y = top; } else y += 6;
+    head('DEFENSE', ['TKL', 'SCK', 'INT']);
+    for (const [i, d] of t.def.slice(0, land ? 9 : 8).entries()) { if (y + 8 > bottom) break; row(`${d.pos} ${d.name}`, [d.tkl, d.sacks, d.int], i === 0); }
+  }
+
+  /** STATE: the passing leaders and the best offenses and defenses. */
+  private renderStateStats(ctx: CanvasRenderingContext2D, v: View, top: number): void {
+    const c = this.career!, s = c.s, land = v.landscape, L = c.leaders();
+    const colW = land ? (v.w - 24) / 2 : Math.min(v.w - 8, 200), bottom = this.bottomButton(v).y - 4;
+    let x = land ? 8 : (v.w - colW) / 2, y = top;
+    if (!L.length) { drawText(ctx, 'NO GAMES YET', v.w / 2, y + 10, { align: 'center', color: C.darkGrey }); return; }
+    drawText(ctx, 'PASSING LEADERS', x, y, { color: C.yellow });
+    drawText(ctx, 'YDS  TD', x + colW, y, { align: 'right', color: C.darkGrey });
+    y += 9;
+    L.slice(0, land ? 12 : 8).forEach((l, i) => {
+      if (l.you) { ctx.fillStyle = C.navy; ctx.fillRect(x - 2, y - 2, colW + 4, 9); }
+      const col = l.you ? C.yellow : C.white;
+      drawText(ctx, `${i + 1}`, x + 6, y, { align: 'right', color: C.grey });
+      drawText(ctx, `${l.name} ${c.team(l.school).abbr}`, x + 10, y, { color: col });
+      drawText(ctx, yds(l.yds), x + colW - 18, y, { align: 'right', color: col });
+      drawText(ctx, String(l.td), x + colW, y, { align: 'right', color: col });
+      y += 9;
+    });
+    const mine = L.findIndex((l) => l.you);
+    if (mine >= (land ? 12 : 8)) { drawText(ctx, `YOU: NO.${mine + 1} - ${yds(L[mine].yds)} YDS ${L[mine].td} TD`, x, y, { color: C.yellow }); y += 9; }
+    if (land) { x = 16 + colW; y = top; } else y += 6;
+    const st = standings(s.teams, s.games);
+    const per = (id: number, k: 'pf' | 'pa') => { const t = st.get(id)!, gp = t.w + t.l + t.t; return gp ? t[k] / gp : 0; };
+    const list = (title: string, k: 'pf' | 'pa', best: 1 | -1) => {
+      if (y + 18 > bottom) return;
+      drawText(ctx, title, x, y, { color: C.yellow }); y += 9;
+      const ids = s.teams.map((t) => t.id).sort((a, b) => best * (per(b, k) - per(a, k)));
+      for (const id of ids.slice(0, 5)) {
+        if (y + 8 > bottom) break;
+        const t = c.team(id), me = id === s.schoolId;
+        drawText(ctx, `${t.abbr} ${t.name}`, x, y, { color: me ? C.yellow : C.white });
+        drawText(ctx, per(id, k).toFixed(1), x + colW, y, { align: 'right', color: me ? C.yellow : C.grey });
+        y += 8;
+      }
+      y += 4;
+    };
+    list('MOST POINTS A GAME', 'pf', 1);
+    list('FEWEST ALLOWED', 'pa', -1);
+  }
+
+  /** YOU: your season, game log and career. */
+  private renderMyStats(ctx: CanvasRenderingContext2D, v: View, top: number): void {
     const c = this.career!, s = c.s, p = c.player;
-    let y = this.title(ctx, v, 'STATS');
+    let y = top;
     const w = Math.min(v.w - 8, 230), x = (v.w - w) / 2;
     const tot = s.log.reduce((t, l) => { for (const k of Object.keys(t) as (keyof TeamStats)[]) t[k] += l.line[k]; return t; },
       { plays: 0, yards: 0, tds: 0, cmp: 0, att: 0, int: 0, sacks: 0 } as TeamStats);
@@ -1062,7 +1150,7 @@ export class CareerScreens {
         y += 8;
       }
     }
-    button(ctx, this.bottomButton(v), 'BACK');
+
   }
 
   private renderSummary(ctx: CanvasRenderingContext2D, v: View): void {
@@ -1111,6 +1199,8 @@ export class CareerScreens {
       ['TOUCHDOWNS', `${st.tds} TD  ${st.int} INT`],
       ['RATING', `${passerRating(st).toFixed(1)}${sl.avg !== undefined ? `  GRADE ${letterGrade(sl.avg)}` : ''}`],
     ] : [['PASSING', 'DID NOT PLAY']];
+    const tt = sl.team?.rec[0];
+    if (tt) rows.push(['TOP TARGET', `${tt.pos} ${tt.name}`], ['', recText(tt)]);
     if (best) rows.push(['BEST GAME', `${best.round ? ROUND_NAMES[best.round] : `WK ${best.week}`} ${best.home ? 'VS' : 'AT'} ${c.team(best.opp).abbr}  ${letterGrade(best.grade!)}`]);
     for (const [a, b] of rows) { drawText(ctx, a, x + 2, y, { color: FADED }); drawText(ctx, b, x + colW - 2, y, { align: 'right', color: PEN }); y += 9; }
     // honors (the right column in landscape)

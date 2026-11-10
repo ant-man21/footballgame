@@ -98,3 +98,9 @@ export const randomName = (): { first: string; last: string } => ({
   first: FIRST_NAMES[Math.floor(Math.random() * FIRST_NAMES.length)],
   last: LAST_NAMES[Math.floor(Math.random() * LAST_NAMES.length)],
 });
+
+/** A generated name from a seeded random source (so the same player keeps his name). */
+export const seededName = (next: () => number): { first: string; last: string } => ({
+  first: FIRST_NAMES[Math.floor(next() * FIRST_NAMES.length)],
+  last: LAST_NAMES[Math.floor(next() * LAST_NAMES.length)],
+});

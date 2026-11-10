@@ -25,7 +25,7 @@ import {
 import { type Units, overtimeWinner, simGame, simToEnd, simUntil } from './quicksim';
 import { Rng, newSeed } from './rng';
 import {
-  type Key, type TargetLine, type Weather, banquet, dressBox, headlines, keyMet, keysFor, myHeadlines, rivalOf, rivalTrophy, statePoll, storyline,
+  type Key, type Leader, type TargetLine, type TeamLines, type Weather, banquet, defenseSplit, dressBox, headlines, passText, receivingSplit, stateLeaders, sumLines, teamQb, keyMet, keysFor, myHeadlines, rivalOf, rivalTrophy, statePoll, storyline,
   targetLine, teammateSignees, trashTalk, weatherFor,
 } from './news';
 import { CAREER_VERSION, saveCareer } from './save';
@@ -61,6 +61,7 @@ export interface WeekLog {
   keys?: { text: string; ok: boolean }[]; // the coach's keys, met or not
   rival?: boolean; // rivalry week
   weather?: string; // kickoff time and weather, in words
+  team?: TeamLines; // your teammates' lines: receiving (the whole team's passing) and defense
 }
 
 export interface CareerSave {
@@ -210,8 +211,21 @@ export class Career {
     return { ...r, players: r.players.map((p) => (p.slot === 'QB' ? asRosterPlayer(this.player) : p)) };
   }
   opponentRoster(t: Team, strengthShift = 0): Roster {
-    return makeRoster(t.name, (t.off + t.def) / 2 + strengthShift, HS_TIER);
+    const r = makeRoster(t.name, (t.off + t.def) / 2 + strengthShift, HS_TIER);
+    r.players.find((p) => p.slot === 'QB')!.name = teamQb(this.s.seed, this.s.year, t.id); // the same QB all season (leaders, awards)
+    return r;
   }
+
+  /** The state's passing leaders this season (you included). */
+  leaders(): Leader[] {
+    const s = this.s, mine = newStats();
+    let gp = 0;
+    for (const l of s.log) { if (l.kind !== 'none') gp++; for (const k of Object.keys(mine) as (keyof TeamStats)[]) mine[k] += l.line[k]; }
+    return stateLeaders({ teams: s.teams, games: s.games, mySchool: s.schoolId, me: displayName(this.player), myLine: mine, myGp: gp, seed: s.seed, year: s.year });
+  }
+
+  /** Your teammates' season so far (receiving and defense). */
+  teamTotals(): TeamLines { return sumLines(this.s.log.map((l) => l.team)); }
 
   // ---------- the season ----------
 
@@ -301,7 +315,9 @@ export class Career {
     }
     const rec = plan.rec, home = rec.home === s.schoolId;
     rec.hs = home ? us : them; rec.as = home ? them : us; rec.ot = ot;
-    rec.box = home ? { home: { ...m.stats.you }, away: { ...m.stats.cpu } } : { home: { ...m.stats.cpu }, away: { ...m.stats.you } };
+    const oppBox = dressBox(m.stats.cpu, plan.units.cpu.off - plan.units.you.def); // their box reads like the rest of the state's
+    rec.box = home ? { home: { ...m.stats.you }, away: oppBox } : { home: oppBox, away: { ...m.stats.you } };
+    const team: TeamLines = { rec: receivingSplit(s.roster, m.stats.you), def: defenseSplit(s.roster, oppBox) };
 
     const line = plan.kind === 'none' ? newStats() : diff(after, plan.pre);
     const won = us > them;
@@ -328,11 +344,12 @@ export class Career {
     const ev = this.eventFor(rec);
     const log: WeekLog = {
       week: rec.week, round: rec.round, opp: plan.opp.id, home, us, them, ot, kind: plan.kind, label: plan.label,
-      line, grade, battle, gains, news, story: plan.story, rival: plan.rival || undefined,
+      line, grade, battle, gains, news, story: plan.story, rival: plan.rival || undefined, team,
       weather: `${plan.weather.time} - ${plan.weather.sky}, ${plan.weather.temp} DEGREES`,
     };
     if (grade !== null) { // the box score: your top target, the coach's keys, the player of the game
-      log.target = targetLine(s.roster, line);
+      const top = plan.kind === 'full' ? team.rec[0] : undefined; // a full game: your top receiver from the team's split
+      log.target = top ? { name: top.name, pos: top.pos, rec: top.rec, yds: top.yds, td: top.td } : targetLine(s.roster, line);
       if (plan.kind === 'full') log.keys = plan.keys.map((k) => ({ text: k.text, ok: keyMet(k.id, line) }));
     }
     log.potg = grade !== null && grade >= 74 ? `${displayName(this.player)} (QB)`
@@ -447,7 +464,9 @@ export class Career {
     if (gs >= 6 && avg >= 72) awards.push('ALL-STATE QB');
     else if (gs >= 6 && avg >= 62) awards.push('ALL-REGION QB');
     const champ = this.champion;
+    const team = this.teamTotals();
     const bq = banquet({
+      leaders: this.leaders(), myLine: passText({ cmp: line.cmp, att: line.att, yds: line.yards, td: line.tds }), teamRec: team.rec,
       you: displayName(p), year: s.year, avg: graded ? avg : null, gs, wins: s.log.filter((l) => l.us > l.them).length, champion: finish === 'STATE CHAMPIONS',
       allState: awards.includes('ALL-STATE QB'), finish, stars, nationalRank: s.year >= 1 ? qbRank(s.recruit, s.state).national : null,
       school: this.school, roster: s.roster, teams: s.teams, poll: s.poll, champ,
@@ -464,6 +483,7 @@ export class Career {
         .map((l) => ({ grade: l.grade!, label: l.round === 'F' ? 'TITLE' : l.round ?? `${l.home ? 'VS' : 'AT'} ${this.team(l.opp).abbr}` })),
       rival: this.rivalResult(),
       banquet: bq,
+      team,
     });
     news.push(`SEASON OVER: ${finish}`);
     s.phase = 'summary';

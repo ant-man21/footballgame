@@ -40,6 +40,7 @@ export interface SeasonLine {
   balls?: { grade: number; label: string }[]; // game balls: games graded A or better
   rival?: 'W' | 'L'; // the rivalry game
   banquet?: import('./news').Banquet; // the end-of-season awards
+  team?: import('./news').TeamLines; // your teammates' season: receiving and defense
 }
 
 export interface CareerPlayer {

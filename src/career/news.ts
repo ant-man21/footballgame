@@ -5,7 +5,7 @@
 import type { TeamStats } from '../drive';
 import type { Roster } from '../ratings';
 import { clamp } from '../util';
-import { type Region, randomName } from './hsnames';
+import { type Region, randomName, seededName } from './hsnames';
 import { Rng } from './rng';
 import { type GameRec, type Round, type Team, played, standings, winnerOf } from './league';
 import { type College, COLLEGES, affinityFor } from './recruiting';
@@ -239,7 +239,7 @@ export function trashTalk(o: { seed: number; year: number; qb: string; you: stri
 
 // ---------- the awards banquet ----------
 
-export interface Honoree { name: string; pos: string; school: string; you: boolean }
+export interface Honoree { name: string; pos: string; school: string; you: boolean; line?: string }
 export interface Banquet {
   mrFootball: Honoree; // the state's best player
   allStateQb: Honoree; // first-team all-state quarterback
@@ -248,7 +248,15 @@ export interface Banquet {
   allAmerican?: { team: 'EAST' | 'WEST'; line: string; us: number; them: number; mvp: boolean }; // seniors: the all-star game
 }
 const short = () => { const n = randomName(); return `${n.first[0]}.${n.last}`; };
-const POS_STAR = ['RB', 'LB', 'WR', 'DE', 'RB', 'QB'];
+const POS_STAR = ['RB', 'LB', 'WR', 'DE', 'RB'];
+const ri = (a: number, b: number) => Math.round(a + Math.random() * (b - a));
+/** A star from another school, with the season that won it. */
+const starOf = (school: string): Honoree => {
+  const pos = POS_STAR[Math.floor(Math.random() * POS_STAR.length)];
+  const line = pos === 'RB' ? `${yds(ri(1700, 2400))} RUSH YDS ${ri(20, 32)} TD` : pos === 'WR' ? `${ri(80, 105)} REC ${yds(ri(1400, 1900))} YDS ${ri(16, 24)} TD`
+    : pos === 'DE' ? `${ri(15, 22)} SACKS ${ri(60, 85)} TKL` : `${ri(120, 160)} TKL ${ri(6, 11)} SACKS`;
+  return { name: short(), pos, school, you: false, line };
+};
 export const coachOf = (school: string) => `COACH ${pickBy(school, ['HOLT', 'RAMSEY', 'DUNN', 'BECKER', 'SALAS', 'PRUITT', 'OKAFOR', 'LANE'])}`;
 const pickBy = <T>(key: string, list: T[]): T => list[[...key].reduce((t, ch) => (t * 31 + ch.charCodeAt(0)) % 100003, 11) % list.length];
 
@@ -260,16 +268,26 @@ const pickBy = <T>(key: string, list: T[]): T => list[[...key].reduce((t, ch) =>
 export function banquet(o: {
   you: string; year: number; avg: number | null; gs: number; wins: number; champion: boolean; allState: boolean; finish: string;
   stars: number; nationalRank: number | null; school: Team; roster: Roster; teams: Team[]; poll?: number[]; champ: Team | null;
+  leaders?: Leader[]; myLine?: string; teamRec?: RecLine[];
 }): Banquet {
   const { you, year, avg, gs, wins, champion, school, roster } = o;
   const top = o.champ ?? o.teams[(o.poll ?? [])[0] ?? 0];
   const best = roster.players.filter((p) => p.slot !== 'QB').sort((a, b) => b.ovr - a.ovr);
   const mine = year >= 1 && gs >= 8 && avg !== null && (year === 2 || avg >= 88) && ((avg >= 80 && wins >= 9) || (champion && avg >= 74));
-  const mrFootball: Honoree = mine ? { name: you, pos: 'QB', school: school.name, you: true }
-    : top.id === school.id ? { name: best[0].name, pos: best[0].pos, school: school.name, you: false }
-      : { name: short(), pos: POS_STAR[Math.floor(Math.random() * POS_STAR.length)], school: top.name, you: false };
+  const leaders = o.leaders ?? [], others = leaders.filter((l) => !l.you);
+  const qbLine = (l: Leader) => passText(l);
+  const topRec = o.teamRec?.[0];
+  const champQb = others.find((l) => l.school === top.id);
+  const mrFootball: Honoree = mine ? { name: you, pos: 'QB', school: school.name, you: true, line: o.myLine }
+    : top.id === school.id ? (topRec ? { name: topRec.name, pos: topRec.pos, school: school.name, you: false, line: recText(topRec) }
+      : { name: best[0].name, pos: best[0].pos, school: school.name, you: false })
+      : champQb && Math.random() < 0.6 ? { name: champQb.name, pos: 'QB', school: top.name, you: false, line: qbLine(champQb) }
+        : starOf(top.name);
+  const bestQb = [...others].sort((a, b) => qbScore(b) - qbScore(a))[0];
   const other = o.teams.find((t) => t.id !== school.id && t.id === ((o.poll ?? [])[0] === school.id ? (o.poll ?? [])[1] : (o.poll ?? [])[0])) ?? top;
-  const allStateQb: Honoree = o.allState ? { name: you, pos: 'QB', school: school.name, you: true } : { name: short(), pos: 'QB', school: other.name, you: false };
+  const allStateQb: Honoree = o.allState ? { name: you, pos: 'QB', school: school.name, you: true, line: o.myLine }
+    : bestQb ? { name: bestQb.name, pos: 'QB', school: o.teams[bestQb.school].name, you: false, line: qbLine(bestQb) }
+      : { name: short(), pos: 'QB', school: other.name, you: false };
   const teammates = best.filter((p) => p.ovr >= (wins >= 6 ? 66 : 70)).slice(0, 3).map((p) => `${p.pos} ${p.name}`);
   const b: Banquet = { mrFootball, allStateQb, teammates };
   if (o.finish === 'STATE CHAMPIONS') b.coach = coachOf(school.name);
@@ -301,3 +319,93 @@ export function dressBox(st: TeamStats, edge: number): TeamStats {
   for (let i = 0; i < 30; i++) if (Math.random() < meanSacks / 30) sacks++;
   return { ...st, att, sacks: st.sacks + sacks, plays: st.plays + (att - st.att) + sacks };
 }
+
+// ---------- player stats ----------
+
+export interface RecLine { name: string; pos: string; rec: number; yds: number; td: number }
+export interface DefLine { name: string; pos: string; tkl: number; sacks: number; int: number }
+export interface TeamLines { rec: RecLine[]; def: DefLine[] }
+
+const pickW = <T>(xs: T[], w: (x: T) => number): T => {
+  let r = Math.random() * xs.reduce((t, x) => t + w(x), 0);
+  for (const x of xs) { r -= w(x); if (r <= 0) return x; }
+  return xs[xs.length - 1];
+};
+
+/** Your team's passing line split among its receivers (the best receiver gets the most looks). */
+export function receivingSplit(r: Roster, l: TeamStats): RecLine[] {
+  const cands = r.players.filter((p) => ['X', 'Z', 'H', 'Y', 'TE', 'RB'].includes(p.slot));
+  if (!l.cmp || !cands.length) return [];
+  const top = topTarget(r).name;
+  const look = (p: typeof cands[number]) => (p.pos === 'WR' ? 1 : p.pos === 'TE' ? 0.55 : 0.45) * clamp(1 + (p.ovr - 60) * 0.05, 0.5, 2) * (p.name === top ? 1.35 : 1);
+  const out = new Map(cands.map((p) => [p.name, { name: p.name, pos: p.pos, rec: 0, yds: 0, td: 0 }]));
+  for (let i = 0; i < l.cmp; i++) out.get(pickW(cands, look).name)!.rec++;
+  const lines = [...out.values()].filter((x) => x.rec > 0);
+  const raw = lines.map((x) => x.rec * (x.pos === 'WR' ? 1.08 : x.pos === 'TE' ? 0.85 : 0.65) * (0.75 + Math.random() * 0.5));
+  const sum = raw.reduce((t, x) => t + x, 0) || 1;
+  lines.forEach((x, i) => { x.yds = Math.round((raw[i] / sum) * Math.max(0, l.yards)); });
+  const best = lines.reduce((a, b) => (b.yds > a.yds ? b : a));
+  best.yds += Math.max(0, l.yards) - lines.reduce((t, x) => t + x.yds, 0); // rounding
+  for (let i = 0; i < l.tds; i++) pickW(lines, (x) => x.yds + 10).td++;
+  return lines.sort((a, b) => b.yds - a.yds);
+}
+
+/** Your defense's day from the other team's line: tackles, sacks and picks. */
+export function defenseSplit(r: Roster, opp: TeamStats): DefLine[] {
+  const d = r.players.filter((p) => ['DL', 'LB', 'CB', 'S', 'NB'].includes(p.pos));
+  const out = new Map(d.map((p) => [p.name, { name: p.name, pos: p.pos, tkl: 0, sacks: 0, int: 0 }]));
+  const f = (v: number, mid: number) => clamp(1 + (v - mid) * 0.03, 0.5, 1.8);
+  const tackles = Math.max(0, opp.cmp - opp.tds) + Math.round(opp.cmp * 0.25);
+  for (let i = 0; i < tackles; i++) out.get(pickW(d, (p) => ((({ LB: 1.3, S: 1, CB: 0.8, NB: 0.7, DL: 0.45 }) as Record<string, number>)[p.pos] ?? 0.5) * f(p.r.tkl, 55)).name)!.tkl++;
+  for (let i = 0; i < opp.sacks; i++) { const x = out.get(pickW(d, (p) => (p.pos === 'DL' ? 1 : p.pos === 'LB' ? 0.35 : 0.03) * f(p.r.rsh, 55)).name)!; x.sacks++; x.tkl++; }
+  for (let i = 0; i < opp.int; i++) out.get(pickW(d, (p) => (p.pos === 'CB' || p.pos === 'S' ? 1 : p.pos === 'NB' ? 0.8 : p.pos === 'LB' ? 0.25 : 0.02) * f(p.r.cov, 55)).name)!.int++;
+  return [...out.values()].filter((x) => x.tkl || x.sacks || x.int).sort((a, b) => b.tkl + b.sacks * 3 + b.int * 4 - (a.tkl + a.sacks * 3 + a.int * 4));
+}
+
+/** Season totals from game lines (players matched by name). */
+export function sumLines(games: (TeamLines | undefined)[]): TeamLines {
+  const rec = new Map<string, RecLine>(), def = new Map<string, DefLine>();
+  for (const g of games) {
+    if (!g) continue;
+    for (const x of g.rec) { const t = rec.get(x.name) ?? { name: x.name, pos: x.pos, rec: 0, yds: 0, td: 0 }; t.rec += x.rec; t.yds += x.yds; t.td += x.td; rec.set(x.name, t); }
+    for (const x of g.def) { const t = def.get(x.name) ?? { name: x.name, pos: x.pos, tkl: 0, sacks: 0, int: 0 }; t.tkl += x.tkl; t.sacks += x.sacks; t.int += x.int; def.set(x.name, t); }
+  }
+  return {
+    rec: [...rec.values()].sort((a, b) => b.yds - a.yds),
+    def: [...def.values()].sort((a, b) => b.tkl + b.sacks * 3 + b.int * 4 - (a.tkl + a.sacks * 3 + a.int * 4)),
+  };
+}
+
+export const yds = (n: number) => n.toLocaleString('en-US');
+export const recText = (x: RecLine) => `${x.rec} REC ${yds(x.yds)} YDS ${x.td} TD`;
+export const passText = (x: { cmp: number; att: number; yds: number; td: number }) => `${x.cmp}/${x.att} ${yds(x.yds)} YDS ${x.td} TD`;
+
+// ---------- around the state: every school's quarterback ----------
+
+/** Each school's starting QB this season (the same name all season: players to watch, leaders, awards). */
+export function teamQb(seed: number, year: number, teamId: number): string {
+  const rng = new Rng(seed * 13 + year * 977 + teamId * 7919 + 5);
+  const n = seededName(() => rng.next());
+  return `${n.first[0]}.${n.last}`;
+}
+
+export interface Leader { name: string; school: number; you: boolean; gp: number; cmp: number; att: number; yds: number; td: number; int: number }
+/** The state's passing leaders this season, from every box score (you from your own games). */
+export function stateLeaders(o: { teams: Team[]; games: GameRec[]; mySchool: number; me: string; myLine: TeamStats; myGp: number; seed: number; year: number }): Leader[] {
+  const out: Leader[] = [];
+  for (const t of o.teams) {
+    if (t.id === o.mySchool) {
+      if (o.myLine.att) out.push({ name: o.me, school: t.id, you: true, gp: o.myGp, cmp: o.myLine.cmp, att: o.myLine.att, yds: o.myLine.yards, td: o.myLine.tds, int: o.myLine.int });
+      continue;
+    }
+    const L: Leader = { name: teamQb(o.seed, o.year, t.id), school: t.id, you: false, gp: 0, cmp: 0, att: 0, yds: 0, td: 0, int: 0 };
+    for (const g of o.games) {
+      if (!g.box || !played(g) || (g.home !== t.id && g.away !== t.id)) continue;
+      const b = g.home === t.id ? g.box.home : g.box.away;
+      L.gp++; L.cmp += b.cmp; L.att += b.att; L.yds += b.yards; L.td += b.tds; L.int += b.int;
+    }
+    if (L.gp) out.push(L);
+  }
+  return out.sort((a, b) => b.yds - a.yds);
+}
+const qbScore = (l: Leader) => l.yds + 25 * l.td - 40 * l.int;

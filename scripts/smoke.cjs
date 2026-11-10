@@ -512,6 +512,22 @@ const OUT = process.env.SHOT_DIR || '.';
   check(fl2.banquet && fl2.banquetFirst === 'banquet', 'the season ends with AWARDS NIGHT (Mr. Football, the all-state QB), then the yearbook');
   check(fl2.weather && fl2.rival && !fl2.clash, 'every game has a kickoff time and weather; rivalry week is marked; no teammate shares your name');
   check(fl2.diff === 'pro', `the career keeps its own difficulty (${fl2.diff})`);
+  const st = await G(() => {
+    const ui = window.__careerUI, c = ui.career, sl = c.player.seasons[0];
+    const full = c.s.log.filter((l) => l.team && l.kind === 'full'); // a full game: the team's passing is yours
+    // (a game left early with SIM REST OF GAME: the team kept passing after your part, so its total is bigger)
+    const eq = (l) => l.team.rec.reduce((t, x) => t + x.rec, 0) === l.line.cmp && l.team.rec.reduce((t, x) => t + x.yds, 0) === Math.max(0, l.line.yards) && l.team.rec.reduce((t, x) => t + x.td, 0) === l.line.tds;
+    const sums = full.length > 0 && full.every((l) => l.team.rec.reduce((t, x) => t + x.rec, 0) >= l.line.cmp);
+    const recOk = full.filter(eq).length >= full.length - 3;
+    const leaders = c.leaders(), opp = c.team(c.rivalId), qb = c.opponentRoster(opp).players.find((p) => p.slot === 'QB').name;
+    const lead = leaders.find((l) => l.school === opp.id);
+    ui.screen = 'stats'; ui.statsTab = 'state';
+    return { sums: sums && recOk, team: !!(sl.team && sl.team.rec.length && sl.team.def.length), leaders: leaders.length, sameQb: !!lead && lead.name === qb,
+      lines: !!(sl.banquet.mrFootball.line || sl.banquet.allStateQb.line), mine: leaders.some((l) => l.you) };
+  });
+  check(st.sums && st.team && st.leaders >= 10 && st.sameQb && st.lines, `teammates' receiving and defense lines, ${st.leaders} state passing leaders (each school's QB keeps his name), award winners with their numbers`);
+  await page.screenshot({ path: `${OUT}/smoke-career-state-leaders.png` });
+  await G(() => { window.__careerUI.screen = 'summary'; });
   await page.screenshot({ path: `${OUT}/smoke-career-summary.png` });
   await tap({ x: 90, y: 312 }); // OFF-SEASON
   const jr = await G(() => { const c = window.__careerUI.career; return { yr: c.s.year, wk: c.s.week, games: c.s.games.filter((g) => g.hs === undefined).length, scr: window.__careerUI.screen }; });
