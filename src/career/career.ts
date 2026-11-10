@@ -29,6 +29,7 @@ import {
   targetLine, teammateSignees, trashTalk, weatherFor,
 } from './news';
 import { CAREER_VERSION, saveCareer } from './save';
+import { archive, recordFrom } from './history';
 
 export const HS_YEARS = 3;
 /** How much last season keeps counting toward your stars once this season is under way. */
@@ -651,6 +652,7 @@ export class Career {
     this.player.awards.push(`SIGNED: ${college(id)!.name}${r.offers.includes(id) ? '' : ' (WALK-ON)'}`);
     this.s.phase = 'done';
     saveCareer(this.s);
+    archive(recordFrom(this.s)); // into PAST CAREERS
   }
 
   /** Saves from before recruiting: start it and give it the weeks it missed. */

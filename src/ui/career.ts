@@ -11,6 +11,7 @@ import {
 } from '../career/player';
 import { type College, MAX_VISITS, TIER_NAMES, board, college, offerList, toNextStar, walkOns } from '../career/recruiting';
 import { deleteCareer, loadCareer, saveCareer } from '../career/save';
+import { type CareerRecord, archive, growthLabel, loadHistory, recordFrom, recordFromText } from '../career/history';
 import { frontPage, paperName, playersToWatch, pollRank, recText, rivalOf, rivalTrophy, statePoll, storyline, weatherText, yds } from '../career/news';
 import { copyText, exportText } from './export';
 import { type Kit, kitsFor } from '../sprites';
@@ -25,7 +26,7 @@ import { BALL, BALL_PAL, BUST_H, BUST_W, CAP_H, CAP_W, CUP, MEDAL, PLAQUE, STATU
 import { shade } from '../sprites';
 import { drawText, textWidth } from '../font';
 
-type Screen = 'start' | 'create' | 'hub' | 'gameplan' | 'banquet' | 'ceremony' | 'gameday' | 'result' | 'schedule' | 'standings' | 'stats' | 'summary' | 'recruiting' | 'signing' | 'done';
+type Screen = 'start' | 'create' | 'hub' | 'gameplan' | 'banquet' | 'ceremony' | 'history' | 'record' | 'gameday' | 'result' | 'schedule' | 'standings' | 'stats' | 'summary' | 'recruiting' | 'signing' | 'done';
 
 const r = (x: number, y: number, w: number, h: number): Rect => ({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
 const cleanName = (s: string) => s.toUpperCase().replace(/[^A-Z' -]/g, '').trim().slice(0, 10);
@@ -73,6 +74,8 @@ export class CareerScreens {
   diff: Difficulty = 'pro';
   banquetSeen = -1; // the season whose awards night you've seen (it comes before the yearbook)
   ceremonyAt = 0; // signing day: when the hats went on the table
+  history: CareerRecord[] = []; // PAST CAREERS (loaded when opened)
+  recordIdx = 0; // the past career being looked at
 
   constructor(private game: Game) {}
 
@@ -81,7 +84,8 @@ export class CareerScreens {
     const saved = loadCareer();
     this.career = saved ? new Career(saved) : null;
     this.confirmNew = false;
-    if (!this.career) this.newCreate();
+    if (this.career?.s.phase === 'done') archive(recordFrom(this.career.s)); // a career that graduated before PAST CAREERS existed
+    if (!this.career && !loadHistory().length) this.newCreate();
     else this.screen = 'start';
     this.game.showCareer(this);
   }
@@ -109,6 +113,7 @@ export class CareerScreens {
 
   /** Creates the career (tests call this directly). */
   create(first = this.first, last = this.last, stateId = STATES[this.stateIdx].id, arch = this.arch): Career {
+    if (this.career) archive(recordFrom(this.career.s)); // the old one goes into PAST CAREERS (unfinished if he didn't graduate)
     deleteCareer();
     this.career = Career.create(first, last, stateId, arch, Number(this.game.settings.quarter) * 60, this.diff);
     this.screen = 'hub';
@@ -186,6 +191,7 @@ export class CareerScreens {
         if (hit(L.cont, p) && c) { this.toHub(); return; }
         if (hit(L.fresh, p)) { if (this.confirmNew || !c) this.newCreate(); else this.confirmNew = true; return; }
         if (hit(L.exp, p) && c) { this.confirmNew = false; this.game.afterTap = () => this.exportSave(); return; }
+        if (hit(L.hist, p)) { this.openHistory(); return; }
         if (hit(L.back, p)) this.game.showTitle();
         return;
       }
@@ -290,6 +296,18 @@ export class CareerScreens {
         this.ceremonyAt = performance.now();
         return;
       }
+      case 'history': {
+        const L = this.historyLayout(v);
+        if (this.pagerTap(p, v, Math.max(1, Math.ceil(this.history.length / L.per)))) return;
+        const row = this.historyRows(v).find((x) => hit(x.r, p));
+        if (row) { this.recordIdx = row.i; this.screen = 'record'; return; }
+        if (hit(L.imp, p)) { this.game.afterTap = () => this.importCareer(); return; }
+        if (hit(L.back, p)) this.screen = 'start';
+        return;
+      }
+      case 'record':
+        if (hit(this.bottomButton(v), p)) this.screen = 'history';
+        return;
       case 'ceremony':
         if (hit(this.bottomButton(v), p)) this.screen = 'done';
         return;
@@ -337,7 +355,7 @@ export class CareerScreens {
 
   startLayout(v: View) {
     const mid = v.w / 2, y = v.landscape ? 74 : 170;
-    return { cont: r(mid - 60, y, 120, 20), fresh: r(mid - 60, y + 26, 120, 16), exp: r(mid - 60, y + 48, 120, 16), back: r(mid - 40, v.h - 20, 80, 16) };
+    return { cont: r(mid - 60, y, 120, 20), fresh: r(mid - 60, y + 26, 120, 16), exp: r(mid - 60, y + 48, 58, 16), hist: r(mid + 2, y + 48, 58, 16), back: r(mid - 40, v.h - 20, 80, 16) };
   }
 
   createLayout(v: View) {
@@ -419,6 +437,8 @@ export class CareerScreens {
       case 'hub': this.renderHub(ctx, v); break;
       case 'gameplan': this.renderGamePlan(ctx, v); break;
       case 'banquet': this.renderBanquet(ctx, v); break;
+      case 'history': this.renderHistory(ctx, v); break;
+      case 'record': this.renderRecord(ctx, v); break;
       case 'ceremony': this.renderCeremony(ctx, v); break;
       case 'gameday': this.renderGameday(ctx, v); break;
       case 'result': this.renderResult(ctx, v); break;
@@ -453,7 +473,8 @@ export class CareerScreens {
     const L = this.startLayout(v);
     if (c) button(ctx, L.cont, 'CONTINUE', C.green);
     button(ctx, L.fresh, this.confirmNew ? 'TAP AGAIN: ERASES SAVE' : 'NEW CAREER', this.confirmNew ? C.orange : C.white);
-    if (c) button(ctx, L.exp, 'EXPORT SAVE', C.blue);
+    if (c) button(ctx, L.exp, 'EXPORT', C.blue);
+    button(ctx, L.hist, 'PAST CAREERS', C.yellow);
     const note = this.exportNote;
     if (note && performance.now() < note.until) {
       drawText(ctx, note.text, v.w / 2, L.exp.y + 22, { align: 'center', color: note.color });
@@ -653,6 +674,113 @@ export class CareerScreens {
     ctx.beginPath(); ctx.rect(x0, rr.y, vw, rr.h); ctx.clip();
     for (let k = 0; x0 - off + k * tw < x0 + vw; k++) drawText(ctx, text, x0 - off + k * tw, rr.y + 3);
     ctx.restore();
+  }
+
+  // ---------- past careers ----------
+
+  openHistory(): void {
+    this.history = loadHistory();
+    this.listPage = 0;
+    this.screen = 'history';
+  }
+
+  /** IMPORT: a pasted EXPORT SAVE goes into PAST CAREERS (read from the clipboard, or typed into a box). */
+  importCareer(): void {
+    const done = (text: string | null) => {
+      const rec = text ? recordFromText(text) : null;
+      if (rec) { archive(rec); this.history = loadHistory(); }
+      this.flash = rec ? { text: `ADDED ${rec.first} ${rec.last}`, color: C.green, until: performance.now() + 4000 }
+        : { text: text ? 'THAT IS NOT A CAREER SAVE' : 'NOTHING TO IMPORT', color: C.orange, until: performance.now() + 4000 };
+    };
+    const ask = () => { try { done(window.prompt('PASTE AN EXPORTED SAVE', '')); } catch { done(null); } };
+    const clip = navigator.clipboard as Clipboard | undefined;
+    if (clip?.readText) clip.readText().then((t) => (recordFromText(t) ? done(t) : ask()), ask);
+    else ask();
+  }
+
+  historyLayout(v: View) {
+    const per = v.landscape ? 4 : 7, top = v.landscape ? 24 : 34, h = 26, w = Math.min(v.w - 12, 260);
+    return { per, top, h, w, x: (v.w - w) / 2, imp: r(v.w / 2 - 84, v.h - 20, 80, 16), back: r(v.w / 2 + 4, v.h - 20, 80, 16) };
+  }
+
+  historyRows(v: View): { i: number; r: Rect }[] {
+    const L = this.historyLayout(v), pg = this.listPage;
+    return this.history.slice(pg * L.per, pg * L.per + L.per).map((_, k) => ({ i: pg * L.per + k, r: r(L.x, L.top + k * (L.h + 3), L.w, L.h) }));
+  }
+
+  private renderHistory(ctx: CanvasRenderingContext2D, v: View): void {
+    this.title(ctx, v, 'PAST CAREERS');
+    const L = this.historyLayout(v);
+    if (!this.history.length) {
+      for (const [i, t] of ['NO PAST CAREERS YET.', 'A CAREER IS KEPT HERE WHEN HE SIGNS', 'OR WHEN YOU START A NEW ONE.', 'IMPORT ADDS AN EXPORTED SAVE.'].entries())
+        drawText(ctx, t, v.w / 2, L.top + 10 + i * 10, { align: 'center', color: i ? C.grey : C.white });
+    }
+    for (const { i, r: rr } of this.historyRows(v)) {
+      const h = this.history[i], signed = h.signed ? college(h.signed.id) : null;
+      box(ctx, rr, C.navy, h.status === 'graduated' ? '#3b4a6b' : C.darkGrey);
+      ctx.fillStyle = h.school.colors[0]; ctx.fillRect(rr.x + 1, rr.y + 1, 3, rr.h - 2);
+      drawText(ctx, `${h.first} ${h.last}`, rr.x + 8, rr.y + 4, { color: C.white });
+      const last = h.seasons[h.seasons.length - 1];
+      drawText(ctx, `${h.state} - ${h.school.name}${h.difficulty === 'allpro' ? ' - ALL-PRO' : ''}`, rr.x + 8, rr.y + 12, { color: C.grey });
+      const room = Math.floor((rr.w - 16 - (signed ? badgeWidth(signed.abbr) + 4 : 0)) / 4);
+      const note = h.status === 'graduated' ? `${h.seasons.length} SEASONS${last ? ` - ${last.finish}` : ''}` : `UNFINISHED - ${['SOPHOMORE', 'JUNIOR', 'SENIOR'][Math.min(2, h.seasons.length)]} YEAR`;
+      drawText(ctx, note.slice(0, room), rr.x + 8, rr.y + 19, { color: C.darkGrey });
+      stars(ctx, rr.x + rr.w - 38, rr.y + 4, h.stars);
+      if (signed) badge(ctx, rr.x + rr.w - badgeWidth(signed.abbr) - 4, rr.y + 13, signed.abbr, signed.colors);
+    }
+    this.renderPager(ctx, v, Math.max(1, Math.ceil(this.history.length / L.per)));
+    const f = this.flash;
+    if (f && performance.now() < f.until) drawText(ctx, f.text, v.w / 2, L.imp.y - 10, { align: 'center', color: f.color });
+    button(ctx, L.imp, 'IMPORT', C.blue);
+    button(ctx, L.back, 'BACK', C.grey);
+  }
+
+  /** One past career: who he was, his seasons, honors, where he signed. */
+  private renderRecord(ctx: CanvasRenderingContext2D, v: View): void {
+    const h = this.history[this.recordIdx], land = v.landscape;
+    if (!h) { this.screen = 'history'; return; }
+    let y = this.title(ctx, v, `${h.first} ${h.last}`);
+    const colW = land ? v.w / 2 - 12 : v.w - 12, x = 6;
+    badge(ctx, x, y, h.school.abbr, h.school.colors);
+    drawText(ctx, `${h.school.name} ${h.school.mascot} - ${h.state}`, x + badgeWidth(h.school.abbr) + 4, y + 2, { color: C.white });
+    y += 12;
+    const arch = ARCHETYPES.find((a) => a.id === h.archetype)?.name ?? h.archetype.toUpperCase();
+    drawText(ctx, `${arch} - ${DIFFICULTIES.find((d) => d.id === h.difficulty)?.name ?? 'PRO'}`, x, y, { color: C.grey });
+    y += 9;
+    drawText(ctx, h.status === 'graduated' ? `DEVELOPMENT: ${growthLabel(h.growth)} (${h.growth.toFixed(2)})` : 'UNFINISHED CAREER', x, y, { color: h.growth >= 1.08 ? C.green : h.growth <= 0.92 ? C.orange : C.yellow });
+    y += 12;
+    // the seasons
+    for (const sl of h.seasons) {
+      drawText(ctx, `${CLASS_SHORT[sl.year]} ${sl.role === 'STARTER' ? 'QB1' : 'QB2'} ${sl.record}`, x, y, { color: C.yellow });
+      stars(ctx, x + colW - 34, y, sl.stars);
+      y += 8;
+      drawText(ctx, `${sl.finish}`, x + 4, y, { color: C.grey }); y += 8;
+      drawText(ctx, `${sl.stats.cmp}/${sl.stats.att} ${num(sl.stats.yards)} YDS ${sl.stats.tds} TD ${sl.stats.int} INT${sl.avg !== undefined ? `  ${letterGrade(sl.avg)}` : ''}`, x + 4, y, { color: C.white }); y += 11;
+    }
+    const tot = h.seasons.reduce((t, sl) => ({ yds: t.yds + sl.stats.yards, td: t.td + sl.stats.tds, int: t.int + sl.stats.int }), { yds: 0, td: 0, int: 0 });
+    drawText(ctx, `CAREER: ${num(tot.yds)} YDS ${tot.td} TD ${tot.int} INT - OVR ${h.ovr}`, x, y, { color: C.white });
+    y += 12;
+    // honors and recruiting (the right column in landscape)
+    let ox = x, oy = y;
+    if (land) { ox = v.w / 2 + 6; oy = 22; }
+    const bottom = this.bottomButton(v).y - 4;
+    if (h.awards.length) {
+      drawText(ctx, 'HONORS', ox, oy, { color: C.yellow }); oy += 9;
+      for (const a of h.awards.slice(0, 6)) { if (oy + 8 > bottom) break; drawText(ctx, a, ox + 4, oy, { color: C.green }); oy += 8; }
+      oy += 4;
+    }
+    if (h.rival && oy + 10 < bottom) { drawText(ctx, `${h.rival.trophy}: ${h.rival.w}-${h.rival.l} VS ${h.rival.vs}`, ox, oy, { color: C.orange }); oy += 12; }
+    const signed = h.signed ? college(h.signed.id) : null;
+    if (signed && oy + 22 < bottom) {
+      drawText(ctx, h.signed!.walkOn ? 'WALKED ON AT' : 'SIGNED WITH', ox, oy, { color: C.grey }); oy += 9;
+      badge(ctx, ox, oy, signed.abbr, signed.colors);
+      drawText(ctx, `${signed.name} - ${TIER_NAMES[signed.tier]}`, ox + badgeWidth(signed.abbr) + 4, oy + 2, { color: C.white }); oy += 14;
+    }
+    if (h.offers.length && oy + 8 < bottom) {
+      const best = h.offers.map((id) => college(id)).filter((c): c is College => !!c).sort((a, b) => b.prestige - a.prestige).slice(0, 4).map((c) => c.abbr);
+      drawText(ctx, `${h.offers.length} OFFERS: ${best.join(' ')}`, ox, oy, { color: C.grey });
+    }
+    button(ctx, this.bottomButton(v), 'BACK');
   }
 
   /** AWARDS NIGHT: the state's honors at the end of a season (before the yearbook). */
