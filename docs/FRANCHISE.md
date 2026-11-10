@@ -104,8 +104,5 @@ Reuses the league engine: recruiting a whole class, roster management, depth cha
 - Saving a game in progress (closing the app mid-game replays that week).
 
 ### Backlog the owner asked to keep in mind (flavor and polish, not gameplay)
-- **Headlines**: the big-passing-day headline fires in over half the games (winner 5+ TD or 400+ yds), so a week with no upsets reads four identical lines. Raise it (6 TD / 450 yds), one per week, varied wording.
-- **Quick-sim box scores** look too clean: ~72% completions and almost no sacks (0.2 a game vs 1-2 for you). Cosmetic (box scores / headlines), not results.
-- **Teammate names** can match yours (a J.MOORE CB on J.MOORE's team): skip your name when generating the roster.
-- **Difficulty per career**: difficulty is one global setting, so switching it (even for an exhibition) re-scores the career's stars next week (ALL-PRO steps 8 / 18 / 33 / 52 vs PRO 5 / 14 / 28 / 46). Store it in `CareerSave` at creation, show it on the hub / GAME PLAN, and warn before changing it mid-career.
-- More life: your own news in the ticker (offers, commitment, "WALKER COMMITS TO TEXAS"), a Mr. Football / all-state banquet at season's end, an All-American game invite for 5-stars, a signing day ceremony (hats on the table), game-day weather and night games, rival trash talk on rivalry week, your jersey retired in the trophy case.
+- **Quick-sim box scores** look too clean: ~72% completions and almost no sacks (0.2 a game vs 1-2 for you). Cosmetic (box scores / headlines), not results; would touch the quick-sim's stat recording.
+- Done: headline variety (one big passing day a week, shutouts), no teammate with your name, difficulty per career, your news in the ticker, awards night (Mr. Football, all-state, All-American Bowl), signing day ceremony, weather and night games, rivalry week (trash talk, series, the trophy), a retired jersey in the trophy case, full school names and jersey colours in career games.

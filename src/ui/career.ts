@@ -11,21 +11,21 @@ import {
 } from '../career/player';
 import { type College, MAX_VISITS, TIER_NAMES, board, college, offerList, toNextStar, walkOns } from '../career/recruiting';
 import { deleteCareer, loadCareer, saveCareer } from '../career/save';
-import { frontPage, paperName, playersToWatch, pollRank, rivalOf, rivalTrophy, statePoll, storyline } from '../career/news';
+import { frontPage, paperName, playersToWatch, pollRank, rivalOf, rivalTrophy, statePoll, storyline, weatherText } from '../career/news';
 import { copyText, exportText } from './export';
 import { type Kit, kitsFor } from '../sprites';
 import type { TeamStats } from '../drive';
 import type { Game } from '../game';
 import type { IntroInfo } from '../intro';
-import { QUARTERS, cycle } from '../settings';
-import type { Vec } from '../util';
+import { DIFFICULTIES, type Difficulty, QUARTERS, cycle } from '../settings';
+import { type Vec, clamp, lerp } from '../util';
 import type { View } from '../view';
 import { type Rect, accentOn, badge, contrast, badgeWidth, box, button, hit, inkOn, meter, screenBg, stars, stepper } from './kit';
-import { BALL, BALL_PAL, BUST_H, BUST_W, CUP, MEDAL, PLAQUE, TROPHY_PAL, artW, pixelArt, qbBust } from './art';
+import { BALL, BALL_PAL, BUST_H, BUST_W, CAP_H, CAP_W, CUP, MEDAL, PLAQUE, STATUE, TROPHY_PAL, artW, cap, framedJersey, pixelArt, qbBust, signee } from './art';
 import { shade } from '../sprites';
 import { drawText, textWidth } from '../font';
 
-type Screen = 'start' | 'create' | 'hub' | 'gameplan' | 'gameday' | 'result' | 'schedule' | 'standings' | 'stats' | 'summary' | 'recruiting' | 'signing' | 'done';
+type Screen = 'start' | 'create' | 'hub' | 'gameplan' | 'banquet' | 'ceremony' | 'gameday' | 'result' | 'schedule' | 'standings' | 'stats' | 'summary' | 'recruiting' | 'signing' | 'done';
 
 const r = (x: number, y: number, w: number, h: number): Rect => ({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
 const cleanName = (s: string) => s.toUpperCase().replace(/[^A-Z' -]/g, '').trim().slice(0, 10);
@@ -34,6 +34,9 @@ const num = (n: number) => n.toLocaleString('en-US');
 /** A stable pick from a list, by a string (so a screen redrawn every frame doesn't flicker). */
 const pickBy = <T>(key: string, list: T[]): T => list[[...key].reduce((t, ch) => (t * 31 + ch.charCodeAt(0)) % 100003, 11) % list.length];
 const PAPER = '#f3e7cf', PEN = '#2a2233', FADED = '#6b5f70', CASE_BG = '#1a1424', WOOD = '#ab5236', WOOD_DARK = '#7a3a26';
+const DIFF_NOTE: Record<Difficulty, string> = {
+  rookie: 'WEAKER TEAMS, EASIER STARS', pro: 'THE STANDARD CAREER', allpro: 'BETTER TEAMS, STARS ARE HARD',
+};
 const contrastOk = (col: string) => contrast(col, PAPER) >= 3; // readable on the yearbook / letter paper
 const gradeColor = (g: number) => (g >= 74 ? C.green : g >= 59 ? C.yellow : g >= 45 ? C.white : C.orange);
 
@@ -66,6 +69,9 @@ export class CareerScreens {
   last = 'MOORE';
   stateIdx = STATES.findIndex((s) => s.id === 'TX');
   arch: Archetype = 'pocket';
+  diff: Difficulty = 'pro';
+  banquetSeen = -1; // the season whose awards night you've seen (it comes before the yearbook)
+  ceremonyAt = 0; // signing day: when the hats went on the table
 
   constructor(private game: Game) {}
 
@@ -82,6 +88,7 @@ export class CareerScreens {
   private newCreate(): void {
     const n = randomName();
     this.first = n.first; this.last = n.last;
+    this.diff = this.game.settings.difficulty;
     this.screen = 'create';
   }
 
@@ -90,7 +97,8 @@ export class CareerScreens {
 
   private toHub(): void {
     const c = this.career!;
-    this.screen = c.s.phase === 'summary' ? 'summary' : c.s.phase === 'signing' ? 'signing' : c.s.phase === 'done' ? 'done' : 'hub';
+    const last = c.player.seasons[c.player.seasons.length - 1];
+    this.screen = c.s.phase === 'summary' ? (last?.banquet && this.banquetSeen !== last.year ? 'banquet' : 'summary') : c.s.phase === 'signing' ? 'signing' : c.s.phase === 'done' ? 'done' : 'hub';
     this.pick = null;
     this.listPage = 0;
     this.game.showCareer(this);
@@ -101,7 +109,7 @@ export class CareerScreens {
   /** Creates the career (tests call this directly). */
   create(first = this.first, last = this.last, stateId = STATES[this.stateIdx].id, arch = this.arch): Career {
     deleteCareer();
-    this.career = Career.create(first, last, stateId, arch, Number(this.game.settings.quarter) * 60);
+    this.career = Career.create(first, last, stateId, arch, Number(this.game.settings.quarter) * 60, this.diff);
     this.screen = 'hub';
     return this.career;
   }
@@ -119,9 +127,13 @@ export class CareerScreens {
 
   /** TAKE THE FIELD */
   play(): void {
-    const c = this.career!, plan = this.plan!;
-    const shift = { rookie: -3, pro: 0, allpro: 3 }[this.game.settings.difficulty]; // difficulty: how good the other teams play
+    const c = this.career!, plan = this.plan!, sc = c.school;
+    const shift = c.oppShift; // difficulty: how good the other teams play
     this.game.playCareerGame({
+      difficulty: c.difficulty,
+      schools: { you: { name: sc.name, mascot: sc.mascot }, cpu: { name: plan.opp.name, mascot: plan.opp.mascot } },
+      card: { story: plan.rival ? `RIVALRY WEEK: ${c.trophy}` : plan.story, weather: weatherText(plan.weather) },
+      weather: { sky: plan.weather.sky, night: plan.weather.night },
       match: plan.match, you: c.rosterWithYou(), opp: plan.oppRoster,
       units: { you: plan.units.you, cpu: { off: plan.units.cpu.off + shift, def: plan.units.cpu.def + shift } },
       kits: this.kits(plan),
@@ -139,7 +151,7 @@ export class CareerScreens {
     const c = this.career!, m = plan.match, sc = c.school, o = plan.opp;
     if (m.quarter > 1 || m.clock < m.quarterSeconds || m.score.you + m.score.cpu > 0) return undefined;
     const ev = c.eventText(plan.rec);
-    const story = plan.story ?? (ev?.tag === 'ON TV' ? 'FRIDAY NIGHT LIVE' : null);
+    const story = plan.rival ? `RIVALRY WEEK: ${c.trophy}` : plan.story ?? (ev?.tag === 'ON TV' ? 'FRIDAY NIGHT LIVE' : null);
     return {
       home: plan.rec.home === c.s.schoolId ? 'you' : 'cpu', top: story ?? (plan.rec.round ? 'STATE PLAYOFFS' : `WEEK ${plan.rec.week}`), big: !!story,
       names: { you: sc.name, cpu: o.name }, mascots: { you: sc.mascot, cpu: o.mascot }, abbrs: { you: sc.abbr, cpu: o.abbr },
@@ -184,6 +196,8 @@ export class CareerScreens {
         if (hit(L.stateR, p)) this.stateIdx = (this.stateIdx + 1) % STATES.length;
         if (hit(L.archL, p)) this.arch = cycle(ARCHETYPES, this.arch, -1) as Archetype;
         if (hit(L.archR, p)) this.arch = cycle(ARCHETYPES, this.arch, 1) as Archetype;
+        if (hit(L.diffL, p)) this.diff = cycle(DIFFICULTIES, this.diff, -1) as Difficulty;
+        if (hit(L.diffR, p)) this.diff = cycle(DIFFICULTIES, this.diff, 1) as Difficulty;
         if (hit(L.start, p)) this.create();
         if (hit(L.back, p)) { if (this.career) this.screen = 'start'; else this.game.showTitle(); }
         return;
@@ -210,6 +224,8 @@ export class CareerScreens {
         if (hit(L.defSim, p)) { c.s.defense = 'sim'; this.save(); }
         if (hit(L.callsCoach, p)) { c.s.calls = 'coach'; this.save(); }
         if (hit(L.callsYou, p)) { c.s.calls = 'you'; this.save(); }
+        if (hit(L.diffL, p)) c.setDifficulty(cycle(DIFFICULTIES, c.difficulty, -1) as Difficulty);
+        if (hit(L.diffR, p)) c.setDifficulty(cycle(DIFFICULTIES, c.difficulty, 1) as Difficulty);
         if (hit(this.bottomButton(v), p)) this.screen = 'hub';
         return;
       }
@@ -261,9 +277,16 @@ export class CareerScreens {
         if (this.pick !== row.c.id) { this.pick = row.c.id; return; }
         c.sign(row.c.id);
         this.pick = null;
-        this.screen = 'done';
+        this.screen = 'ceremony';
+        this.ceremonyAt = performance.now();
         return;
       }
+      case 'ceremony':
+        if (hit(this.bottomButton(v), p)) this.screen = 'done';
+        return;
+      case 'banquet':
+        if (hit(this.bottomButton(v), p) && c) { this.banquetSeen = c.player.seasons[c.player.seasons.length - 1].year; this.screen = 'summary'; }
+        return;
       case 'done': {
         const L = this.doneLayout(v);
         if (hit(L.fresh, p)) { if (this.confirmNew) { this.confirmNew = false; this.newCreate(); } else this.confirmNew = true; }
@@ -315,7 +338,8 @@ export class CareerScreens {
         nameY: 30, nameX: lx + cw / 2, reroll: r(lx, 50, cw / 2 - 2, 14), edit: r(lx + cw / 2 + 2, 50, cw / 2 - 2, 14),
         stateY: 76, stateL: r(lx, 86, 20, 16), stateR: r(lx + cw - 20, 86, 20, 16),
         archY: 30, archL: r(rx, 40, 20, 16), archR: r(rx + cw - 20, 40, 20, 16), archX: rx + cw / 2,
-        start: r(rx, v.h - 44, cw, 20), back: r(lx, v.h - 40, 60, 16), lx, rx, cw,
+        diffY: 110, diffL: r(lx, 118, 20, 16), diffR: r(lx + cw - 20, 118, 20, 16),
+        start: r(rx, v.h - 44, cw, 20), back: r(lx, v.h - 26, 60, 16), lx, rx, cw,
       };
     }
     const x = 10, cw = v.w - 20;
@@ -323,6 +347,7 @@ export class CareerScreens {
       nameY: 44, nameX: v.w / 2, reroll: r(x, 64, cw / 2 - 2, 14), edit: r(x + cw / 2 + 2, 64, cw / 2 - 2, 14),
       stateY: 94, stateL: r(x, 104, 22, 16), stateR: r(x + cw - 22, 104, 22, 16),
       archY: 134, archL: r(x, 144, 22, 16), archR: r(x + cw - 22, 144, 22, 16), archX: v.w / 2,
+      diffY: 224, diffL: r(x, 232, 22, 16), diffR: r(x + cw - 22, 232, 22, 16),
       start: r(x + 10, v.h - 50, cw - 20, 22), back: r(v.w / 2 - 40, v.h - 22, 80, 16), lx: x, rx: x, cw,
     };
   }
@@ -353,9 +378,10 @@ export class CareerScreens {
 
   gamePlanLayout(v: View) {
     const w = Math.min(v.w - 16, 220), x = (v.w - w) / 2, half = (w - 4) / 2;
-    const y1 = v.landscape ? 34 : 54, y2 = v.landscape ? 92 : 142;
+    const y1 = v.landscape ? 24 : 46, y2 = v.landscape ? 70 : 120, y3 = v.landscape ? 116 : 194;
     return {
-      defY: y1, callsY: y2,
+      defY: y1, callsY: y2, diffY: y3, descY: v.landscape ? 28 : 32,
+      diffL: r(x, y3 + 10, 22, 16), diffR: r(x + w - 22, y3 + 10, 22, 16),
       defPlay: r(x, y1 + 10, half, 16), defSim: r(x + half + 4, y1 + 10, half, 16),
       callsCoach: r(x, y2 + 10, half, 16), callsYou: r(x + half + 4, y2 + 10, half, 16),
     };
@@ -383,6 +409,8 @@ export class CareerScreens {
       case 'create': this.renderCreate(ctx, v); break;
       case 'hub': this.renderHub(ctx, v); break;
       case 'gameplan': this.renderGamePlan(ctx, v); break;
+      case 'banquet': this.renderBanquet(ctx, v); break;
+      case 'ceremony': this.renderCeremony(ctx, v); break;
       case 'gameday': this.renderGameday(ctx, v); break;
       case 'result': this.renderResult(ctx, v); break;
       case 'schedule': this.renderSchedule(ctx, v); break;
@@ -449,6 +477,9 @@ export class CareerScreens {
     }
     const q = QUARTERS.find((x) => x.id === this.game.settings.quarter)?.name ?? '';
     drawText(ctx, `${q} QUARTERS (SET ON THE TITLE SCREEN)`, L.archX, y + 4, { align: 'center', color: C.darkGrey });
+    drawText(ctx, 'DIFFICULTY', L.lx + L.cw / 2, L.diffY, { align: 'center', color: C.grey });
+    stepper(ctx, L.diffL, L.diffR, DIFFICULTIES.find((d) => d.id === this.diff)!.name, this.diff === 'allpro' ? C.orange : this.diff === 'rookie' ? C.green : C.white);
+    drawText(ctx, DIFF_NOTE[this.diff], L.lx + L.cw / 2, L.diffL.y + 20, { align: 'center', color: C.darkGrey });
     button(ctx, L.start, 'START CAREER', C.green);
     button(ctx, L.back, 'BACK', C.grey);
   }
@@ -526,6 +557,7 @@ export class CareerScreens {
     drawText(ctx, g ? 'GAME DAY' : 'NO GAME', gd.x + gd.w / 2, gd.y + 5, { scale: 2, align: 'center', color: g ? C.green : C.darkGrey });
     if (g) drawText(ctx, backup ? `${c.weekName} - ON THE BENCH` : `${c.weekName} - ${g.home === s.schoolId ? 'HOME' : 'AWAY'}`, gd.x + gd.w / 2, gd.y + gd.h - 9, { align: 'center', color: C.grey });
     button(ctx, L.menu, 'MENU', C.darkGrey);
+    drawText(ctx, DIFFICULTIES.find((d) => d.id === c.difficulty)!.name, land ? L.menu.x + L.menu.w + 6 : v.w - 6, L.menu.y + 4, { align: land ? 'left' : 'right', color: c.difficulty === 'allpro' ? C.orange : C.darkGrey });
   }
 
   /** Your season at a glance: W / L for each week, this week lit, then the playoff rounds. */
@@ -546,6 +578,7 @@ export class CareerScreens {
     for (const g of reg) {
       const now = !played(g) && g.week === s.week && s.phase === 'season';
       cell(cx, cw, played(g) ? res(g) : String(g.week), played(g) ? res(g) : now ? 'now' : 'next');
+      if (c.isRival(g)) { ctx.fillStyle = C.orange; ctx.fillRect(cx, y + 12, cw - 1, 2); } // rivalry week
       cx += cw;
     }
     cx = x + w - PLAYOFF_ROUNDS.length * pw;
@@ -568,11 +601,13 @@ export class CareerScreens {
     }
     const key = `${s.year}:${s.week}:${s.log.length}`;
     if (this.storyCache?.key !== key) this.storyCache = { key, story: storyline({ rec: g, teams: s.teams, games: s.games, mySchool: s.schoolId, seed: s.seed, year: s.year, poll: s.poll }) };
-    let story = this.storyCache.story;
+    const rival = c.isRival(g);
+    let story = rival ? `RIVALRY WEEK: ${c.trophy}` : this.storyCache.story;
     if (story && textWidth(story) > rr.w - 6 && story.includes(': ')) story = story.slice(story.indexOf(': ') + 2);
     const o = c.opponentOf(g), home = g.home === s.schoolId, mid = rr.x + rr.w / 2;
-    box(ctx, rr, C.navy, story ? C.yellow : '#3b4a6b');
-    ctx.fillStyle = story ? C.yellow : '#3b4a6b'; ctx.fillRect(rr.x, rr.y, rr.w, 10);
+    const accent = rival ? C.orange : C.yellow;
+    box(ctx, rr, rival ? '#3a1d1d' : C.navy, story ? accent : '#3b4a6b');
+    ctx.fillStyle = story ? accent : '#3b4a6b'; ctx.fillRect(rr.x, rr.y, rr.w, 10);
     const head = story ?? `${c.weekName}${!g.round && o.region === sc.region && g.week > 3 ? ' - REGION GAME' : ''}`;
     drawText(ctx, head, mid, rr.y + 3, { align: 'center', color: story ? C.ink : C.white });
     const by = rr.y + 14, ow = badgeWidth(o.abbr, 2), mw = badgeWidth(sc.abbr, 2);
@@ -588,7 +623,8 @@ export class CareerScreens {
       box(ctx, er, C.red, C.red);
       drawText(ctx, ev.tag, mid, er.y + 2, { align: 'center', color: C.white });
     }
-    drawText(ctx, `${o.name} ${o.mascot}`, mid, rr.y + rr.h - 8, { align: 'center' });
+    const ser = rival ? c.rivalSeries() : null;
+    drawText(ctx, `${o.name} ${o.mascot}${ser && ser.w + ser.l ? `  -  SERIES ${ser.w}-${ser.l}` : ''}`, mid, rr.y + rr.h - 8, { align: 'center', color: rival ? C.orange : C.white });
   }
 
   /** The news ticker: headlines from around the state, scrolling. */
@@ -610,6 +646,88 @@ export class CareerScreens {
     ctx.restore();
   }
 
+  /** AWARDS NIGHT: the state's honors at the end of a season (before the yearbook). */
+  private renderBanquet(ctx: CanvasRenderingContext2D, v: View): void {
+    const c = this.career!, p = c.player, sl = p.seasons[p.seasons.length - 1], b = sl.banquet!, land = v.landscape;
+    ctx.fillStyle = '#16121f'; ctx.fillRect(0, 0, v.w, v.h);
+    let y = this.title(ctx, v, 'AWARDS NIGHT');
+    const state = STATES.find((q) => q.id === c.s.state)!.name;
+    drawText(ctx, `${state} HIGH SCHOOL FOOTBALL - ${CLASS_NAMES[sl.year]} SEASON`, v.w / 2, y - (land ? 4 : 2), { align: 'center', color: C.grey });
+    y += land ? 6 : 10;
+    const colW = land ? v.w / 2 - 12 : v.w - 16, x = 8, bottom = this.bottomButton(v).y - 4;
+    const card = (cx: number, cy: number, title: string, h: { name: string; pos: string; school: string; you: boolean }, gold: boolean) => {
+      box(ctx, r(cx, cy, colW, 34), h.you ? '#2a2410' : C.navy, gold ? '#ffcc00' : '#3b4a6b');
+      drawText(ctx, title, cx + colW / 2, cy + 4, { align: 'center', color: gold ? '#ffcc00' : C.grey });
+      drawText(ctx, `${h.pos} ${h.name}`, cx + colW / 2, cy + 13, { align: 'center', scale: h.you && textWidth(`${h.pos} ${h.name}`, 2) < colW - 8 ? 2 : 1, color: h.you ? C.yellow : C.white });
+      drawText(ctx, h.you ? `${h.school} - THAT'S YOU!` : h.school, cx + colW / 2, cy + 26, { align: 'center', color: h.you ? C.green : C.grey });
+      return cy + 38;
+    };
+    const top = y;
+    y = card(x, y, 'MR. FOOTBALL', b.mrFootball, true);
+    pixelArt(ctx, x + 5, top + 7, STATUE, TROPHY_PAL, 2);
+    y = card(x, y, 'ALL-STATE QUARTERBACK', b.allStateQb, false);
+    let ox = x, oy = y + 2;
+    if (land) { ox = v.w / 2 + 4; oy = top; }
+    const list = (title: string, lines: string[], col: string) => {
+      if (!lines.length || oy + 18 > bottom) return;
+      drawText(ctx, title, ox + 2, oy, { color: C.yellow }); oy += 9;
+      for (const t of lines) { if (oy + 8 > bottom) break; drawText(ctx, t, ox + 6, oy, { color: col }); oy += 8; }
+      oy += 4;
+    };
+    const mine = p.awards.filter((a) => a.endsWith(`(${CLASS_SHORT[sl.year]})`)).map((a) => a.replace(/ \(..\)$/, ''));
+    list('YOUR HONORS', mine.length ? mine : ['NONE THIS YEAR. NEXT YEAR.'], mine.length ? C.green : C.darkGrey);
+    list('ALL-STATE TEAMMATES', b.teammates, C.white);
+    if (b.coach) list('COACH OF THE YEAR', [`${b.coach} - ${c.school.name}`], C.white);
+    if (b.allAmerican) {
+      const a = b.allAmerican, won = a.us > a.them;
+      list('ALL-AMERICAN BOWL', [`YOU PLAYED FOR THE ${a.team}`, a.line, `${a.team} ${won ? 'WINS' : 'LOSES'} ${Math.max(a.us, a.them)}-${Math.min(a.us, a.them)}${a.mvp ? ' - GAME MVP!' : ''}`], C.white);
+    }
+    button(ctx, this.bottomButton(v), 'YEARBOOK', C.green);
+  }
+
+  /** Signing day: the hats on the table, and the one you put on. */
+  private renderCeremony(ctx: CanvasRenderingContext2D, v: View): void {
+    const c = this.career!, s = c.s, p = c.player, sc = c.school, land = v.landscape;
+    const signed = college(s.recruit.signed!)!;
+    const others = s.recruit.offers.filter((id) => id !== signed.id).map((id) => college(id)!).sort((a, b) => b.prestige - a.prestige).slice(0, 2);
+    const hats = [...others];
+    hats.splice(Math.min(1, hats.length), 0, signed); // the pick sits in the middle (or first)
+    const t = (performance.now() - this.ceremonyAt) / 1000;
+    ctx.fillStyle = '#1b1530'; ctx.fillRect(0, 0, v.w, v.h);
+    // the school gym: banners in your school's colours
+    for (let i = 0; i < 6; i++) { ctx.fillStyle = i % 2 ? sc.colors[0] : sc.colors[1]; ctx.fillRect(Math.round((v.w / 6) * i + 4), 0, Math.round(v.w / 6 - 8), land ? 8 : 14); }
+    drawText(ctx, 'SIGNING DAY', v.w / 2, land ? 12 : 22, { scale: 2, align: 'center', color: C.yellow, shadow: C.navy });
+    drawText(ctx, `${sc.name} HIGH SCHOOL GYM`, v.w / 2, land ? 25 : 37, { align: 'center', color: C.grey });
+    const sc4 = land ? 3 : 4, kw = 11 * sc4, kx = v.w / 2 - kw / 2, ky = land ? 36 : 60;
+    signee(ctx, kx, ky, sc.colors[0], sc4);
+    const tableY = ky + 14 * sc4 - 4;
+    ctx.fillStyle = '#7a3a26'; ctx.fillRect(v.w / 2 - 70, tableY, 140, 6);
+    ctx.fillStyle = '#5a2a1c'; ctx.fillRect(v.w / 2 - 66, tableY + 6, 4, 14); ctx.fillRect(v.w / 2 + 62, tableY + 6, 4, 14);
+    const hs = land ? 2 : 3, hw = CAP_W * hs, hh = CAP_H * hs;
+    const lift = clamp((t - 1.6) / 0.9, 0, 1); // the pick rises to your head
+    hats.forEach((h, i) => {
+      const hx0 = v.w / 2 + (i - (hats.length - 1) / 2) * 46 - hw / 2, hy0 = tableY - hh;
+      const pick = h.id === signed.id;
+      const hx = pick ? lerp(hx0, v.w / 2 - hw / 2 + 2, lift) : hx0, hy = pick ? lerp(hy0, ky - hh + 3 * sc4, lift) : hy0;
+      cap(ctx, hx, hy, h.colors, hs);
+      if (!pick || lift < 1) drawText(ctx, h.abbr, hx0 + hw / 2, tableY + 9, { align: 'center', color: pick && lift > 0 ? C.darkGrey : C.white });
+    });
+    let y = tableY + 26;
+    if (t < 1.6) drawText(ctx, 'THE DECISION...', v.w / 2, y, { align: 'center', color: C.grey });
+    else if (lift >= 1) {
+      drawText(ctx, `${p.first} ${p.last} SIGNS WITH`, v.w / 2, y, { align: 'center', color: C.white }); y += 10;
+      const col = contrast(signed.colors[0], '#1b1530') >= 3 ? signed.colors[0] : signed.colors[1];
+      drawText(ctx, signed.name, v.w / 2, y, { align: 'center', scale: textWidth(signed.name, 2) < v.w - 10 ? 2 : 1, color: col }); y += 13;
+      drawText(ctx, `${signed.mascot} - ${signed.conference}`, v.w / 2, y, { align: 'center', color: C.grey });
+      for (let i = 0; i < 40; i++) { // confetti in the school's colours
+        const cxp = (i * 47.3 + t * 9) % v.w, cyp = ((i * 31.7 + (t - 2.5) * (30 + (i % 5) * 8)) % v.h + v.h) % v.h;
+        ctx.fillStyle = i % 2 ? signed.colors[0] : signed.colors[1];
+        ctx.fillRect(Math.round(cxp), Math.round(cyp), 2, 2);
+      }
+    }
+    button(ctx, this.bottomButton(v), lift >= 1 ? 'CONTINUE' : 'SKIP', lift >= 1 ? C.green : C.grey);
+  }
+
   /** GAME PLAN: how you play career games (the defense, who calls the plays). */
   private renderGamePlan(ctx: CanvasRenderingContext2D, v: View): void {
     const c = this.career!, s = c.s, L = this.gamePlanLayout(v);
@@ -621,16 +739,20 @@ export class CareerScreens {
     const x = L.defPlay.x, w = L.defSim.x + L.defSim.w - x, chars = Math.floor(w / 4);
     drawText(ctx, 'DEFENSE', x, L.defY, { color: C.yellow });
     opt(L.defPlay, 'PLAY THE MIKE', s.defense === 'play'); opt(L.defSim, 'SIMULATED', s.defense === 'sim');
-    let y = L.defY + 32;
+    let y = L.defY + L.descY;
     for (const t of wrap(s.defense === 'play' ? 'YOU PLAY MIDDLE LINEBACKER ON EVERY DEFENSIVE SNAP: DRAG TO TAKE OVER.' : 'THE OTHER TEAM\'S DRIVES ARE SIMULATED: YOU ONLY PLAY OFFENSE.', chars)) {
       drawText(ctx, t, x, y, { color: C.grey }); y += 8;
     }
     drawText(ctx, 'PLAY CALLING', x, L.callsY, { color: C.yellow });
     opt(L.callsCoach, 'COACH CALLS', s.calls !== 'you'); opt(L.callsYou, 'YOU CALL', s.calls === 'you');
-    y = L.callsY + 32;
+    y = L.callsY + L.descY;
     for (const t of wrap(s.calls !== 'you' ? 'THE COACH CALLS EVERY PLAY, LIKE A REAL HIGH SCHOOL QB. TOUCH TO SNAP AND THROW.' : 'YOU PICK EVERY PLAY IN THE HUDDLE, ON OFFENSE AND DEFENSE.', chars)) {
       drawText(ctx, t, x, y, { color: C.grey }); y += 8;
     }
+    drawText(ctx, 'DIFFICULTY', x, L.diffY, { color: C.yellow });
+    stepper(ctx, L.diffL, L.diffR, DIFFICULTIES.find((d) => d.id === c.difficulty)!.name, c.difficulty === 'allpro' ? C.orange : c.difficulty === 'rookie' ? C.green : C.white);
+    drawText(ctx, DIFF_NOTE[c.difficulty], x + w / 2, L.diffL.y + 20, { align: 'center', color: C.grey });
+    if (!v.landscape) drawText(ctx, 'CHANGING IT RE-SCORES YOUR STARS NEXT GAME', x + w / 2, L.diffL.y + 29, { align: 'center', color: C.darkGrey });
     button(ctx, this.bottomButton(v), 'DONE', C.green);
   }
 
@@ -641,12 +763,14 @@ export class CareerScreens {
     let y = y0;
     // the storyline: rivalry week, homecoming, a playoff round, TV
     const ev = plan.kind !== 'none' ? c.eventText(plan.rec) : null;
-    const banner = plan.story ?? (ev?.tag === 'ON TV' ? 'FRIDAY NIGHT LIVE' : null);
+    const banner = plan.rival ? `RIVALRY WEEK: ${c.trophy}` : plan.story ?? (ev?.tag === 'ON TV' ? 'FRIDAY NIGHT LIVE' : null);
     if (banner) {
-      box(ctx, r(x, y - 2, colW, 12), C.navy, C.yellow);
-      drawText(ctx, banner, mid, y + 1, { align: 'center', color: C.yellow });
+      const col = plan.rival ? C.orange : C.yellow;
+      box(ctx, r(x, y - 2, colW, 12), plan.rival ? '#3a1d1d' : C.navy, col);
+      drawText(ctx, banner, mid, y + 1, { align: 'center', color: col });
       y += 14;
     }
+    if (plan.talk) { for (const t of wrap(plan.talk, chars)) { drawText(ctx, t, mid, y, { align: 'center', color: C.orange }); y += 8; } y += 2; }
     for (const t of wrap(plan.detail, chars)) { drawText(ctx, t, mid, y, { align: 'center', color: C.grey }); y += 9; }
     if (ev) for (const t of wrap(ev.text, chars)) { drawText(ctx, t, mid, y, { align: 'center', color: C.yellow }); y += 9; }
     y += land ? 4 : 8;
@@ -658,11 +782,17 @@ export class CareerScreens {
     drawText(ctx, started ? `${m.score.you} - ${m.score.cpu}` : 'VS', mid, y + 4, { scale: 2, align: 'center', color: started ? C.white : C.grey });
     y += 21;
     const tag = (id: number) => { const k = pollRank(s.poll, id); return `${k ? `NO.${k} ` : ''}${c.record(id).text}`; };
+    drawText(ctx, sc.name, mid - 60 + badgeWidth(sc.abbr, 2) / 2, y, { align: 'center', color: C.white });
+    drawText(ctx, o.name, mid + 60 - bw / 2, y, { align: 'center', color: C.white });
+    y += 8;
     drawText(ctx, tag(sc.id), mid - 60 + badgeWidth(sc.abbr, 2) / 2, y, { align: 'center', color: C.grey });
     drawText(ctx, tag(o.id), mid + 60 - bw / 2, y, { align: 'center', color: C.grey });
+    drawText(ctx, 'YOU', mid - 64, y - 23, { align: 'right', color: C.yellow });
     y += 11;
     drawText(ctx, started ? m.periodText : `${c.weekName} - ${plan.rec.home === s.schoolId ? 'HOME' : 'AWAY'}`, mid, y, { align: 'center', color: C.yellow });
-    y += 10;
+    y += 9;
+    if (!started) { drawText(ctx, weatherText(plan.weather), mid, y, { align: 'center', color: C.grey }); y += 9; }
+    if (plan.rival) { const ser = c.rivalSeries(); if (ser.w + ser.l) { drawText(ctx, `SERIES ${ser.w}-${ser.l}`, mid, y, { align: 'center', color: C.orange }); y += 9; } }
     if (started) {
       drawText(ctx, `${m.offense === 'you' ? 'YOUR' : `${o.abbr}`} BALL - ${m.drive.downText} - ${m.offense === 'you' ? m.drive.spotText : m.drive.spotText.replace('OWN', 'THEIR').replace('OPP', 'YOUR')}`, mid, y, { align: 'center', color: C.grey });
       y += 10;
@@ -674,9 +804,9 @@ export class CareerScreens {
     const mine = playersToWatch(c.rosterWithYou()), theirs = playersToWatch(plan.oppRoster);
     drawText(ctx, 'PLAYERS TO WATCH', omid, oy, { align: 'center', color: C.grey });
     oy += 10;
-    for (const [ab, t, col] of [[sc.abbr, mine.qb, C.white], [o.abbr, theirs.qb, C.white], [sc.abbr, mine.def, C.grey], [o.abbr, theirs.def, C.grey]] as const) {
-      drawText(ctx, ab, ox + 16, oy, { align: 'right', color: C.darkGrey });
-      drawText(ctx, t, ox + 20, oy, { color: col });
+    for (const [ab, t, col] of [[sc.mascot, mine.qb, C.white], [o.mascot, theirs.qb, C.white], [sc.mascot, mine.def, C.grey], [o.mascot, theirs.def, C.grey]] as const) {
+      drawText(ctx, ab, ox + 48, oy, { align: 'right', color: C.darkGrey });
+      drawText(ctx, t, ox + 52, oy, { color: col });
       oy += 8;
     }
     if (plan.kind === 'full' || plan.keys.length) {
@@ -710,15 +840,23 @@ export class CareerScreens {
     let y = land ? 3 : 6;
     drawText(ctx, paperName(sc.name, sc.id), mid, y, { align: 'center' });
     y += 7; rule(y); y += 3;
-    drawText(ctx, `${l.round ? ROUND_NAMES[l.round] : `WEEK ${l.week}`} - ${l.home ? 'VS' : 'AT'} ${o.name}`, mid, y, { align: 'center', color: C.grey });
+    drawText(ctx, `${l.round ? ROUND_NAMES[l.round] : `WEEK ${l.week}`} - ${sc.name} ${l.home ? 'VS' : 'AT'} ${o.name}`, mid, y, { align: 'center', color: C.grey });
     y += 10;
     // the front page
     const playedIt = l.kind !== 'none' && l.grade !== null;
-    const head = frontPage({ you: c.player.last, mascot: sc.mascot, oppMascot: o.mascot, us: l.us, them: l.them, ot: l.ot, played: playedIt, tds: l.line.tds, yards: l.line.yards });
+    let head = frontPage({ you: c.player.last, mascot: sc.mascot, oppMascot: o.mascot, us: l.us, them: l.them, ot: l.ot, played: playedIt, tds: l.line.tds, yards: l.line.yards });
+    if (l.rival) { // rivalry week: who has the trophy now
+      const before = c.player.seasons.length && c.s.phase === 'season' ? c.player.seasons[c.player.seasons.length - 1].rival : undefined;
+      const sc2 = `${Math.max(l.us, l.them)}-${Math.min(l.us, l.them)}`;
+      head = won ? `${sc.mascot} ${before === 'W' ? 'KEEP' : before === 'L' ? 'TAKE BACK' : 'WIN'} ${c.trophy}, ${sc2}` : `${o.mascot} TAKE ${c.trophy}, ${sc2}`;
+    }
     for (const t of wrap(head, chars)) { drawText(ctx, t, mid, y, { align: 'center', color: C.yellow }); y += 8; }
     y += 3;
-    drawText(ctx, `${sc.abbr} ${l.us} - ${o.abbr} ${l.them}${l.ot ? ' (OT)' : ''}`, mid, y, { align: 'center', scale: land ? 1 : 2, color: won ? C.green : C.red });
-    y += land ? 10 : 15;
+    drawText(ctx, `${l.us} - ${l.them}${l.ot ? ' OT' : ''}`, mid, y, { align: 'center', scale: 2, color: won ? C.green : C.red });
+    const half = textWidth(`${l.us} - ${l.them}${l.ot ? ' OT' : ''}`, 2) / 2 + 6;
+    drawText(ctx, sc.mascot, mid - half, y + 3, { align: 'right', color: C.white });
+    drawText(ctx, o.mascot, mid + half, y + 3, { color: C.grey });
+    y += 15;
     if (l.story) { drawText(ctx, l.story, mid, y, { align: 'center', color: C.grey }); y += 9; }
     if (l.kind === 'none') { drawText(ctx, `${l.label}: YOU DID NOT GET IN`, mid, y, { align: 'center', color: C.grey }); y += 10; }
     else {
@@ -820,7 +958,7 @@ export class CareerScreens {
       if (cur) { ctx.fillStyle = C.navy; ctx.fillRect(x - 2, y - 2, w + 4, rowH - 1); }
       drawText(ctx, g.round ?? `W${g.week}`, x, y, { color: g.round ? C.yellow : C.grey });
       drawText(ctx, home ? 'VS' : 'AT', x + 18, y, { color: C.grey });
-      drawText(ctx, `${o.abbr} ${o.name}`, x + 30, y, { color: o.region === c.school.region && !g.round && g.week > 3 ? C.white : C.grey });
+      drawText(ctx, `${o.abbr} ${o.name}`, x + 30, y, { color: c.isRival(g) ? C.orange : o.region === c.school.region && !g.round && g.week > 3 ? C.white : C.grey });
       if (played(g)) {
         const us = home ? g.hs! : g.as!, them = home ? g.as! : g.hs!;
         drawText(ctx, `${us > them ? 'W' : 'L'} ${us}-${them}${g.ot ? ' OT' : ''}`, x + w, y, { align: 'right', color: us > them ? C.green : C.red });
@@ -828,7 +966,7 @@ export class CareerScreens {
       y += rowH;
     }
     y += 4;
-    drawText(ctx, 'WHITE = REGION GAME', v.w / 2, y, { align: 'center', color: C.darkGrey });
+    drawText(ctx, `WHITE = REGION GAME  ORANGE = RIVAL (${c.trophy})`, v.w / 2, y, { align: 'center', color: C.darkGrey });
     button(ctx, this.bottomButton(v), 'BACK');
   }
 
@@ -1029,16 +1167,24 @@ export class CareerScreens {
     const yearsOf = (name: string) => awards.filter((a) => a.startsWith(name)).map((a) => a.slice(-3, -1));
     const titles = yearsOf('STATE CHAMPION'), regions = yearsOf('REGION CHAMPION'), allState = yearsOf('ALL-STATE QB'), allRegion = yearsOf('ALL-REGION QB');
     const label = (ys: string[]) => (ys.length > 1 ? `X${ys.length}` : ys[0]);
-    const items: { art: string[]; top: string; sub: string }[] = [];
-    if (titles.length) items.push({ art: CUP, top: 'STATE CHAMPS', sub: label(titles) });
-    if (regions.length) items.push({ art: PLAQUE, top: 'REGION', sub: label(regions) });
-    if (allState.length) items.push({ art: MEDAL, top: 'ALL-STATE', sub: label(allState) });
+    const mrFb = yearsOf('MR. FOOTBALL'), allAm = yearsOf('ALL-AMERICAN');
+    const tds = p.seasons.reduce((t, sl) => t + sl.stats.tds, 0);
+    const retired = mrFb.length > 0 || allAm.length > 0 || titles.length > 0 || tds >= 75; // your number goes on the wall
+    const items: { art: string[] | null; top: string; sub: string }[] = [];
+    if (retired) items.push({ art: null, top: `NO.${jerseyNo(p)}`, sub: 'RETIRED' });
+    if (mrFb.length) items.push({ art: STATUE, top: 'MR FOOTBALL', sub: label(mrFb) });
+    if (titles.length) items.push({ art: CUP, top: 'STATE', sub: `CHAMPS ${label(titles)}` });
+    if (allAm.length) items.push({ art: MEDAL, top: 'ALL-AMER.', sub: label(allAm) });
+    else if (allState.length) items.push({ art: MEDAL, top: 'ALL-STATE', sub: label(allState) });
     else if (allRegion.length) items.push({ art: MEDAL, top: 'ALL-REGION', sub: label(allRegion) });
+    if (regions.length && items.length < 4) items.push({ art: PLAQUE, top: 'REGION', sub: label(regions) });
+    items.splice(4);
     const s1 = cy + (land ? 50 : 62); // the first shelf
     if (items.length) items.forEach((it, i) => {
-      const mx = cx + (colW * (i + 0.5)) / items.length, h = it.art.length * 3;
-      pixelArt(ctx, mx - (artW(it.art) * 3) / 2, s1 - 16 - h, it.art, TROPHY_PAL, 3);
-      drawText(ctx, it.top, mx, s1 - 14, { align: 'center', color: it.art === CUP ? C.yellow : C.grey });
+      const mx = cx + (colW * (i + 0.5)) / items.length;
+      if (it.art) pixelArt(ctx, mx - (artW(it.art) * 3) / 2, s1 - 16 - it.art.length * 3, it.art, TROPHY_PAL, 3);
+      else framedJersey(ctx, mx - 16, s1 - 52, c.school.colors, jerseyNo(p));
+      drawText(ctx, it.top, mx, s1 - 14, { align: 'center', color: it.art === CUP || it.art === STATUE || !it.art ? C.yellow : C.grey });
       drawText(ctx, it.sub, mx, s1 - 7, { align: 'center', color: C.grey });
     });
     else drawText(ctx, 'ROOM FOR MORE HARDWARE', cx + colW / 2, s1 - 24, { align: 'center', color: C.darkGrey });

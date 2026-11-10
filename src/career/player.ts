@@ -39,6 +39,7 @@ export interface SeasonLine {
   avg?: number; // average game grade
   balls?: { grade: number; label: string }[]; // game balls: games graded A or better
   rival?: 'W' | 'L'; // the rivalry game
+  banquet?: import('./news').Banquet; // the end-of-season awards
 }
 
 export interface CareerPlayer {

@@ -8,7 +8,7 @@ import { newStats } from '../drive';
 import { type Side, Match } from '../match';
 import { type RatingKey, type Roster, makeRoster } from '../ratings';
 import { clamp } from '../util';
-import { STATES, makeSchools } from './hsnames';
+import { STATES, makeSchools, randomName } from './hsnames';
 import {
   type GameRec, REGULAR_WEEKS, type Round, ROUND_NAMES, type Team, makeSchedule, nextRound, playoffField, played,
   regionOrder, standings, winnerOf,
@@ -17,14 +17,17 @@ import {
   type Archetype, type CareerPlayer, type Focus, HS_TIER, asRosterPlayer, createPlayer, gameXp, gradeGame, offseason,
   classNorm, displayName, practice, production, qbNormOvr, qbOvr, seasonProduction,
 } from './player';
-import { loadSettings } from '../settings';
+import { type Difficulty, loadSettings } from '../settings';
 import {
   MAX_VISITS, type RecruitState, SCORE_FORMULA, college, newRecruiting, officialVisit, pickScout, qbRank, recruitingWeek, rollNeeds,
   scoutReaction, starsFor, tvReaction, useDifficulty,
 } from './recruiting';
 import { type Units, overtimeWinner, simGame, simToEnd, simUntil } from './quicksim';
 import { Rng, newSeed } from './rng';
-import { type Key, type TargetLine, headlines, keyMet, keysFor, rivalOf, statePoll, storyline, targetLine, teammateSignees } from './news';
+import {
+  type Key, type TargetLine, type Weather, banquet, headlines, keyMet, keysFor, myHeadlines, rivalOf, rivalTrophy, statePoll, storyline,
+  targetLine, teammateSignees, trashTalk, weatherFor,
+} from './news';
 import { CAREER_VERSION, saveCareer } from './save';
 
 export const HS_YEARS = 3;
@@ -56,6 +59,8 @@ export interface WeekLog {
   target?: TargetLine; // your top receiver's line
   potg?: string; // player of the game
   keys?: { text: string; ok: boolean }[]; // the coach's keys, met or not
+  rival?: boolean; // rivalry week
+  weather?: string; // kickoff time and weather, in words
 }
 
 export interface CareerSave {
@@ -76,7 +81,8 @@ export interface CareerSave {
   events?: GameEvent[]; // this season's spotlight games (juniors and seniors)
   poll?: number[]; // the state poll (team ids, best first), after the latest week
   pollPrev?: number[]; // the poll a week earlier (for the arrows)
-  headlines?: string[]; // the latest week's headlines from around the state
+  headlines?: string[]; // the latest week's headlines from around the state (your own news first)
+  difficulty?: Difficulty; // this career's difficulty (older saves take the settings' one when loaded)
   dry: number; // weeks in a row you didn't get in (backups)
   phase: 'season' | 'summary' | 'signing' | 'done'; // summary: the season is over, showing it; signing: signing day
   recruit: RecruitState; // colleges recruiting you
@@ -106,6 +112,9 @@ export interface GamePlan {
   oppRoster: Roster; // their players (the pregame card and the field use the same ones)
   keys: Key[]; // the coach's keys to the game
   story: string | null; // the storyline (rivalry week, homecoming, a playoff round...)
+  weather: Weather; // kickoff time and weather (flavor only)
+  rival: boolean; // rivalry week
+  talk: string | null; // rivalry week: what the other side is saying
 }
 
 const STARTER_FIRST = 'ABCDEFGHJKLMNPRSTW';
@@ -113,7 +122,8 @@ const STARTER_LAST = ['BAKER', 'COLLINS', 'DUNN', 'EVANS', 'FISHER', 'GRIFFIN', 
 
 export class Career {
   constructor(public s: CareerSave) {
-    useDifficulty(loadSettings().difficulty); // star steps follow the difficulty setting
+    s.difficulty ??= loadSettings().difficulty; // a save from before careers kept their own difficulty
+    useDifficulty(s.difficulty); // star steps follow the career's difficulty
     if (!s.recruit) this.catchUpRecruiting(); // a save from before recruiting existed
     if (!s.events && s.phase === 'season') this.scheduleEvents(s.week); // a save from before events: the rest of this season
     else if ((s.recruit.formula ?? 1) < SCORE_FORMULA) { // scored by an older formula: re-score once
@@ -126,7 +136,7 @@ export class Career {
     }
   }
 
-  static create(first: string, last: string, stateId: string, archetype: Archetype, quarterSeconds: number): Career {
+  static create(first: string, last: string, stateId: string, archetype: Archetype, quarterSeconds: number, difficulty?: Difficulty): Career {
     const seed = newSeed();
     const rng = new Rng(seed);
     const state = STATES.find((x) => x.id === stateId) ?? STATES[0];
@@ -144,6 +154,7 @@ export class Career {
       v: CAREER_VERSION, seed, state: state.id, player, teams, schoolId: school.id, year: 0, week: 1,
       games: [], focus: 'acc', role: 'backup', battle: 15, starter: null, log: [], dry: 0, phase: 'season',
       roster: makeRoster(school.name, 0, HS_TIER), recruit: newRecruiting(), recruitFeed: [], defense: 'play', calls: 'coach', quarter: quarterSeconds,
+      difficulty: difficulty ?? loadSettings().difficulty,
     };
     const c = new Career(s);
     c.startSeason(new Rng(seed + 1));
@@ -151,6 +162,21 @@ export class Career {
   }
 
   // ---------- lookups ----------
+  get difficulty(): Difficulty { return this.s.difficulty ?? 'pro'; }
+  /** How much better or worse the other teams play at this career's difficulty (rating points). */
+  get oppShift(): number { return { rookie: -3, pro: 0, allpro: 3 }[this.difficulty] ?? 0; }
+  /** Changes this career's difficulty (your stars are re-scored against its star steps from the next game). */
+  setDifficulty(d: Difficulty): void { this.s.difficulty = d; useDifficulty(d); saveCareer(this.s); }
+  /** Your rival (a region team, fixed for the career). */
+  get rivalId(): number { return rivalOf(this.s.teams, this.s.schoolId, this.s.seed); }
+  get trophy(): string { return rivalTrophy(this.s.seed); }
+  isRival(g: GameRec): boolean { return !g.round && (g.home === this.rivalId || g.away === this.rivalId) && (g.home === this.s.schoolId || g.away === this.s.schoolId); }
+  /** The rivalry series in your career so far (this season's game included once it's played). */
+  rivalSeries(): { w: number; l: number } {
+    const res = this.player.seasons.map((sl) => sl.rival);
+    if (this.s.phase === 'season') res.push(this.rivalResult());
+    return { w: res.filter((x) => x === 'W').length, l: res.filter((x) => x === 'L').length };
+  }
   get player(): CareerPlayer { return this.s.player; }
   get school(): Team { return this.team(this.s.schoolId); }
   team(id: number): Team { return this.s.teams[id]; }
@@ -202,6 +228,11 @@ export class Career {
     s.phase = 'season';
     const school = this.school;
     s.roster = makeRoster(school.name, (school.off + school.def) / 2, HS_TIER);
+    const mine = displayName(this.player), names = new Set(s.roster.players.map((x) => x.name));
+    for (const pl of s.roster.players) { // no teammate shares your name
+      let guard = 0;
+      while (pl.name === mine && guard++ < 20) { const n = randomName(); const nm = `${n.first[0]}.${n.last}`; if (!names.has(nm)) pl.name = nm; }
+    }
     if (s.year >= HS_YEARS - 1) { s.role = 'starter'; s.starter = null; }
     else if (s.role !== 'starter') {
       // a senior ahead of you on the depth chart
@@ -222,11 +253,16 @@ export class Career {
     const youU = this.units(me, qbOvr(this.player)), oppU = this.units(opp);
     const m = new Match(Math.random() < 0.5 ? 'you' : 'cpu', this.s.quarter);
     m.names = { you: me.abbr, cpu: opp.abbr };
-    const shift = { rookie: -3, pro: 0, allpro: 3 }[loadSettings().difficulty] ?? 0; // difficulty: how good the other teams play
-    const oppRoster = this.opponentRoster(opp, shift), keys = keysFor(opp, rec.week);
-    const story = storyline({ rec, teams: this.s.teams, games: this.s.games, mySchool: this.s.schoolId, seed: this.s.seed, year: this.s.year, poll: this.s.poll });
+    const oppRoster = this.opponentRoster(opp, this.oppShift), keys = keysFor(opp, rec.week); // difficulty: how good the other teams play
+    const s = this.s;
+    const story = storyline({ rec, teams: s.teams, games: s.games, mySchool: s.schoolId, seed: s.seed, year: s.year, poll: s.poll });
+    const region = STATES.find((x) => x.id === s.state)?.region ?? 'TEXAS';
+    const weather = weatherFor(s.seed, s.year, rec.week, region, rec.round);
+    const rival = this.isRival(rec);
+    const last = this.player.seasons[this.player.seasons.length - 1]?.rival ?? null;
+    const talk = rival ? trashTalk({ seed: s.seed, year: s.year, qb: oppRoster.players.find((x) => x.slot === 'QB')!.name, you: this.player.last, trophy: this.trophy, lastYear: last }) : null;
     const plan = (kind: Appearance, label: string, detail: string, endAtHalf = false): GamePlan =>
-      ({ kind, label, detail, match: m, rec, opp, pre: { ...m.stats.you }, endAtHalf, units: { you: youU, cpu: oppU }, oppRoster, keys, story });
+      ({ kind, label, detail, match: m, rec, opp, pre: { ...m.stats.you }, endAtHalf, units: { you: youU, cpu: oppU }, oppRoster, keys, story, weather, rival, talk });
     if (this.s.role === 'starter') return plan('full', 'YOU START', `${me.mascot} VS ${opp.mascot}`);
 
     // backup: the starter plays (simulated) until something gets you in
@@ -292,7 +328,8 @@ export class Career {
     const ev = this.eventFor(rec);
     const log: WeekLog = {
       week: rec.week, round: rec.round, opp: plan.opp.id, home, us, them, ot, kind: plan.kind, label: plan.label,
-      line, grade, battle, gains, news, story: plan.story,
+      line, grade, battle, gains, news, story: plan.story, rival: plan.rival || undefined,
+      weather: `${plan.weather.time} - ${plan.weather.sky}, ${plan.weather.temp} DEGREES`,
     };
     if (grade !== null) { // the box score: your top target, the coach's keys, the player of the game
       log.target = targetLine(s.roster, line);
@@ -314,7 +351,7 @@ export class Career {
     this.simWeek(rec.week);
     s.pollPrev = s.poll;
     s.poll = statePoll(s.teams, s.games);
-    s.headlines = headlines(s.teams, s.games, rec.week, s.pollPrev, s.schoolId);
+    s.headlines = [...myHeadlines(this.player.first, this.player.last, news, grade, line), ...headlines(s.teams, s.games, rec.week, s.pollPrev, s.schoolId)];
     this.advance(news);
     saveCareer(s);
     return log;
@@ -409,6 +446,14 @@ export class Career {
     if (region[0].id === s.schoolId) awards.push('REGION CHAMPION');
     if (gs >= 6 && avg >= 72) awards.push('ALL-STATE QB');
     else if (gs >= 6 && avg >= 62) awards.push('ALL-REGION QB');
+    const champ = this.champion;
+    const bq = banquet({
+      you: displayName(p), year: s.year, avg: graded ? avg : null, gs, wins: s.log.filter((l) => l.us > l.them).length, champion: finish === 'STATE CHAMPIONS',
+      allState: awards.includes('ALL-STATE QB'), finish, stars, nationalRank: s.year >= 1 ? qbRank(s.recruit, s.state).national : null,
+      school: this.school, roster: s.roster, teams: s.teams, poll: s.poll, champ,
+    });
+    if (bq.mrFootball.you) awards.push('MR. FOOTBALL');
+    if (bq.allAmerican) awards.push('ALL-AMERICAN');
     p.awards.push(...awards.map((a) => `${a} (${['SO', 'JR', 'SR'][s.year]})`));
     p.seasons.push({
       year: s.year, school: this.school.name, role: gs >= 5 ? 'STARTER' : 'BACKUP', gp, gs, stats: line,
@@ -418,6 +463,7 @@ export class Career {
       balls: s.log.filter((l) => l.grade !== null && l.grade >= 80).sort((a, b) => b.grade! - a.grade!).slice(0, 4)
         .map((l) => ({ grade: l.grade!, label: l.round === 'F' ? 'TITLE' : l.round ?? `${l.home ? 'VS' : 'AT'} ${this.team(l.opp).abbr}` })),
       rival: this.rivalResult(),
+      banquet: bq,
     });
     news.push(`SEASON OVER: ${finish}`);
     s.phase = 'summary';
@@ -529,7 +575,7 @@ export class Career {
   private recruitingUpdate(news: string[], weeks: number): void {
     const s = this.s, r = s.recruit;
     const before = r.stars;
-    useDifficulty(loadSettings().difficulty);
+    useDifficulty(this.difficulty);
     if (s.phase === 'season') { // once a season ends your stars hold until the next one (summary and signing day agree)
       r.score = this.recruitScore();
       r.stars = starsFor(r.score);
@@ -567,8 +613,12 @@ export class Career {
   commit(id: string | null): void {
     const r = this.s.recruit;
     if (r.signed || (id && !r.offers.includes(id))) return;
+    const before = r.committed;
     r.committed = id;
     this.s.recruitFeed = [id ? `COMMITTED TO ${college(id)!.name}` : 'DECOMMITTED', ...this.s.recruitFeed].slice(0, 10);
+    const p = this.player;
+    const head = id ? `${p.first} ${p.last} ${before ? 'FLIPS' : 'COMMITS'} TO ${college(id)!.name}` : `${p.last} REOPENS HIS RECRUITMENT`;
+    this.s.headlines = [head, ...(this.s.headlines ?? [])].slice(0, 6);
     saveCareer(this.s);
   }
 

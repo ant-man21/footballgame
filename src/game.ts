@@ -10,7 +10,7 @@ import { type TeamStats, rawFromSim } from './drive';
 import { type Banner, Match, PLAY_CLOCK, type Side } from './match';
 import { Menu, type MenuAction } from './menu';
 import { PLAYS, type Play } from './playbook/plays';
-import { DIFFICULTY_TUNING, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
+import { DIFFICULTY_TUNING, type Difficulty, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
 import { type Actor, HASH_YD, Sim, arcHeight, flightFor, throwSpread } from './sim';
 import { type Facing, HD, type Pose, grassTile, hdBall, hdPlayer, identity } from './hd';
 import { type Kit, type TeamColor, shade } from './sprites';
@@ -20,6 +20,7 @@ import { type Vec, clamp, dist, lerp } from './util';
 import { type Roster, loadRoster, makeRoster, saveRoster } from './ratings';
 import { RosterView } from './roster';
 import { PORTRAIT, type View } from './view';
+import { inkOn } from './ui/kit';
 
 export type AimMode = 'pull' | 'aim';
 const SNAP_CATCH = 0.3; // sim seconds for the QB to catch the shotgun snap
@@ -56,6 +57,10 @@ export interface CareerGameSetup {
   crowd?: { home: [string, string]; away: [string, string]; homeName: string }; // the schools' colours: the home crowd fills the stadium
   intro?: IntroInfo; // the pregame show (only for a game from the opening kickoff)
   form?: number; // simulated defense: the opponent offense's form this game (rating points), set when the game starts
+  difficulty?: Difficulty; // the career's difficulty (otherwise the settings')
+  schools?: Record<Side, { name: string; mascot: string }>; // full names, for the end zones and the kickoff card
+  card?: { story: string | null; weather: string }; // the who's-who card as you take the field: the storyline and the weather
+  weather?: { sky: string; night: boolean }; // rain / snow / fog over the field, darker stands at night
   onDone: (m: Match, stint?: TeamStats) => void; // stint: your team's stats when your part ended early
 }
 
@@ -104,6 +109,7 @@ export class Game {
   private afterIntro: (() => void) | null = null;
   /** The pregame show plays before a game (automated tests turn it off unless they test it). */
   introEnabled = !(navigator as unknown as { webdriver?: boolean }).webdriver;
+  private cardAt: number | null = null; // career games: when the who's-who card went up (null = not yet shown)
   careerScreens: Screens | null = null; // the career hub and its screens (screen 'career')
   onCareer: (() => void) | null = null; // the title screen's CAREER button (set up in main.ts)
   /** Work that needs the finger to lift first (the clipboard needs a user activation): main.ts runs it on pointerup. */
@@ -224,6 +230,7 @@ export class Game {
     this.runoff = 0;
     this.pauseOpen = false;
     this.confirmSim = false;
+    this.cardAt = null;
     const go = () => { this.startHuddle(); this.showToast(setup.label); };
     if (setup.intro) this.startIntro(setup.intro, go); else go();
   }
@@ -245,6 +252,9 @@ export class Game {
     this.afterIntro = null;
     then?.();
   }
+
+  /** The difficulty tuning in play: the career's, or the settings'. */
+  private get tuning() { return DIFFICULTY_TUNING[this.careerGame?.difficulty ?? this.settings.difficulty]; }
 
   /** Your part of the career game is over: hand the match back. */
   private finishCareerGame(stint?: TeamStats): void {
@@ -392,7 +402,7 @@ export class Game {
       const vs = this.play.vs;
       this.sim.reset(this.play, d.goalY, {
         teams: { off: this.yourTeam, def: this.cpuTeam },
-        cpuTeam: 'def', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
+        cpuTeam: 'def', tuning: this.tuning,
         callBias: reps >= 2 ? (c) => (beats(vs, c) ? 1 / (1 + reps * 0.8) : 1) : undefined,
         recognition: clamp((reps - 1) / 4, 0, 1),
         ballX: d.ballX, mirror: toField !== this.flipped,
@@ -402,7 +412,7 @@ export class Game {
       this.sim.reset(callPlay(d), d.goalY, {
         userDefender: USER_DEFENDER,
         teams: { off: this.cpuTeam, def: this.yourTeam },
-        cpuTeam: 'off', tuning: DIFFICULTY_TUNING[this.settings.difficulty],
+        cpuTeam: 'off', tuning: this.tuning,
         call: this.defCall ?? undefined,
         ballX: d.ballX, mirror: toField !== (Math.random() < 0.2),
       });
@@ -577,7 +587,7 @@ export class Game {
     this.sim.snap();
     this.runoff = 0;
     if (this.onOffense) this.history = [...this.history, this.play.id].slice(-8);
-    if (!this.onOffense) this.cpuQb = new CpuQb(this.sim, DIFFICULTY_TUNING[this.settings.difficulty].qbPicky);
+    if (!this.onOffense) this.cpuQb = new CpuQb(this.sim, this.tuning.qbPicky);
     else if (this.autoplay) this.cpuQb = new CpuQb(this.sim);
   }
 
@@ -730,12 +740,67 @@ export class Game {
       this.renderAim(ctx);
       this.renderBall(ctx);
     }
+    this.renderWeather(ctx);
     this.renderHud(ctx);
     this.renderStick(ctx);
     this.renderToast(ctx);
+    this.renderCard(ctx);
     if (this.screen === 'final') this.renderFinal(ctx);
     if (this.pauseOpen) this.renderPause(ctx);
     if (this.menu?.showSettings) this.menu.render(ctx, this.view);
+  }
+
+  /** A team's abbreviation on its jersey colour (career games); yours outlined in yellow. */
+  private teamChip(ctx: CanvasRenderingContext2D, side: Side, x: number, y: number): void {
+    const k = this.careerGame!.kits![side], ab = this.match.names[side], w = textWidth(ab) + 6;
+    if (side === 'you') { ctx.fillStyle = C.yellow; ctx.fillRect(x - 1, y - 1, w + 2, 11); }
+    ctx.fillStyle = k.trim; ctx.fillRect(x, y, w, 9);
+    ctx.fillStyle = k.jersey; ctx.fillRect(x + 1, y + 1, w - 2, 7);
+    drawText(ctx, ab, x + 3, y + 2, { color: inkOn(k.jersey) });
+  }
+
+  /** Career games: who's who as you take the field (both schools, which one is you), the storyline and the weather. */
+  private renderCard(ctx: CanvasRenderingContext2D): void {
+    const cg = this.careerGame;
+    if (!cg?.schools || !cg.kits || this.screen !== 'play') return;
+    if (this.cardAt === null) this.cardAt = this.clock;
+    const t = this.clock - this.cardAt;
+    if (t > 4.5) return;
+    const v = this.view, mid = v.landscape ? v.w / 2 : W / 2, w = Math.min(170, v.w - 10);
+    const story = cg.card?.story, h = story ? 56 : 46, y0 = v.landscape ? 26 : 50;
+    ctx.globalAlpha = t > 3.8 ? Math.max(0, (4.5 - t) / 0.7) : 1;
+    ctx.fillStyle = 'rgba(17,29,43,0.92)';
+    ctx.fillRect(Math.round(mid - w / 2), y0, w, h);
+    let y = y0 + 4;
+    if (story) { drawText(ctx, story, mid, y, { align: 'center', color: /RIVAL/.test(story) ? C.orange : C.yellow }); y += 10; }
+    const row = (side: Side) => {
+      this.teamChip(ctx, side, mid - w / 2 + 4, y);
+      const sc = cg.schools![side];
+      drawText(ctx, `${sc.name} ${sc.mascot}`, mid - w / 2 + 26, y + 2, { color: C.white });
+      if (side === 'you') drawText(ctx, 'YOU', mid + w / 2 - 4, y + 2, { align: 'right', color: C.yellow });
+      y += 13;
+    };
+    row('you');
+    row('cpu');
+    if (cg.card?.weather) drawText(ctx, cg.card.weather, mid, y + 1, { align: 'center', color: C.grey });
+    ctx.globalAlpha = 1;
+  }
+
+  /** Career games: rain, snow or fog over the field. */
+  private renderWeather(ctx: CanvasRenderingContext2D): void {
+    const sky = this.careerGame?.weather?.sky;
+    if (!sky || sky === 'CLEAR' || sky === 'CLOUDY' || sky === 'WIND') return;
+    const v = this.view, t = this.clock;
+    if (sky === 'FOG') { ctx.fillStyle = 'rgba(194,195,199,0.16)'; ctx.fillRect(0, 0, v.w, v.h); return; }
+    const snow = sky === 'SNOW', n = snow ? 50 : 60;
+    ctx.fillStyle = snow ? 'rgba(255,241,232,0.8)' : 'rgba(170,190,220,0.55)';
+    for (let i = 0; i < n; i++) {
+      const sp = snow ? 18 + (i % 5) * 4 : 170 + (i % 7) * 12;
+      const x = (((i * 73.3 + (snow ? Math.sin(t + i) * 6 : t * 30)) % v.w) + v.w) % v.w;
+      const y = (i * 97.1 + t * sp) % v.h;
+      if (snow) ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
+      else ctx.fillRect(Math.round(x), Math.round(y), 1, 3);
+    }
   }
 
   private renderPauseButton(ctx: CanvasRenderingContext2D): void {
@@ -1046,12 +1111,19 @@ export class Game {
       ctx.fillRect(v.panel - 1 / HD, 0, 1 / HD, v.h);
       ctx.fillRect(v.w - v.panel, 0, 1 / HD, v.h);
       const lx = 3;
-      drawText(ctx, `${m.names.you} ${m.score.you}`, lx, 5, { color: C.blue });
-      pips(lx + 30, 7, m.timeouts.you, C.blue);
-      drawText(ctx, `${m.names.cpu} ${m.score.cpu}`, lx, 13, { color: C.red });
-      pips(lx + 30, 15, m.timeouts.cpu, C.red);
-      drawText(ctx, q, lx, 23);
-      if (playClock !== null) drawText(ctx, `PLAY CLK ${playClock}`, lx, 31, { color: playClock <= 5 ? C.orange : C.grey });
+      if (this.careerGame?.kits) {
+        this.teamChip(ctx, 'you', lx, 3); drawText(ctx, String(m.score.you), lx + 21, 5);
+        pips(lx + 32, 7, m.timeouts.you, C.yellow);
+        this.teamChip(ctx, 'cpu', lx, 13); drawText(ctx, String(m.score.cpu), lx + 21, 15);
+        pips(lx + 32, 17, m.timeouts.cpu, C.grey);
+      } else {
+        drawText(ctx, `${m.names.you} ${m.score.you}`, lx, 5, { color: C.blue });
+        pips(lx + 30, 7, m.timeouts.you, C.blue);
+        drawText(ctx, `${m.names.cpu} ${m.score.cpu}`, lx, 13, { color: C.red });
+        pips(lx + 30, 15, m.timeouts.cpu, C.red);
+      }
+      drawText(ctx, q, lx, 25);
+      if (playClock !== null) drawText(ctx, `PLAY CLK ${playClock}`, lx, 33, { color: playClock <= 5 ? C.orange : C.grey });
       drawText(ctx, offense ? 'OFFENSE' : 'DEFENSE', lx, 41, { color: offense ? C.blue : C.red });
       if (showDown) {
         drawText(ctx, d.downText, lx, 49, { color: C.yellow });
@@ -1072,10 +1144,17 @@ export class Game {
     } else {
       ctx.fillStyle = 'rgba(17,29,43,0.9)';
       ctx.fillRect(0, 0, v.w, 19);
-      drawText(ctx, `${m.names.you} ${m.score.you}`, 5, 3, { color: C.blue });
-      pips(5, 9, m.timeouts.you, C.blue);
-      drawText(ctx, `${m.names.cpu} ${m.score.cpu}`, 45, 3, { color: C.red });
-      pips(45, 9, m.timeouts.cpu, C.red);
+      if (this.careerGame?.kits) { // the schools' colours, yours outlined in yellow
+        this.teamChip(ctx, 'you', 3, 2); drawText(ctx, String(m.score.you), 23, 4);
+        pips(5, 13, m.timeouts.you, C.yellow);
+        this.teamChip(ctx, 'cpu', 43, 2); drawText(ctx, String(m.score.cpu), 63, 4);
+        pips(45, 13, m.timeouts.cpu, C.grey);
+      } else {
+        drawText(ctx, `${m.names.you} ${m.score.you}`, 5, 3, { color: C.blue });
+        pips(5, 9, m.timeouts.you, C.blue);
+        drawText(ctx, `${m.names.cpu} ${m.score.cpu}`, 45, 3, { color: C.red });
+        pips(45, 9, m.timeouts.cpu, C.red);
+      }
       drawText(ctx, q, v.w - 21, 3, { align: 'right' });
       if (playClock !== null) drawText(ctx, `:${String(playClock).padStart(2, '0')}`, v.w - 21, 11, { align: 'right', color: playClock <= 5 ? C.orange : C.grey });
       if (showDown) {
@@ -1182,7 +1261,7 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
   const kits = g.careerGame?.kits; // career games: the end zones in the schools' colours
   const zone = (k: Kit) => shade(k.jersey === '#fff1e8' ? k.trim : k.jersey, -0.45);
   const yourZone = kits ? zone(kits.you) : C.navy, cpuZone = kits ? zone(kits.cpu) : '#7e2553';
-  ctx.fillStyle = '#0a5c36';
+  ctx.fillStyle = g.careerGame?.weather?.night ? '#06301c' : '#0a5c36'; // night games: the lights are on the field
   ctx.fillRect(0, 0, v.w, v.h);
 
   // 5-yard mowing stripes and end zones
@@ -1221,7 +1300,10 @@ function drawField(ctx: CanvasRenderingContext2D, g: Game, ballOn: number, lineT
   }
   const ez = yOf(105);
   if (ez > -10 && ez < v.h + 10) {
-    drawText(ctx, attackingYours ? g.match.names.you : g.match.names.cpu, g.sx(W / 2), ez - 5, { scale: 2, color: attackingYours ? C.blue : C.pink, align: 'center' });
+    const full = g.careerGame?.schools?.[attackingYours ? 'you' : 'cpu'].name; // career games: the school's name, like a real end zone
+    const label = full ?? (attackingYours ? g.match.names.you : g.match.names.cpu);
+    const sc = textWidth(label, 2) <= fw - 8 ? 2 : 1;
+    drawText(ctx, label, g.sx(W / 2), ez - (sc === 2 ? 5 : 2), { scale: sc, color: full ? C.white : attackingYours ? C.blue : C.pink, align: 'center' });
   }
 
   // yard lines, numbers, hash marks

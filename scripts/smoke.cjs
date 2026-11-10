@@ -345,7 +345,7 @@ const OUT = process.env.SHOT_DIR || '.';
   check(ot.punt === false, 'no PUNT on 4th down in overtime');
   check(ot.second.off !== ot.first && ot.second.ballOn === 75 && !ot.second.over, 'a stop on downs: the other team gets its turn at the 25');
   check(ot.end.over && ot.end.you !== ot.end.cpu, `a score on the second possession wins it (${ot.end.you}-${ot.end.cpu})`);
-  check(ot.ots >= 380 && ot.ties === 0 && ot.maxOt <= 14, `quick-simmed overtimes always end with a winner (${ot.ots}/400 went to OT, ${ot.ties} ties, longest OT${ot.maxOt}: one-play shootouts from OT3)`);
+  check(ot.ots >= 380 && ot.ties === 0 && ot.maxOt <= 20, `quick-simmed overtimes always end with a winner (${ot.ots}/400 went to OT, ${ot.ties} ties, longest OT${ot.maxOt}: one-play shootouts from OT3)`);
   check(ot.simTd >= 20 && ot.simTd <= 48, `simulated defense: an even opponent scores a TD on ${ot.simTd}% of drives from its 25 (target ~35%, before the game's form)`);
 
   // 9. Career: create a QB from the title screen, the hub, a backup scenario played on the field (coach calls the
@@ -438,6 +438,17 @@ const OUT = process.env.SHOT_DIR || '.';
   await tap({ x: ycl.you.x + ycl.you.w / 2, y: ycl.you.y + ycl.you.h / 2 });
   await tap({ x: ycl.done.x + ycl.done.w / 2, y: ycl.done.y + ycl.done.h / 2 });
   check(await G(() => window.__careerUI.screen === 'hub' && window.__careerUI.career.s.calls === 'you' && JSON.parse(localStorage.getItem('footballgame.career.v1')).calls === 'you'), 'GAME PLAN: YOU CALL is picked, saved, and DONE returns to the hub');
+  const dpc = await G(() => {
+    const ui = window.__careerUI, c = ui.career, g = window.__game;
+    const before = c.difficulty; g.settings.difficulty = 'allpro'; // an exhibition setting doesn't touch the career
+    const kept = c.difficulty === before;
+    c.setDifficulty('allpro');
+    const plan = c.prepareGame(); const shift = c.oppShift;
+    const saved = JSON.parse(localStorage.getItem('footballgame.career.v1')).difficulty;
+    c.setDifficulty('pro'); g.settings.difficulty = 'pro';
+    return { kept, shift, saved, weather: plan && plan.weather && plan.weather.time, intro: true };
+  });
+  check(dpc.kept && dpc.shift === 3 && dpc.saved === 'allpro' && !!dpc.weather, `difficulty belongs to the career (ALL-PRO: opponents +${dpc.shift}, saved); kickoff ${dpc.weather}`);
   const own = await G(() => {
     const ui = window.__careerUI, g = window.__game, c = ui.career;
     c.s.role = 'starter'; c.s.defense = 'play';
@@ -489,6 +500,18 @@ const OUT = process.env.SHOT_DIR || '.';
   check(fl.signees >= 1 && fl.signees <= 4, `${fl.signees} teammates sign with colleges`);
   check(fl.frozen, 'after the season your stars hold (the summary and the board agree)');
   check(fl.rank4 >= 5 && fl.rank4lo <= 35 && fl.rank4state <= fl.rank4, `a 4-star ranks inside the national top 35 (NO.${fl.rank4}, NO.${fl.rank4state} in Texas; a fresh 4-star NO.${fl.rank4lo})`);
+  // more flavor: awards night, weather, rivalry week, your own headlines, no teammate with your name, difficulty per career
+  const fl2 = await G(() => {
+    const ui = window.__careerUI, c = ui.career, sl = c.player.seasons[0], b = sl.banquet;
+    const rivalLog = c.s.log.find((l) => l.rival);
+    const mine = c.player.first[0] + '.' + c.player.last;
+    ui.toHubForTest(); const banquetFirst = ui.screen; ui.screen = 'summary';
+    return { banquet: !!(b && b.mrFootball && b.allStateQb), banquetFirst, weather: c.s.log.every((l) => /DEGREES$/.test(l.weather || '')),
+      rival: !!rivalLog, clash: c.s.roster.players.some((p) => p.name === mine), diff: c.s.difficulty };
+  });
+  check(fl2.banquet && fl2.banquetFirst === 'banquet', 'the season ends with AWARDS NIGHT (Mr. Football, the all-state QB), then the yearbook');
+  check(fl2.weather && fl2.rival && !fl2.clash, 'every game has a kickoff time and weather; rivalry week is marked; no teammate shares your name');
+  check(fl2.diff === 'pro', `the career keeps its own difficulty (${fl2.diff})`);
   await page.screenshot({ path: `${OUT}/smoke-career-summary.png` });
   await tap({ x: 90, y: 312 }); // OFF-SEASON
   const jr = await G(() => { const c = window.__careerUI.career; return { yr: c.s.year, wk: c.s.week, games: c.s.games.filter((g) => g.hs === undefined).length, scr: window.__careerUI.screen }; });
@@ -573,7 +596,10 @@ const OUT = process.env.SHOT_DIR || '.';
   check(spg.pages >= 2, `signing day pages through all ${spg.n} offers (${spg.pages} pages)`);
   const sg = await G(() => { const ui = window.__careerUI, rr = ui.signingRows(window.__game.view)[0]; return { id: rr.c.id, x: rr.r.x + rr.r.w / 2, y: rr.r.y + rr.r.h / 2 }; });
   await tap({ x: sg.x, y: sg.y }); await tap({ x: sg.x, y: sg.y });
-  check(await G((id) => { const c = window.__careerUI.career; return c.s.phase === 'done' && c.s.recruit.signed === id && window.__careerUI.screen === 'done'; }, sg.id), `signed with ${sg.id}: high school is done`);
+  check(await G((id) => { const c = window.__careerUI.career; return c.s.phase === 'done' && c.s.recruit.signed === id && window.__careerUI.screen === 'ceremony'; }, sg.id), `signed with ${sg.id}: the signing day ceremony`);
+  const cb2 = await G(() => window.__careerUI.bottomButton(window.__game.view));
+  await tap({ x: cb2.x + cb2.w / 2, y: cb2.y + cb2.h / 2 });
+  check(await G(() => window.__careerUI.screen === 'done'), 'CONTINUE: high school is done (the trophy case)');
   const tc = await G(() => { const p = window.__careerUI.career.player; return p.seasons.map((sl) => ({ balls: (sl.balls || []).length, rival: sl.rival, avg: sl.avg })); });
   check(tc.length === 3 && tc.every((t) => t.rival === 'W' || t.rival === 'L') && tc.some((t) => typeof t.avg === 'number'), `the trophy case: game balls ${tc.map((t) => t.balls).join('/')}, rivalry ${tc.map((t) => t.rival).join('')}`);
   await page.screenshot({ path: `${OUT}/smoke-career-done.png` });

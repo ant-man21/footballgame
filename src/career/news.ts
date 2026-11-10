@@ -5,6 +5,8 @@
 import type { TeamStats } from '../drive';
 import type { Roster } from '../ratings';
 import { clamp } from '../util';
+import { type Region, randomName } from './hsnames';
+import { Rng } from './rng';
 import { type GameRec, type Round, type Team, played, standings, winnerOf } from './league';
 import { type College, COLLEGES, affinityFor } from './recruiting';
 
@@ -55,11 +57,17 @@ export function headlines(teams: Team[], games: GameRec[], week: number, prevPol
     if (rl && (!rw || rw > rl + 3)) out.push({ p: 6, text: `UPSET: ${name(w)} STUN NO.${rl} ${name(l)}, ${score}` });
     if (g.ot) out.push({ p: 3, text: `${name(w)} OUTLAST ${name(l)} IN OT, ${score}` });
     if (rw && margin >= 28) out.push({ p: 2, text: `NO.${rw} ${name(w)} ROLL PAST ${name(l)}, ${score}` });
-    if (box && (box.tds >= 5 || box.yards >= 400)) out.push({ p: 2, text: `${name(w)} QB: ${box.yards} YDS, ${box.tds} TD IN A WIN` });
+    if (lo === 0) out.push({ p: 2, text: `${name(w)} BLANK ${name(l)}, ${score}` });
+    if (box && (box.tds >= 6 || box.yards >= 450)) {
+      const t = [`${name(w)} QB THROWS FOR ${box.yards} IN A ${margin >= 14 ? 'ROUT' : 'WIN'}`, `${name(w)} AIR IT OUT: ${box.tds} TD PASSES`,
+        `${box.yards} YARDS: ${name(w)} QB LIGHTS UP ${name(l)}`][(g.week + w) % 3];
+      out.push({ p: 2.5, text: t, big: true } as { p: number; text: string });
+    }
     const streak = streakOf(games, w, week);
     if (streak >= 6 && !g.round) out.push({ p: 1, text: `${name(w)} WIN ${streak} STRAIGHT` });
   }
-  return out.sort((a, b) => b.p - a.p || Math.random() - 0.5).slice(0, 4).map((h) => h.text);
+  const big = out.filter((h) => (h as { big?: boolean }).big).sort(() => Math.random() - 0.5).slice(1); // one big passing day a week
+  return out.filter((h) => !big.includes(h)).sort((a, b) => b.p - a.p || Math.random() - 0.5).slice(0, 4).map((h) => h.text);
 }
 
 // ---------- pregame ----------
@@ -71,7 +79,7 @@ export function rivalOf(teams: Team[], mySchool: number, seed: number): number {
   const others = teams.filter((t) => t.region === region && t.id !== mySchool).map((t) => t.id);
   return others[Math.abs(seed) % others.length];
 }
-export const rivalTrophy = (seed: number) => `THE ${TROPHIES[Math.abs(seed >> 3) % TROPHIES.length]}`;
+export const rivalTrophy = (seed: number): string => `THE ${TROPHIES[Math.abs(seed >> 3) % TROPHIES.length]}`;
 export const rivalryName = (seed: number) => `THE BATTLE FOR ${rivalTrophy(seed)}`;
 
 export interface StoryInput {
@@ -177,4 +185,99 @@ function weighted(pool: College[], w: (c: College) => number): College {
   let x = Math.random() * pool.reduce((t, c) => t + w(c) ** 3, 0);
   for (const c of pool) { x -= w(c) ** 3; if (x <= 0) return c; }
   return pool[0];
+}
+
+// ---------- your own news ----------
+
+/** Headlines about you from this week's news (offers, stars, rankings, a big night). */
+export function myHeadlines(first: string, last: string, news: string[], grade: number | null, line: TeamStats): string[] {
+  const out: string[] = [];
+  const offers = news.filter((n) => n.startsWith('OFFER: ')).map((n) => n.slice(7).replace(/!$/, ''));
+  const star = news.find((n) => /^NOW A \d-STAR/.test(n));
+  if (star) out.push(`${first} ${last} IS ${star.slice(0, -1)}`);
+  if (offers.length > 1) out.push(`${last} PICKS UP ${offers.length} OFFERS, INCLUDING ${offers[0]}`);
+  else if (offers.length) out.push(`${last} PICKS UP AN OFFER FROM ${offers[0]}`);
+  const rank = news.find((n) => n.includes('QB IN THE NATION'));
+  if (rank) { const m = rank.match(/NO\.(\d+) QB IN THE NATION/); if (m) out.push(`PREP ZONE RANKS ${last} NO.${m[1]} QB IN THE NATION`); }
+  if (grade !== null && grade >= 88 && out.length < 2) out.push(`${last} SHINES: ${line.yards} YDS, ${line.tds} TD`);
+  return out.slice(0, 2);
+}
+
+// ---------- game day: kickoff time and weather ----------
+
+export type Sky = 'CLEAR' | 'CLOUDY' | 'RAIN' | 'WIND' | 'FOG' | 'SNOW';
+export interface Weather { time: string; night: boolean; sky: Sky; temp: number }
+const HEAT: Record<Region, [number, number]> = { // late-August temperature, degrees lost a week
+  TEXAS: [96, 3], SOUTH: [91, 3], WEST: [86, 2.5], PLAINS: [86, 4], MIDWEST: [82, 4], NE: [80, 4],
+};
+/** Kickoff time and weather for a game (stable for a given career, season and week). */
+export function weatherFor(seed: number, year: number, week: number, region: Region, round?: Round): Weather {
+  const rng = new Rng(seed * 7 + year * 131 + week * 17);
+  const x = rng.next();
+  const time = round === 'F' ? 'SATURDAY 7:00 PM' : round === 'SF' ? 'SATURDAY 1:00 PM'
+    : x < 0.8 ? 'FRIDAY 7:30 PM' : x < 0.9 ? 'THURSDAY 7:00 PM' : 'SATURDAY 2:00 PM';
+  const night = time.endsWith('PM') && !time.includes(' 1:00') && !time.includes(' 2:00');
+  const [base, drop] = HEAT[region];
+  const temp = Math.round(base - drop * (week - 1) - (night ? 7 : 0) + rng.range(-6, 6));
+  const r = rng.next();
+  const sky: Sky = r < 0.13 ? (temp <= 33 ? 'SNOW' : 'RAIN') : r < 0.21 ? 'WIND' : r < 0.25 && night ? 'FOG' : r < 0.6 ? 'CLOUDY' : 'CLEAR';
+  return { time, night, sky, temp };
+}
+export const weatherText = (w: Weather) =>
+  `${w.time} - ${w.sky === 'CLEAR' ? (w.night ? 'CLEAR' : 'SUNNY') : w.sky}, ${w.temp} DEGREES`;
+
+// ---------- rivalry week ----------
+
+/** What the other side is saying before rivalry week. */
+export function trashTalk(o: { seed: number; year: number; qb: string; you: string; trophy: string; lastYear: 'W' | 'L' | null }): string {
+  const { qb, you, trophy, lastYear } = o;
+  const lines = lastYear === 'L' ? [`${trophy} IS STAYING RIGHT WHERE IT IS.`, 'WE OWN THIS RIVALRY. SAME RESULT FRIDAY.']
+    : lastYear === 'W' ? ['WE HAVE NOT FORGOTTEN LAST YEAR.', `${trophy} IS COMING BACK WITH US.`]
+    : [`${you} IS ALL HYPE. WE WILL SEE FRIDAY.`, `${trophy} BELONGS TO US.`, 'STARS DO NOT MEAN ANYTHING ON FRIDAY NIGHT.'];
+  return `${qb} (QB): ${lines[Math.abs(o.seed + o.year) % lines.length]}`;
+}
+
+// ---------- the awards banquet ----------
+
+export interface Honoree { name: string; pos: string; school: string; you: boolean }
+export interface Banquet {
+  mrFootball: Honoree; // the state's best player
+  allStateQb: Honoree; // first-team all-state quarterback
+  teammates: string[]; // your teammates on the all-state team, e.g. "WR C.FOSTER"
+  coach?: string; // coach of the year (yours, after a state title)
+  allAmerican?: { team: 'EAST' | 'WEST'; line: string; us: number; them: number; mvp: boolean }; // seniors: the all-star game
+}
+const short = () => { const n = randomName(); return `${n.first[0]}.${n.last}`; };
+const POS_STAR = ['RB', 'LB', 'WR', 'DE', 'RB', 'QB'];
+export const coachOf = (school: string) => `COACH ${pickBy(school, ['HOLT', 'RAMSEY', 'DUNN', 'BECKER', 'SALAS', 'PRUITT', 'OKAFOR', 'LANE'])}`;
+const pickBy = <T>(key: string, list: T[]): T => list[[...key].reduce((t, ch) => (t * 31 + ch.charCodeAt(0)) % 100003, 11) % list.length];
+
+/**
+ * The end-of-season awards: Mr. Football (you, if you were the best player in the
+ * state), the all-state QB, your teammates who made all-state, and for top senior
+ * recruits the All-American game.
+ */
+export function banquet(o: {
+  you: string; year: number; avg: number | null; gs: number; wins: number; champion: boolean; allState: boolean; finish: string;
+  stars: number; nationalRank: number | null; school: Team; roster: Roster; teams: Team[]; poll?: number[]; champ: Team | null;
+}): Banquet {
+  const { you, year, avg, gs, wins, champion, school, roster } = o;
+  const top = o.champ ?? o.teams[(o.poll ?? [])[0] ?? 0];
+  const best = roster.players.filter((p) => p.slot !== 'QB').sort((a, b) => b.ovr - a.ovr);
+  const mine = year >= 1 && gs >= 8 && avg !== null && (year === 2 || avg >= 88) && ((avg >= 80 && wins >= 9) || (champion && avg >= 74));
+  const mrFootball: Honoree = mine ? { name: you, pos: 'QB', school: school.name, you: true }
+    : top.id === school.id ? { name: best[0].name, pos: best[0].pos, school: school.name, you: false }
+      : { name: short(), pos: POS_STAR[Math.floor(Math.random() * POS_STAR.length)], school: top.name, you: false };
+  const other = o.teams.find((t) => t.id !== school.id && t.id === ((o.poll ?? [])[0] === school.id ? (o.poll ?? [])[1] : (o.poll ?? [])[0])) ?? top;
+  const allStateQb: Honoree = o.allState ? { name: you, pos: 'QB', school: school.name, you: true } : { name: short(), pos: 'QB', school: other.name, you: false };
+  const teammates = best.filter((p) => p.ovr >= (wins >= 6 ? 66 : 70)).slice(0, 3).map((p) => `${p.pos} ${p.name}`);
+  const b: Banquet = { mrFootball, allStateQb, teammates };
+  if (o.finish === 'STATE CHAMPIONS') b.coach = coachOf(school.name);
+  if (year === 2 && (o.stars >= 5 || (o.stars >= 4 && (o.nationalRank ?? 999) <= 20))) {
+    const att = Math.round(10 + Math.random() * 8), cmp = Math.round(att * (0.55 + Math.random() * 0.25));
+    const yds = Math.round(cmp * (9 + Math.random() * 6)), td = Math.random() < 0.3 ? 2 : Math.random() < 0.6 ? 1 : 0;
+    const us = 7 * Math.floor(1 + Math.random() * 4) + (Math.random() < 0.4 ? 3 : 0), them = 7 * Math.floor(Math.random() * 4) + (Math.random() < 0.4 ? 3 : 0);
+    b.allAmerican = { team: Math.random() < 0.5 ? 'EAST' : 'WEST', line: `${cmp}/${att} ${yds} YDS ${td} TD`, us, them, mvp: td >= 2 && us > them };
+  }
+  return b;
 }
