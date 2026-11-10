@@ -281,3 +281,23 @@ export function banquet(o: {
   }
   return b;
 }
+
+// ---------- box scores ----------
+
+/**
+ * A simulated game's box score, made to read like real football. The quick-sim is
+ * tuned to how the arcade game plays (auto-played QBs almost never take sacks and
+ * complete ~70%), so other games' box scores add the incompletions and sacks a
+ * real high school QB has. Completions, yards, touchdowns, picks (and so the score
+ * and every result) stay exactly as played. edge: that offense minus the defense
+ * it faced, in rating points.
+ */
+export function dressBox(st: TeamStats, edge: number): TeamStats {
+  const e = clamp(edge, -12, 12);
+  const pct = clamp(0.61 + e * 0.009, 0.45, 0.74); // completion rate: good offenses hit more
+  const att = Math.max(st.att, Math.round(st.cmp / pct + (Math.random() - 0.5) * 3));
+  const meanSacks = 1.7 * clamp(1 - e * 0.06, 0.4, 2); // weak lines give up more
+  let sacks = 0;
+  for (let i = 0; i < 30; i++) if (Math.random() < meanSacks / 30) sacks++;
+  return { ...st, att, sacks: st.sacks + sacks, plays: st.plays + (att - st.att) + sacks };
+}

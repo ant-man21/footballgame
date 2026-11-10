@@ -25,7 +25,7 @@ import {
 import { type Units, overtimeWinner, simGame, simToEnd, simUntil } from './quicksim';
 import { Rng, newSeed } from './rng';
 import {
-  type Key, type TargetLine, type Weather, banquet, headlines, keyMet, keysFor, myHeadlines, rivalOf, rivalTrophy, statePoll, storyline,
+  type Key, type TargetLine, type Weather, banquet, dressBox, headlines, keyMet, keysFor, myHeadlines, rivalOf, rivalTrophy, statePoll, storyline,
   targetLine, teammateSignees, trashTalk, weatherFor,
 } from './news';
 import { CAREER_VERSION, saveCareer } from './save';
@@ -374,7 +374,7 @@ export class Career {
     g.ot = m.ot > 0 || hs === as;
     if (hs === as) { if (overtimeWinner(uh, ua) === 'a') hs += 7; else as += 7; }
     g.hs = hs; g.as = as;
-    g.box = { home: { ...m.stats.you }, away: { ...m.stats.cpu } };
+    g.box = { home: dressBox(m.stats.you, uh.off - ua.def), away: dressBox(m.stats.cpu, ua.off - uh.def) }; // read like real box scores (results as played)
   }
 
   /** Next week: sets up the playoffs after the regular season, sims the rest once you're out, ends the season. */
