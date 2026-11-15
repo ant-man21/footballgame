@@ -1112,7 +1112,7 @@ export class Game {
       return;
     }
     const from = { x: qb.x, y: qb.y - 3 };
-    const { peak } = flightFor(from, to);
+    const { peak } = flightFor(from, to, this.sim.zip);
     const steps = Math.max(6, Math.floor((dist(from, to) * s) / 6));
     const march = (this.clock * 2) % 1;
     for (let i = 0; i < steps; i++) {

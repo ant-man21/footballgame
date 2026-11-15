@@ -18,6 +18,31 @@ export const ARCHETYPES: { id: Archetype; name: string; note: string; base: Part
   { id: 'dual', name: 'DUAL THREAT', note: 'FAST, BEATS YOU WITH HIS LEGS', base: { spd: 64, elu: 58, arm: 58, acc: 55, dec: 54 } },
 ];
 
+/**
+ * Special abilities: one per archetype, earned when its rating reaches a mark
+ * (nobody starts with one). Placeholders for now: unlocking shows on the hub,
+ * STATS and in the news, but they don't change play yet.
+ */
+export interface Ability { id: string; name: string; note: string; archetype: Archetype; key: RatingKey; at: number }
+export const ABILITIES: Ability[] = [
+  { id: 'presnap', name: 'PRE-SNAP READ', note: 'SEE THE COVERAGE AND THE BLITZ BEFORE THE SNAP', archetype: 'pocket', key: 'acc', at: 76 },
+  { id: 'fastball', name: 'FASTBALL', note: 'EXTRA ZIP: FIT IT INTO TIGHT WINDOWS', archetype: 'gunslinger', key: 'arm', at: 75 },
+  { id: 'sackalert', name: 'SACK ALERT', note: 'A WARNING BEFORE A FREE RUSHER GETS THERE', archetype: 'manager', key: 'dec', at: 75 },
+  { id: 'escape', name: 'ESCAPE ARTIST', note: 'SHAKE OFF THE FIRST SACK ATTEMPT', archetype: 'dual', key: 'spd', at: 73 },
+];
+export const RATING_NAMES: Partial<Record<RatingKey, string>> = { acc: 'ACC', arm: 'ARM', dec: 'DEC', spd: 'SPD', elu: 'ELU' };
+/** Your archetype's ability. */
+export const abilityOf = (p: { archetype: Archetype }) => ABILITIES.find((a) => a.archetype === p.archetype)!;
+/** Has he earned it? */
+export const hasAbility = (p: CareerPlayer) => { const a = abilityOf(p); return p.r[a.key] >= a.at; };
+/** Checks for a newly earned ability (once): its news line, or null. */
+export function checkAbility(p: CareerPlayer): string | null {
+  const a = abilityOf(p);
+  if (!hasAbility(p) || (p.unlocked ?? []).includes(a.id)) return null;
+  p.unlocked = [...(p.unlocked ?? []), a.id];
+  return `ABILITY UNLOCKED: ${a.name}!`;
+}
+
 export type Focus = 'acc' | 'arm' | 'dec' | 'spd';
 export const FOCUSES: { id: Focus; name: string }[] = [
   { id: 'acc', name: 'ACCURACY' }, { id: 'arm', name: 'ARM' }, { id: 'dec', name: 'READS' }, { id: 'spd', name: 'MOBILITY' },
@@ -53,6 +78,7 @@ export interface CareerPlayer {
   growth: number; // hidden: how fast this player develops (0.85-1.15)
   seasons: SeasonLine[];
   awards: string[];
+  unlocked?: string[]; // abilities earned (ids)
 }
 
 export function createPlayer(first: string, last: string, archetype: Archetype): CareerPlayer {

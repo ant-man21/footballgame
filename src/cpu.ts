@@ -30,9 +30,9 @@ export function predict(r: Actor, secs: number, endLineY: number): Vec {
 export function readReceiver(sim: Sim, r: Actor): { to: Vec; margin: number } {
   const from = { x: sim.qb.x, y: sim.qb.y - 3 };
   let to = { x: r.x, y: r.y };
-  for (let i = 0; i < 4; i++) to = predict(r, flightFor(from, to).dur, sim.endLineY);
+  for (let i = 0; i < 4; i++) to = predict(r, flightFor(from, to, sim.zip).dur, sim.endLineY);
   if (dist(from, to) > sim.maxThrow) return { to, margin: -999 };
-  const dur = flightFor(from, to).dur;
+  const dur = flightFor(from, to, sim.zip).dur;
   let margin = Infinity;
   for (const d of sim.defense) {
     if (d.job === 'rush' && !d.user) continue;

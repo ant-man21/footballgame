@@ -16,7 +16,7 @@ import {
 } from './league';
 import {
   type Archetype, type CareerPlayer, type Focus, HS_TIER, asRosterPlayer, createPlayer, gameXp, gradeGame, offseason,
-  classNorm, displayName, practice, production, qbNormOvr, qbOvr, seasonProduction,
+  checkAbility, classNorm, displayName, practice, production, qbNormOvr, qbOvr, seasonProduction,
 } from './player';
 import { type Difficulty, loadSettings } from '../settings';
 import {
@@ -339,6 +339,8 @@ export class Career {
     add(practice(this.player, s.focus));
     if (grade !== null) add(gameXp(this.player, grade, line.att + line.sacks + (line.rush ?? 0), line.rush ?? 0));
     const news: string[] = [];
+    const earned = checkAbility(this.player);
+    if (earned) news.push(earned);
 
     let battle: number | null = null;
     if (s.role === 'backup' && s.starter) {
@@ -538,6 +540,8 @@ export class Career {
     }
     const rng = new Rng(s.seed + 100 * (s.year + 2));
     offseason(this.player);
+    const earned = checkAbility(this.player); // the summer's work
+    if (earned) s.recruitFeed = [earned, ...s.recruitFeed].slice(0, 10);
     rollNeeds(s.recruit);
     for (const t of s.teams) {
       const st = standings(s.teams, s.games).get(t.id)!;

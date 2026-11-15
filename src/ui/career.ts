@@ -8,7 +8,7 @@ import { STATES, randomName } from '../career/hsnames';
 import { type GameRec, REGION_NAMES, ROUND_NAMES, playoffRounds, played, regionCount, regionOrder, standings, winnerOf } from '../career/league';
 import { NATIONAL_SIZE, natRank, natRow } from '../career/nation';
 import {
-  ARCHETYPES, type Archetype, CLASS_NAMES, CLASS_SHORT, FOCUSES, displayName, jerseyNo, letterGrade, passerRating, qbOvr,
+  ARCHETYPES, type Archetype, RATING_NAMES, abilityOf, hasAbility, CLASS_NAMES, CLASS_SHORT, FOCUSES, displayName, jerseyNo, letterGrade, passerRating, qbOvr,
 } from '../career/player';
 import { type College, MAX_VISITS, TIER_NAMES, board, college, offerList, toNextStar, walkOns } from '../career/recruiting';
 import { deleteCareer, loadCareer, saveCareer } from '../career/save';
@@ -516,7 +516,10 @@ export class CareerScreens {
     y += 10;
     const b = a.base;
     drawText(ctx, `ACC ${b.acc} ARM ${b.arm} DEC ${b.dec} SPD ${b.spd}`, L.archX, y, { align: 'center' });
-    y += 14;
+    y += 9;
+    const ab = abilityOf({ archetype: this.arch });
+    drawText(ctx, `ABILITY: ${ab.name} AT ${RATING_NAMES[ab.key]} ${ab.at}`, L.archX, y, { align: 'center', color: C.yellow });
+    y += 12;
     for (const t of wrap('START AS A SOPHOMORE BACKUP. EARN THE JOB, WIN STATE, GET RECRUITED.', v.landscape ? 34 : 40)) {
       drawText(ctx, t, L.archX, y, { align: 'center', color: C.grey }); y += 8;
     }
@@ -564,7 +567,12 @@ export class CareerScreens {
     box(ctx, r(x, Y, w, L.you.h), C.navy, '#3b4a6b');
     drawText(ctx, `${p.first} ${p.last}`, x + 4, Y + 4);
     const backup = s.role === 'backup';
-    drawText(ctx, backup ? `BACKUP - BEHIND ${s.starter?.name} (${s.starter?.ovr})` : ARCHETYPES.find((a) => a.id === p.archetype)!.name, x + 4, Y + 12, { color: C.grey });
+    const archName = ARCHETYPES.find((a) => a.id === p.archetype)!.name;
+    drawText(ctx, backup ? `BACKUP - BEHIND ${s.starter?.name} (${s.starter?.ovr})` : archName, x + 4, Y + 12, { color: C.grey });
+    if (!backup) { // your ability: earned (green) or what it takes (locked)
+      const ab = abilityOf(p), got = hasAbility(p);
+      drawText(ctx, got ? ab.name : `${ab.name} AT ${RATING_NAMES[ab.key]} ${ab.at}`, x + 8 + textWidth(archName), Y + 12, { color: got ? C.green : C.darkGrey });
+    }
     drawText(ctx, String(qbOvr(p)), x + w - 5, Y + 4, { scale: 2, align: 'right', color: C.yellow });
     drawText(ctx, 'OVR', x + w - 30, Y + 7, { align: 'right', color: C.grey });
     stars(ctx, x + 4, Y + 21, s.recruit.stars);
@@ -1314,7 +1322,15 @@ export class CareerScreens {
     drawText(ctx, `${line(tot)}  ${pct}%  RTG ${passerRating(tot).toFixed(1)}`, x, y);
     y += 9;
     drawText(ctx, rushLine(tot) ? `RUSHING  ${rushLine(tot, true)}` : 'RUSHING  NONE YET', x, y, { color: rushLine(tot) ? C.white : C.darkGrey });
-    y += 12;
+    y += 9;
+    { // your ability: earned or not yet (the effect comes in a later build)
+      const ab = abilityOf(p), got = hasAbility(p);
+      drawText(ctx, `ABILITY  ${ab.name}`, x, y, { color: got ? C.green : C.grey });
+      drawText(ctx, got ? 'UNLOCKED' : `${RATING_NAMES[ab.key]} ${p.r[ab.key]}/${ab.at}`, x + w, y, { align: 'right', color: got ? C.green : C.darkGrey });
+      y += 8;
+      drawText(ctx, ab.note, x, y, { color: C.darkGrey });
+      y += 12;
+    }
     drawText(ctx, 'GAME LOG', x, y, { color: C.grey });
     y += 9;
     const rows = v.landscape ? 7 : 13;

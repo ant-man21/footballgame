@@ -138,10 +138,11 @@ function gauss(): number {
 /** Height of the ball above the ground at flight progress s (0..1). */
 export const arcHeight = (peak: number, s: number) => 4 * peak * s * (1 - s);
 
-export function flightFor(from: Vec, to: Vec): { dur: number; peak: number } {
+/** Ball flight for a throw. zip (<= 1, from the QB's arm) makes it faster and flatter; 1 = the base speed. */
+export function flightFor(from: Vec, to: Vec, zip = 1): { dur: number; peak: number } {
   const d = dist(from, to);
   // deep balls hang in the air, giving defenders time to close
-  return { dur: (0.35 + d / 150) * TIME_SCALE, peak: clamp(d * 0.28, 5, 56) };
+  return { dur: (0.35 + d / 150) * TIME_SCALE * zip, peak: clamp(d * 0.28, 5, 56) * (0.4 + 0.6 * zip) };
 }
 
 function makeActor(id: string, team: Team, kind: Kind, x: number, y: number): Actor {
@@ -194,6 +195,12 @@ export class Sim {
   tier: Record<Team, number> = { off: 0, def: 0 };
   /** QB accuracy: scales the landing oval. */
   get accFactor(): number { return clamp(1 - this.rd(this.qb, 'acc') * 0.012, 0.55, 1.45); }
+  /**
+   * Throw power: a strong arm gets the ball there sooner (see it, hit it), up to
+   * 20% faster. Never slower than the base speed: an average or weaker arm
+   * throws exactly as before.
+   */
+  get zip(): number { return clamp(1 - this.rd(this.qb, 'arm') * 0.012, 0.8, 1); }
   /** QB arm: deep balls stay tighter (the deep part of the oval). */
   get armFactor(): number { return clamp(1 - this.rd(this.qb, 'arm') * 0.015, 0.6, 1.4); }
   /** QB reads (decisions): poise under pressure (how much a rush widens the oval). */
@@ -558,7 +565,7 @@ export class Sim {
       to = { x: aim.x + u.x * a * along - u.y * b * lat, y: aim.y + u.y * a * along + u.x * b * lat };
     }
     to.x = clamp(to.x, FIELD_LEFT, FIELD_RIGHT);
-    this.ball = { aim, from, to, ...flightFor(from, to), t: 0, carrier: null };
+    this.ball = { aim, from, to, ...flightFor(from, to, this.zip), t: 0, carrier: null };
     this.phase = 'air';
     this.airT = 0;
     this.intended = null;
