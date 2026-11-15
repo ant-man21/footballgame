@@ -87,7 +87,8 @@ export class Game {
   private rosterFrom: 'title' | 'pause' | 'career' = 'title';
   cpuTeam: Roster = makeRoster('CPU', DIFFICULTY_TUNING[this.settings.difficulty].strength);
   history: string[] = []; // your recent play calls: the defense notices repeats
-  throws: { who: string | null; depth: number }[] = []; // your recent throws: who to, how deep (the defense adjusts)
+  throws: { who: string | null; depth: number }[] = [];
+  private queuedScramble = false; // a scramble called before he had the snap // your recent throws: who to, how deep (the defense adjusts)
   view: View = PORTRAIT;
   clock = 0;
   paused = false; // tests step the sim by hand
@@ -308,6 +309,7 @@ export class Game {
   startHuddle(): void {
     this.banner = null;
     this.queuedThrow = null;
+    this.queuedScramble = false;
     this.cpuQb = null;
     this.drag = null;
     this.stick = null;
@@ -660,13 +662,14 @@ export class Game {
   /** A "throw" aimed almost straight behind the QB means scramble (nobody is back there to throw to). */
   isScramble(to: Vec): boolean {
     const qb = this.sim.qb, back = to.y - qb.y;
-    return back > 4 * YD && Math.abs(to.x - qb.x) < back * 0.75;
+    return back > 3 * YD && Math.abs(to.x - qb.x) < back; // within 45 degrees of straight back
   }
 
   /** Tuck it and run: drag anywhere to steer him (let go and he runs on his own). */
   scramble(): void {
-    if (this.sim.phase !== 'live' || this.sim.t < SNAP_CATCH * 0.5) return;
+    if (this.sim.phase !== 'live') return;
     this.queuedThrow = null;
+    if (this.sim.t < SNAP_CATCH) { this.queuedScramble = true; return; } // he takes off as soon as he has the ball
     this.sim.keep();
     this.showToast('SCRAMBLE! DRAG TO STEER', C.yellow);
   }
@@ -743,7 +746,10 @@ export class Game {
       if (to) sim.throwTo(to);
     }
     if (this.queuedThrow && sim.t >= SNAP_CATCH) { sim.throwTo(this.queuedThrow); this.queuedThrow = null; }
-    if (sim.phase !== 'live') { this.drag = null; this.queuedThrow = null; } // sacked mid-drag
+    if (this.queuedScramble && sim.t >= SNAP_CATCH && sim.phase === 'live') { this.queuedScramble = false; this.scramble(); }
+    // your QB took off (a draw) with your finger still down: that drag steers him now
+    if (sim.phase === 'run' && sim.carrier === sim.qb && this.drag && this.onOffense) { this.stick = { origin: this.drag.cur, cur: this.drag.cur }; this.drag = null; }
+    if (sim.phase !== 'live') { this.drag = null; this.queuedThrow = null; this.queuedScramble = false; } // sacked mid-drag
     if (!wasDone && sim.phase === 'done') {
       const q = this.match.quarter;
       const offenseBefore = this.match.offense;

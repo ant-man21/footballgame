@@ -496,7 +496,7 @@ export class Sim {
   }
 
   /** The QB keeps it (a scramble, a sneak or a draw): he's the runner; the line holds its blocks a moment longer. */
-  keep(speed = 6.4): void {
+  keep(speed = 7.3): void {
     if (this.phase !== 'live') return;
     const qb = this.qb;
     qb.speed = speed * YD * clamp(1 + this.rd(qb, 'spd') * 0.006, 0.8, 1.25);
@@ -505,7 +505,7 @@ export class Sim {
     this.carrier = qb;
     this.result = 'run';
     this.runT = 0;
-    this.runStart = 0.5;
+    this.runStart = 0.7;
     qb.vel = { x: 0, y: -1 };
     qb.dir = { x: 0, y: -1 };
     // linemen in a block keep their man tied up for a moment (then everyone chases)
@@ -513,14 +513,19 @@ export class Sim {
       const r = b.engaged;
       if (r && r.engagedBy === b) {
         r.heldBy = b;
-        r.heldUntil = this.t + rand(0.4, 1.1) * (this.play.run === 'draw' ? 1.5 : 1) * clamp(1 + this.rd(b, 'blk') * 0.012, 0.7, 1.3);
+        r.heldUntil = this.t + rand(1.1, 1.8) * (this.play.run === 'draw' ? 1.3 : 1) * clamp(1 + this.rd(b, 'blk') * 0.012, 0.7, 1.3);
         b.blockTarget = r;
         b.job = 'lead';
         b.leadReadyAt = this.t;
       }
     }
     for (const a of this.actors) { a.engaged = null; a.engagedBy = null; }
-    for (const d of this.defense) d.react = d.y > qb.y - 12 * YD ? rand(0.05, 0.2) : rand(0.2, 0.45); // the ones near him see it first
+    // who sees it: a free rusher right away; coverage players have their backs turned (on a draw they've bit on the pass)
+    const draw = this.play.run === 'draw';
+    for (const d of this.defense) {
+      d.react = d.job === 'rush' ? (d.heldBy ? rand(0.3, 0.5) : rand(0.2, 0.35)) // (a blocked rusher has to get off the block and turn)
+        : (draw ? rand(0.55, 0.9) : rand(0.35, 0.6)) + (d.zone?.deep ? 0.2 : 0);
+    }
     this.phase = 'run';
   }
 
@@ -1031,11 +1036,12 @@ export class Sim {
     }
     if (c.x < FIELD_LEFT + 10) want.x += (FIELD_LEFT + 10 - c.x) / 10;
     if (c.x > FIELD_RIGHT - 10) want.x -= (c.x - (FIELD_RIGHT - 10)) / 10;
+    if (!steer && c.kind === 'qb' && c.y > LOS_Y - 2 * YD) { const l = this.lane(c, active); want.x = l.x; want.y = l.y; } // behind the line: find the hole
     if (steer) { want.x = this.userMove.x; want.y = this.userMove.y; }
     else want.y = Math.min(want.y, -0.35); // always keep going forward
     const wl = Math.hypot(want.x, want.y);
     const turn = Math.min(1, (steer ? 9 : 5) * dt);
-    const speed = c.speed * 0.92 * clamp(this.runStart + this.runT / 0.5, 0, 1) * (steer ? clamp(wl, 0.5, 1) : 1); // gathers himself after the catch
+    const speed = c.speed * (c.kind === 'qb' ? 1 : 0.92) * clamp(this.runStart + this.runT / 0.5, 0, 1) * (steer ? clamp(wl, 0.5, 1) : 1); // gathers himself after the catch
     c.vel = {
       x: lerp(c.vel.x, (want.x / wl) * speed, turn),
       y: lerp(c.vel.y, (want.y / wl) * speed, turn),
@@ -1075,7 +1081,10 @@ export class Sim {
     // Defenders take a pursuit angle (aim where he's going) and try to tackle.
     for (const d of active) {
       if (!this.steering(d)) { // (unless you're chasing him yourself)
-        if (this.runT < d.react) continue;
+        if (this.runT < d.react) { // hasn't seen it yet: still in his coverage
+          if (c.kind === 'qb' && (d.job === 'zone' || d.job === 'man')) moveToward(d, d.goal, d.speed * dt * this.holdFactor(d));
+          continue;
+        }
         const lead = clamp(dist(d, c) / d.speed, 0, 0.8);
         const aim = { x: c.x + c.vel.x * lead, y: c.y + c.vel.y * lead };
         const blocked = this.receivers.some((r) => r !== c && dist(r, d) < SCREEN_DIST);
@@ -1095,6 +1104,29 @@ export class Sim {
     this.separate();
   }
 
+
+  /**
+   * A QB running behind the line looks for the hole: of a fan of directions
+   * (straight up to wide), the one with the most room from the defenders who
+   * can still get to him (blocked ones count far less), leaning upfield.
+   */
+  private lane(c: Actor, active: Actor[]): Vec {
+    let best = { x: 0, y: -1 }, bestScore = -Infinity;
+    for (const deg of [-75, -50, -30, -12, 0, 12, 30, 50, 75]) {
+      const a = (deg * Math.PI) / 180, dir = { x: Math.sin(a), y: -Math.cos(a) };
+      let room = 12 * YD;
+      for (const d of active) {
+        const rx = d.x - c.x, ry = d.y - c.y, along = rx * dir.x + ry * dir.y;
+        if (along < -2 || along > 10 * YD) continue;
+        const off = Math.abs(rx * dir.y - ry * dir.x) - along * 0.25; // closer to the line of the run, and nearer, is worse
+        room = Math.min(room, off * (this.held(d) ? 2.5 : 1));
+      }
+      if (c.x + dir.x * 8 * YD < FIELD_LEFT + 3 || c.x + dir.x * 8 * YD > FIELD_RIGHT - 3) room -= 6; // don't run out of room
+      const score = Math.min(room, 3.5 * YD) + Math.cos(a) * 2.5 * YD; // a hole big enough is enough: then the most upfield one
+      if (score > bestScore) { bestScore = score; best = dir; }
+    }
+    return best;
+  }
 
   /** A run after the catch counts as a catch; a QB run is a run. */
   private get runResult(): Result { return this.carrier?.kind === 'qb' ? 'run' : 'catch'; }
