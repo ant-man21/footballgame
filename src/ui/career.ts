@@ -16,7 +16,7 @@ import { type CareerRecord, archive, growthLabel, loadHistory, recordFrom, recor
 import { frontPage, paperName, playersToWatch, pollRank, recText, rivalOf, rivalTrophy, statePoll, storyline, weatherText, yds } from '../career/news';
 import { copyText, exportText } from './export';
 import { type Kit, kitsFor } from '../sprites';
-import type { TeamStats } from '../drive';
+import { type TeamStats, newStats } from '../drive';
 import type { Game } from '../game';
 import type { IntroInfo } from '../intro';
 import { DIFFICULTIES, type Difficulty, QUARTERS, cycle } from '../settings';
@@ -32,6 +32,12 @@ type Screen = 'start' | 'create' | 'hub' | 'gameplan' | 'banquet' | 'ceremony' |
 const r = (x: number, y: number, w: number, h: number): Rect => ({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
 const cleanName = (s: string) => s.toUpperCase().replace(/[^A-Z' -]/g, '').trim().slice(0, 10);
 const line = (s: TeamStats) => `${s.cmp}/${s.att}  ${s.yards} YDS  ${s.tds} TD  ${s.int} INT`;
+/** A QB's rushing line ('' if he never ran it). */
+const rushLine = (s: TeamStats, long = false) => {
+  const n = s.rush ?? 0, y = s.ryds ?? 0, td = s.rtd ?? 0;
+  if (!n) return '';
+  return long ? `${n} CAR  ${y} YDS  ${td} TD  ${(y / n).toFixed(1)} AVG` : `${n}-${y}${td ? ` ${td} TD` : ''}`;
+};
 const num = (n: number) => n.toLocaleString('en-US');
 /** A stable pick from a list, by a string (so a screen redrawn every frame doesn't flicker). */
 const pickBy = <T>(key: string, list: T[]): T => list[[...key].reduce((t, ch) => (t * 31 + ch.charCodeAt(0)) % 100003, 11) % list.length];
@@ -768,10 +774,11 @@ export class CareerScreens {
       stars(ctx, x + colW - 34, y, sl.stars);
       y += 8;
       drawText(ctx, `${sl.finish}`, x + 4, y, { color: C.grey }); y += 8;
-      drawText(ctx, `${sl.stats.cmp}/${sl.stats.att} ${num(sl.stats.yards)} YDS ${sl.stats.tds} TD ${sl.stats.int} INT${sl.avg !== undefined ? `  ${letterGrade(sl.avg)}` : ''}`, x + 4, y, { color: C.white }); y += 11;
+      drawText(ctx, `${sl.stats.cmp}/${sl.stats.att} ${num(sl.stats.yards)} YDS ${sl.stats.tds} TD ${sl.stats.int} INT${sl.avg !== undefined ? `  ${letterGrade(sl.avg)}` : ''}`, x + 4, y, { color: C.white }); y += rushLine(sl.stats) ? 8 : 11;
+      if (rushLine(sl.stats)) { drawText(ctx, `RUSH ${rushLine(sl.stats)}`, x + 4, y, { color: C.grey }); y += 11; }
     }
-    const tot = h.seasons.reduce((t, sl) => ({ yds: t.yds + sl.stats.yards, td: t.td + sl.stats.tds, int: t.int + sl.stats.int }), { yds: 0, td: 0, int: 0 });
-    drawText(ctx, `CAREER: ${num(tot.yds)} YDS ${tot.td} TD ${tot.int} INT - OVR ${h.ovr}`, x, y, { color: C.white });
+    const tot = h.seasons.reduce((t, sl) => ({ yds: t.yds + sl.stats.yards, td: t.td + sl.stats.tds, int: t.int + sl.stats.int, ry: t.ry + (sl.stats.ryds ?? 0), rtd: t.rtd + (sl.stats.rtd ?? 0) }), { yds: 0, td: 0, int: 0, ry: 0, rtd: 0 });
+    drawText(ctx, `CAREER: ${num(tot.yds)} YDS ${tot.td} TD ${tot.int} INT${tot.ry || tot.rtd ? ` - RUSH ${num(tot.ry)} ${tot.rtd} TD` : ''} - OVR ${h.ovr}`, x, y, { color: C.white });
     y += 12;
     // honors and recruiting (the right column in landscape)
     let ox = x, oy = y;
@@ -1013,6 +1020,7 @@ export class CareerScreens {
     else {
       drawText(ctx, `${displayName(c.player)}: ${line(l.line)}`, mid, y, { align: 'center' });
       y += 9;
+      if (rushLine(l.line)) { drawText(ctx, `RUSHING: ${rushLine(l.line, true)}`, mid, y, { align: 'center', color: C.grey }); y += 9; }
       if (l.grade !== null) { drawText(ctx, `GRADE ${letterGrade(l.grade)}`, mid, y, { align: 'center', color: gradeColor(l.grade), scale: 2 }); y += 15; }
     }
     if (l.battle !== null && this.battleBefore !== null) {
@@ -1299,11 +1307,13 @@ export class CareerScreens {
     let y = top;
     const w = Math.min(v.w - 8, 230), x = (v.w - w) / 2;
     const tot = s.log.reduce((t, l) => { for (const k of Object.keys(t) as (keyof TeamStats)[]) t[k] += l.line[k] ?? 0; return t; },
-      { plays: 0, yards: 0, tds: 0, cmp: 0, att: 0, int: 0, sacks: 0 } as TeamStats);
+      newStats());
     drawText(ctx, `${CLASS_NAMES[s.year]} SEASON`, x, y, { color: C.yellow });
     y += 9;
     const pct = tot.att ? Math.round((100 * tot.cmp) / tot.att) : 0;
     drawText(ctx, `${line(tot)}  ${pct}%  RTG ${passerRating(tot).toFixed(1)}`, x, y);
+    y += 9;
+    drawText(ctx, rushLine(tot) ? `RUSHING  ${rushLine(tot, true)}` : 'RUSHING  NONE YET', x, y, { color: rushLine(tot) ? C.white : C.darkGrey });
     y += 12;
     drawText(ctx, 'GAME LOG', x, y, { color: C.grey });
     y += 9;
@@ -1312,7 +1322,7 @@ export class CareerScreens {
       const o = c.team(l.opp);
       drawText(ctx, `${l.round ?? `W${l.week}`} ${l.home ? 'VS' : 'AT'} ${o.abbr}`, x, y, { color: C.grey });
       drawText(ctx, `${l.us > l.them ? 'W' : 'L'} ${l.us}-${l.them}`, x + 44, y, { color: l.us > l.them ? C.green : C.red });
-      drawText(ctx, l.kind === 'none' ? 'DNP' : `${l.line.cmp}/${l.line.att} ${l.line.yards} ${l.line.tds}TD ${l.line.int}I`, x + 84, y);
+      drawText(ctx, l.kind === 'none' ? 'DNP' : `${l.line.cmp}/${l.line.att} ${l.line.yards} ${l.line.tds}TD ${l.line.int}I${l.line.rush ? ` R${l.line.ryds ?? 0}` : ''}`, x + 79, y);
       if (l.grade !== null) drawText(ctx, letterGrade(l.grade), x + w, y, { align: 'right', color: gradeColor(l.grade) });
       y += 8;
     }
@@ -1326,6 +1336,7 @@ export class CareerScreens {
         drawText(ctx, `${sl.stats.cmp}/${sl.stats.att} ${sl.stats.yards} YDS ${sl.stats.tds} TD ${sl.stats.int} INT`, x + 36, y);
         stars(ctx, x + w - 34, y, sl.stars);
         y += 8;
+        if (rushLine(sl.stats)) { drawText(ctx, `RUSH ${rushLine(sl.stats)}`, x + 36, y, { color: C.grey }); y += 8; }
       }
     }
 
@@ -1377,6 +1388,7 @@ export class CareerScreens {
       ['TOUCHDOWNS', `${st.tds} TD  ${st.int} INT`],
       ['RATING', `${passerRating(st).toFixed(1)}${sl.avg !== undefined ? `  GRADE ${letterGrade(sl.avg)}` : ''}`],
     ] : [['PASSING', 'DID NOT PLAY']];
+    if (sl.gp && rushLine(st)) rows.push(['RUSHING', `${st.rush} CAR  ${num(st.ryds ?? 0)} YDS  ${st.rtd ?? 0} TD`]);
     const tt = sl.team?.rec[0];
     if (tt) rows.push(['TOP TARGET', `${tt.pos} ${tt.name}`], ['', recText(tt)]);
     if (best) rows.push(['BEST GAME', `${best.round ? ROUND_NAMES[best.round] : `WK ${best.week}`} ${best.home ? 'VS' : 'AT'} ${c.team(best.opp).abbr}  ${letterGrade(best.grade!)}`]);

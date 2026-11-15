@@ -1344,11 +1344,13 @@ export class Game {
     y += 16;
     for (const side of ['you', 'cpu'] as const) {
       const st = m.stats[side];
-      const ypp = st.plays ? (st.yards / st.plays).toFixed(1) : '0.0';
-      const ppt = st.tds ? (st.plays / st.tds).toFixed(1) : '-';
+      const tds = st.tds + (st.rtd ?? 0);
+      const ypp = st.plays ? ((st.yards + (st.ryds ?? 0)) / st.plays).toFixed(1) : '0.0';
+      const ppt = tds ? (st.plays / tds).toFixed(1) : '-';
       drawText(ctx, side === 'you' ? 'YOUR OFFENSE' : `${m.names.cpu} OFFENSE`, mid, y, { align: 'center', color: side === 'you' ? C.blue : C.red });
       drawText(ctx, `${st.cmp}/${st.att}  ${st.yards} YDS  ${st.tds} TD  ${st.int} INT`, mid, y + 8, { align: 'center' });
       drawText(ctx, `YDS/PLAY ${ypp}  PLAYS/TD ${ppt}  SACKS ${st.sacks}`, mid, y + 16, { align: 'center', color: C.grey });
+      if (st.rush) { drawText(ctx, `QB RUNS ${st.rush} FOR ${st.ryds ?? 0} YDS${st.rtd ? ` ${st.rtd} TD` : ''}`, mid, y + 24, { align: 'center', color: C.grey }); y += 8; }
       y += 28;
     }
     if (Math.floor(this.clock * 2) % 2 === 0) drawText(ctx, this.careerGame ? 'TAP TO CONTINUE' : 'TAP FOR A NEW GAME', mid, y + 4, { align: 'center', color: C.yellow });
