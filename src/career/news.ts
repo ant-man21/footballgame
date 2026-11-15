@@ -45,7 +45,7 @@ const streakOf = (games: GameRec[], id: number, upTo: number): number => {
 export function headlines(teams: Team[], games: GameRec[], week: number, prevPoll: number[] | undefined, mySchool: number): string[] {
   const name = (id: number) => teams[id].name;
   const out: { p: number; text: string }[] = [];
-  const roundName: Record<Round, string> = { QF: 'THE SEMIFINALS', SF: 'THE STATE TITLE GAME', F: '' };
+  const roundName: Record<Round, string> = { R1: 'THE QUARTERFINALS', QF: 'THE SEMIFINALS', SF: 'THE STATE TITLE GAME', F: '' };
   for (const g of games) {
     if (g.week !== week || !played(g) || g.home === mySchool || g.away === mySchool) continue;
     const w = winnerOf(g), l = w === g.home ? g.away : g.home;
@@ -84,20 +84,24 @@ export const rivalryName = (seed: number) => `THE BATTLE FOR ${rivalTrophy(seed)
 
 export interface StoryInput {
   rec: GameRec; teams: Team[]; games: GameRec[]; mySchool: number; seed: number; year: number; poll?: number[];
+  natPoll?: string[]; // the national top 25 (keys 'S<id>' for your state's teams)
 }
 /** The storyline for a game: playoff rounds, rivalry week, undefeated showdowns, top 10 clashes, senior night, homecoming. */
 export function storyline(o: StoryInput): string | null {
-  const { rec, teams, games, mySchool, seed, year, poll } = o;
+  const { rec, teams, games, mySchool, seed, year, poll, natPoll } = o;
   const opp = rec.home === mySchool ? rec.away : rec.home, home = rec.home === mySchool;
   const met = games.some((g) => !g.round && played(g) && ((g.home === mySchool && g.away === opp) || (g.away === mySchool && g.home === opp)));
   if (rec.round) {
-    const round = { QF: 'STATE QUARTERFINAL', SF: 'STATE SEMIFINAL', F: 'STATE CHAMPIONSHIP' }[rec.round];
+    const round = { R1: 'STATE PLAYOFFS: FIRST ROUND', QF: 'STATE QUARTERFINAL', SF: 'STATE SEMIFINAL', F: 'STATE CHAMPIONSHIP' }[rec.round];
     return met ? `${round}: THE REMATCH` : round;
   }
   if (opp === rivalOf(teams, mySchool, seed)) return `RIVALRY WEEK: ${rivalryName(seed)}`;
   const st = standings(teams, games);
   const a = st.get(mySchool)!, b = st.get(opp)!;
   if (rec.week >= 4 && a.l === 0 && b.l === 0) return 'UNDEFEATED SHOWDOWN';
+  const na = natPoll ? natPoll.indexOf(`S${mySchool}`) + 1 : 0, nb = natPoll ? natPoll.indexOf(`S${opp}`) + 1 : 0;
+  if (na && nb) return `NATIONAL SHOWDOWN: NO.${na} VS NO.${nb} IN THE COUNTRY`;
+  if (nb) return home ? `NO.${nb} IN THE NATION COMES TO TOWN` : `ON THE ROAD AT NO.${nb} IN THE NATION`;
   const ra = pollRank(poll, mySchool), rb = pollRank(poll, opp);
   if (ra && rb) return `TOP 10 CLASH: NO.${ra} VS NO.${rb}`;
   const homeWeeks = games.filter((g) => !g.round && g.home === mySchool).map((g) => g.week).sort((x, y) => x - y);

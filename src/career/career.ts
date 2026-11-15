@@ -2,7 +2,8 @@
 // school. As the backup you mostly watch, with scenario snaps some weeks
 // (two-minute drill, relief, mop-up) that fill the QB battle meter; win it and
 // you start. Each week: pick a practice focus, play (or watch) the game, the
-// rest of the league is quick-simmed. 10 games, then an 8-team state playoff.
+// rest of the league is quick-simmed. 10 games, then a 16-team state playoff
+// (8 teams in saves from before the league had 4 regions).
 import type { TeamStats } from '../drive';
 import { newStats } from '../drive';
 import { type Side, Match } from '../match';
@@ -10,8 +11,8 @@ import { type RatingKey, type Roster, makeRoster } from '../ratings';
 import { clamp } from '../util';
 import { STATES, makeSchools, randomName } from './hsnames';
 import {
-  type GameRec, REGULAR_WEEKS, type Round, ROUND_NAMES, type Team, makeSchedule, nextRound, playoffField, played,
-  regionOrder, standings, winnerOf,
+  type GameRec, REGULAR_WEEKS, type Round, ROUND_NAMES, TEAMS_PER_REGION, type Team, makeSchedule, nextRound, playoffField, played,
+  regionCount, regionOrder, standings, winnerOf,
 } from './league';
 import {
   type Archetype, type CareerPlayer, type Focus, HS_TIER, asRosterPlayer, createPlayer, gameXp, gradeGame, offseason,
@@ -30,11 +31,12 @@ import {
 } from './news';
 import { CAREER_VERSION, saveCareer } from './save';
 import { archive, recordFrom } from './history';
+import { type Nation, makeNation, natRank, nationNewSeason, nationUpTo, nationalPoll } from './nation';
 
 export const HS_YEARS = 3;
 /** How much last season keeps counting toward your stars once this season is under way. */
 const RESUME = 0.4;
-const TEAMS = 16;
+const TEAMS = 32; // your classification: 4 regions of 8 (older saves: 16 teams, 2 regions)
 
 export type Role = 'backup' | 'starter';
 export type Appearance = 'full' | 'scenario' | 'none';
@@ -84,6 +86,7 @@ export interface CareerSave {
   poll?: number[]; // the state poll (team ids, best first), after the latest week
   pollPrev?: number[]; // the poll a week earlier (for the arrows)
   headlines?: string[]; // the latest week's headlines from around the state (your own news first)
+  nation?: Nation; // the national powers and the national top 25 (flavor; added when a save without it is opened)
   difficulty?: Difficulty; // this career's difficulty (older saves take the settings' one when loaded)
   dry: number; // weeks in a row you didn't get in (backups)
   phase: 'season' | 'summary' | 'signing' | 'done'; // summary: the season is over, showing it; signing: signing day
@@ -127,6 +130,11 @@ export class Career {
     s.difficulty ??= loadSettings().difficulty; // a save from before careers kept their own difficulty
     useDifficulty(s.difficulty); // star steps follow the career's difficulty
     if (!s.recruit) this.catchUpRecruiting(); // a save from before recruiting existed
+    if (!s.nation) { // a save from before the national poll: catch it up to this week
+      s.nation = makeNation(s.seed, s.state);
+      s.nation.year = s.year;
+      this.updateNation(s.phase === 'season' ? s.week - 1 : 14);
+    }
     if (!s.events && s.phase === 'season') this.scheduleEvents(s.week); // a save from before events: the rest of this season
     else if ((s.recruit.formula ?? 1) < SCORE_FORMULA) { // scored by an older formula: re-score once
       if (s.phase === 'season' && !s.recruit.signed) {
@@ -145,7 +153,7 @@ export class Career {
     const ids = makeSchools(state, TEAMS, rng);
     const teams: Team[] = ids.map((idn, i) => {
       const prestige = Math.round(clamp(rng.range(15, 90), 0, 100));
-      return { ...idn, id: i, region: i < TEAMS / 2 ? 0 : 1, prestige, off: 0, def: 0 };
+      return { ...idn, id: i, region: Math.floor(i / TEAMS_PER_REGION), prestige, off: 0, def: 0 };
     });
     for (const t of teams) rollStrength(t, rng, true);
     // your school: a middle-of-the-pack program, so there's something to build
@@ -180,6 +188,8 @@ export class Career {
     return { w: res.filter((x) => x === 'W').length, l: res.filter((x) => x === 'L').length };
   }
   get player(): CareerPlayer { return this.s.player; }
+  /** Your classification, e.g. CLASS 6A (the state's biggest schools). */
+  get classLabel(): string { return classFor(this.s.state); }
   get school(): Team { return this.team(this.s.schoolId); }
   team(id: number): Team { return this.s.teams[id]; }
   get isPlayoffs(): boolean { return this.s.week > REGULAR_WEEKS; }
@@ -221,7 +231,7 @@ export class Career {
   leaders(): Leader[] {
     const s = this.s, mine = newStats();
     let gp = 0;
-    for (const l of s.log) { if (l.kind !== 'none') gp++; for (const k of Object.keys(mine) as (keyof TeamStats)[]) mine[k] += l.line[k]; }
+    for (const l of s.log) { if (l.kind !== 'none') gp++; for (const k of Object.keys(mine) as (keyof TeamStats)[]) mine[k] += l.line[k] ?? 0; }
     return stateLeaders({ teams: s.teams, games: s.games, mySchool: s.schoolId, me: displayName(this.player), myLine: mine, myGp: gp, seed: s.seed, year: s.year });
   }
 
@@ -239,6 +249,7 @@ export class Career {
     this.scheduleEvents();
     s.poll = statePoll(s.teams, s.games); // the preseason poll
     s.pollPrev = undefined;
+    if (s.nation) { nationNewSeason(s.nation, s.seed, s.year); this.updateNation(0); }
     s.headlines = [];
     s.phase = 'season';
     const school = this.school;
@@ -270,7 +281,7 @@ export class Career {
     m.names = { you: me.abbr, cpu: opp.abbr };
     const oppRoster = this.opponentRoster(opp, this.oppShift), keys = keysFor(opp, rec.week); // difficulty: how good the other teams play
     const s = this.s;
-    const story = storyline({ rec, teams: s.teams, games: s.games, mySchool: s.schoolId, seed: s.seed, year: s.year, poll: s.poll });
+    const story = storyline({ rec, teams: s.teams, games: s.games, mySchool: s.schoolId, seed: s.seed, year: s.year, poll: s.poll, natPoll: s.nation?.poll });
     const region = STATES.find((x) => x.id === s.state)?.region ?? 'TEXAS';
     const weather = weatherFor(s.seed, s.year, rec.week, region, rec.round);
     const rival = this.isRival(rec);
@@ -369,10 +380,24 @@ export class Career {
     this.simWeek(rec.week);
     s.pollPrev = s.poll;
     s.poll = statePoll(s.teams, s.games);
+    const natBefore = natRank(s.nation?.poll, s.schoolId);
+    this.updateNation(rec.week);
+    const natNow = natRank(s.nation?.poll, s.schoolId);
+    if (natNow && (!natBefore || natNow < natBefore)) news.push(natBefore ? `UP TO NO.${natNow} IN THE NATIONAL POLL` : `INTO THE NATIONAL TOP 25 AT NO.${natNow}!`);
+    else if (natBefore && !natNow) news.push('OUT OF THE NATIONAL TOP 25');
     s.headlines = [...myHeadlines(this.player.first, this.player.last, news, grade, line), ...headlines(s.teams, s.games, rec.week, s.pollPrev, s.schoolId)];
     this.advance(news);
     saveCareer(s);
     return log;
+  }
+
+  /** The national teams' games through `week`, and the national top 25. */
+  private updateNation(week: number): void {
+    const s = this.s, n = s.nation;
+    if (!n) return;
+    nationUpTo(n, week, s.seed);
+    n.prev = n.poll;
+    n.poll = nationalPoll(n, s.teams, s.games, s.state);
   }
 
   /** Every other game of the week. */
@@ -425,7 +450,7 @@ export class Career {
   /** Playoff seeds: 1-4 in each region, by the regular season. */
   private seeds(): Map<number, number> {
     const out = new Map<number, number>();
-    for (const r of [0, 1]) regionOrder(this.s.teams, this.s.games.filter((g) => !g.round), r).forEach((st, i) => out.set(st.id, i + 1));
+    for (let r = 0; r < regionCount(this.s.teams); r++) regionOrder(this.s.teams, this.s.games.filter((g) => !g.round), r).forEach((st, i) => out.set(st.id, i + 1));
     return out;
   }
 
@@ -451,7 +476,7 @@ export class Career {
     for (const l of s.log) {
       if (l.kind !== 'none') gp++;
       if (l.kind === 'full') gs++;
-      for (const k of Object.keys(line) as (keyof TeamStats)[]) line[k] += l.line[k];
+      for (const k of Object.keys(line) as (keyof TeamStats)[]) line[k] += l.line[k] ?? 0;
       if (l.grade !== null) { gradeSum += l.grade; graded++; }
     }
     const avg = graded ? gradeSum / graded : 50;
@@ -472,6 +497,10 @@ export class Career {
       allState: awards.includes('ALL-STATE QB'), finish, stars, nationalRank: s.year >= 1 ? qbRank(s.recruit, s.state).national : null,
       school: this.school, roster: s.roster, teams: s.teams, poll: s.poll, champ,
     });
+    this.updateNation(14); // the rest of the country finishes too: the final national poll
+    const nat = natRank(s.nation?.poll, s.schoolId);
+    if (nat) news.push(nat === 1 ? 'NO.1 IN THE FINAL NATIONAL POLL!' : `NO.${nat} IN THE FINAL NATIONAL POLL`);
+    if (nat && nat <= 10) awards.push(nat === 1 ? 'NATIONAL CHAMPION' : 'NATIONAL TOP 10');
     if (bq.mrFootball.you) awards.push('MR. FOOTBALL');
     if (bq.allAmerican) awards.push('ALL-AMERICAN');
     p.awards.push(...awards.map((a) => `${a} (${['SO', 'JR', 'SR'][s.year]})`));
@@ -676,6 +705,14 @@ export class Career {
   }
 }
 
+const CLASSES: Record<string, string> = {
+  TX: 'CLASS 6A', FL: 'CLASS 7A', AL: 'CLASS 7A', GA: 'CLASS 6A', MS: 'CLASS 7A', LA: 'DIVISION I', OH: 'DIVISION I', MI: 'DIVISION 1',
+  CA: 'DIVISION I', PA: 'CLASS 6A', NJ: 'GROUP 5', NY: 'CLASS AA', IL: 'CLASS 8A', NC: 'CLASS 4A', VA: 'CLASS 6', TN: 'CLASS 6A',
+  SC: 'CLASS 5A', OK: 'CLASS 6A', AZ: 'OPEN', IN: 'CLASS 6A', MN: 'CLASS 6A', WA: 'CLASS 4A', KY: 'CLASS 6A', AR: 'CLASS 7A',
+};
+/** The top classification's name in a state (most use CLASS 5A). */
+export const classFor = (state: string) => CLASSES[state] ?? 'CLASS 5A';
+
 /** A team's strength for the season: pulled toward its prestige, with turnover from graduation. */
 function rollStrength(t: Team, rng: Rng, fresh: boolean): void {
   const target = (t.prestige - 50) / 7;
@@ -686,7 +723,7 @@ function rollStrength(t: Team, rng: Rng, fresh: boolean): void {
 
 function diff(a: TeamStats, b: TeamStats): TeamStats {
   const out = newStats();
-  for (const k of Object.keys(out) as (keyof TeamStats)[]) out[k] = Math.max(0, a[k] - b[k]);
+  for (const k of Object.keys(out) as (keyof TeamStats)[]) out[k] = Math.max(0, (a[k] ?? 0) - (b[k] ?? 0));
   return out;
 }
 

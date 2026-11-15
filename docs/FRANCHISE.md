@@ -97,6 +97,17 @@ Reuses the league engine: recruiting a whole class, roster management, depth cha
 - **Screens**: start (continue / new), create, hub, game day intro, week result (with around-the-state scores and recruiting news), schedule, standings + bracket, stats (season, game log, career), recruiting board, season summary, signing day, graduated. Portrait and landscape.
 - **On the field**: coach-called plays (no huddle) or your own calls (PLAYS: YOU CALL), team abbreviations in the HUD, your defense or simulated opponent drives, SIM REST OF GAME in the pause menu.
 
+### Added (Nov 2026, owner's list)
+- PAST CAREERS: the active career plus finished ones (unfinished careers are no longer kept).
+- High school realism: your classification (CLASS 6A etc.) with 32 schools in 4 regions, a 16-team state playoff, a class poll (TOP 10) and a national top 25.
+- Game rules: safeties, the try (kick or go for 2), kickoffs with returns and onside kicks, punt returns / fair catches / muffs / blocks.
+- Gameplay: QB sneak, QB draw, scrambles (throw straight back, then steer), FOUR VERTS / SLANTS / ALL CURLS, coach calls by down and distance, the thrown-to receiver has the right of way, the defense sits on check-downs (opening the deep ball) and keys on a favourite target.
+
+### Next (owner's order)
+- **College career** (milestone 3, simple first): win the job, play seasons, rankings, real-ish scheduling, the 12-team playoff; no recruiting. Multiple save slots so a graduated high school career can continue into college.
+- **Unlocks for exhibitions**: teams you finished a career with (high school first, then college / NFL).
+- Playable kick and punt returns (the MIKE's joystick on the returner).
+
 ### Next (rest of milestone 2)
 - **Camps** in the off-season (an accuracy / reading drill on the field) to raise exposure.
 - Team colours on the field sprites (currently blue vs red), logos from JSON with the badge fallback.

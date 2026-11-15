@@ -10,7 +10,7 @@ import { type Vec, clamp, dist, lerp, moveToward, rand, unit } from './util';
 export type Team = 'off' | 'def';
 export type Kind = 'qb' | 'ol' | SkillType | DefKind;
 export type Phase = 'presnap' | 'live' | 'air' | 'run' | 'done';
-export type Result = 'catch' | 'int' | 'inc' | 'sack';
+export type Result = 'catch' | 'int' | 'inc' | 'sack' | 'run'; // run: the QB kept it (a scramble, sneak or draw)
 type Job = 'none' | 'route' | 'block' | 'lead' | 'rush' | 'man' | 'zone'; // lead = blocking downfield
 
 /** Top speeds in yards per second. */
@@ -106,7 +106,16 @@ export interface ResetOptions {
   call?: Call; // a defensive call you picked (otherwise one is chosen)
   ballX?: number; // where the ball is spotted across the field (yards from the middle; hashes are +-HASH_YD)
   mirror?: boolean; // run the play to the other side
+  tendency?: Tendency; // what the defense has seen you do (it adjusts)
 }
+
+/**
+ * What you've been doing with the ball lately (your last throws). The defense
+ * reacts: a steady diet of check-downs and the underneath defenders squat on
+ * them and the safeties creep up (the deep ball opens up); feed one receiver
+ * and they lean toward him.
+ */
+export interface Tendency { short: number; focus: string | null; focusShare: number }
 
 /** Hash marks: yards either side of the middle of the field. */
 export const HASH_YD = 6.67;
@@ -153,6 +162,10 @@ export class Sim {
   t = 0; // sim seconds since the snap
   airT = 0; // sim seconds since the throw
   intended: Actor | null = null; // receiver going for the thrown ball
+  target: Actor | null = null; // who the QB threw to (the receiver whose route the ball was aimed along)
+  squat = 0; // 0..1: how much the defense is sitting on short throws (Tendency)
+  focusId: string | null = null; // the receiver the defense leans toward (Tendency)
+  private sneakStop: number | null = null; // QB sneak: where the pile stops him (pixel y)
   ball: Ball | null = null;
   result: Result | null = null;
   carrier: Actor | null = null; // receiver running after the catch
@@ -232,10 +245,15 @@ export class Sim {
     this.t = 0;
     this.airT = 0;
     this.intended = null;
+    this.target = null;
+    this.sneakStop = null;
     this.ball = null;
     this.result = null;
+    const td = opts.tendency;
+    this.squat = td ? clamp((td.short - 0.45) / 0.4, 0, 1) : 0; // more than ~half your throws short: they start sitting on them
+    this.focusId = td && td.focusShare >= 0.5 ? td.focus : null;
 
-    const a: Actor[] = [makeActor('QB', 'off', 'qb', fx(bx), fy(-QB_DEPTH))];
+    const a: Actor[] = [makeActor('QB', 'off', 'qb', fx(bx), fy(play.run === 'sneak' ? -1.6 : -QB_DEPTH))]; // a sneak is from under center
     if (play.rollout) a[0].speed = 6.2 * YD; // sprints out
     else if (play.screen) a[0].speed = 4.5 * YD; // drifts back
     OL_SPOTS.forEach((x, i) => {
@@ -297,6 +315,10 @@ export class Sim {
     for (const d of this.defense) {
       if (cpuTeam === 'def') d.react += tuning.react;
       d.react *= 1 - 0.35 * recognition; // they've seen this play before: quicker to jump it
+      // sitting on the short stuff: underneath defenders break faster, the deep ones are slower to help
+      if (d.zone?.deep) d.react += this.squat * 0.18;
+      else if (d.job === 'zone' || d.kind === 'lb') d.react *= 1 - 0.5 * this.squat;
+      if (this.focusId && d.job === 'man' && d.man?.id === this.focusId) d.react *= 0.75; // his man is waiting for it
     }
     this.userMove = { x: 0, y: 0 };
     this.userControl = false;
@@ -454,6 +476,52 @@ export class Sim {
       r.push = r.kind === 'lb' ? 2.6 : 3.6; // px/s a blocked rusher drives back
       r.burstAt = r.kind === 'lb' ? 0.3 : 0.1; // blitzers read before they go
     }
+    if (this.play.run === 'sneak') this.startSneak();
+  }
+
+  /**
+   * QB sneak: he takes the snap and pushes straight ahead behind the center.
+   * Where the pile stops him is decided by the line against the line: a yard
+   * or two most of the time, now and then stuffed or squirting free for more.
+   */
+  private startSneak(): void {
+    const ol = this.offense.filter((a) => a.kind === 'ol'), dl = this.defense.filter((a) => a.kind === 'dl' || a.kind === 'lb');
+    const avg = (xs: Actor[], k: RatingKey) => xs.reduce((t, a) => t + this.rd(a, k), 0) / Math.max(1, xs.length);
+    const edge = avg(ol, 'blk') - avg(dl, 'tkl') * 0.5 - avg(dl, 'rsh') * 0.5; // rating points
+    const box = this.defense.filter((d) => d.y > fy(4.5)).length; // defenders crowding the line of scrimmage
+    const r = Math.random() + edge * 0.01 - (box - 7) * 0.03;
+    const gain = r < 0.1 ? rand(-1, 0) : r < 0.25 ? rand(0, 0.9) : r < 0.88 ? rand(1, 2.6) : r < 0.97 ? rand(2.6, 5) : rand(5, 9);
+    this.sneakStop = fy(gain);
+    this.keep(0.35);
+  }
+
+  /** The QB keeps it (a scramble, a sneak or a draw): he's the runner; the line holds its blocks a moment longer. */
+  keep(speed = 6.4): void {
+    if (this.phase !== 'live') return;
+    const qb = this.qb;
+    qb.speed = speed * YD * clamp(1 + this.rd(qb, 'spd') * 0.006, 0.8, 1.25);
+    if (!this.ball) this.ball = { aim: { x: qb.x, y: qb.y }, from: { x: qb.x, y: qb.y }, to: { x: qb.x, y: qb.y }, peak: 0, dur: 1, t: 1, carrier: qb };
+    this.ball.carrier = qb;
+    this.carrier = qb;
+    this.result = 'run';
+    this.runT = 0;
+    this.runStart = 0.5;
+    qb.vel = { x: 0, y: -1 };
+    qb.dir = { x: 0, y: -1 };
+    // linemen in a block keep their man tied up for a moment (then everyone chases)
+    for (const b of this.blockers) {
+      const r = b.engaged;
+      if (r && r.engagedBy === b) {
+        r.heldBy = b;
+        r.heldUntil = this.t + rand(0.4, 1.1) * (this.play.run === 'draw' ? 1.5 : 1) * clamp(1 + this.rd(b, 'blk') * 0.012, 0.7, 1.3);
+        b.blockTarget = r;
+        b.job = 'lead';
+        b.leadReadyAt = this.t;
+      }
+    }
+    for (const a of this.actors) { a.engaged = null; a.engagedBy = null; }
+    for (const d of this.defense) d.react = d.y > qb.y - 12 * YD ? rand(0.05, 0.2) : rand(0.2, 0.45); // the ones near him see it first
+    this.phase = 'run';
   }
 
   /** Is a free rusher bearing down on the QB? Throws get less accurate. */
@@ -462,7 +530,7 @@ export class Sim {
   }
 
   throwTo(aim: Vec, accurate = false): void {
-    if (this.phase !== 'live') return;
+    if (this.phase !== 'live' || this.play.run) return; // (a QB run: no throwing)
     const from = { x: this.qb.x, y: this.qb.y - 3 };
     // Longer throws (and throws under pressure) drift, mostly long or short,
     // but always inside the oval the player sees while aiming.
@@ -485,6 +553,29 @@ export class Sim {
     this.phase = 'air';
     this.airT = 0;
     this.intended = null;
+    // who he threw to: the receiver whose route takes him nearest the aim point when the ball gets there
+    let best: Actor | null = null, bestD = 6 * YD;
+    for (const p of this.receivers) {
+      const d = dist(this.routeAhead(p, this.ball.dur), aim);
+      if (d < bestD) { best = p; bestD = d; }
+    }
+    this.target = best;
+  }
+
+  /** Where a receiver will be `secs` from now if he keeps running his route. */
+  routeAhead(p: Actor, secs: number): Vec {
+    let budget = p.speed * Math.max(0, secs - Math.max(0, p.delay - this.t));
+    const pos = { x: p.x, y: p.y };
+    let dir = p.dir;
+    for (let i = p.leg; i < p.path.length && budget > 0; i++) {
+      const q = p.path[i], d = dist(pos, q);
+      dir = unit(pos, q);
+      if (d >= budget) { pos.x += dir.x * budget; pos.y += dir.y * budget; return pos; }
+      pos.x = q.x; pos.y = q.y; budget -= d;
+    }
+    if (budget > 0 && p.end === 'continue' && dir) { pos.x += dir.x * budget; pos.y = Math.max(this.endLineY + 2, pos.y + dir.y * budget); }
+    pos.x = clamp(pos.x, FIELD_LEFT + 2, FIELD_RIGHT - 2);
+    return pos;
   }
 
   // ---------- simulation ----------
@@ -496,6 +587,7 @@ export class Sim {
     this.t += dt;
     if (this.phase === 'run') { this.updateUser(dt); this.updateLead(dt); this.updateRun(dt); return; }
     if (this.phase === 'air') this.airT += dt;
+    if (this.play.run === 'draw' && this.phase === 'live' && this.t >= 0.8) { this.keep(); return; } // show pass, then take off
 
     this.updateQb(dt);
     this.updateReceivers(dt);
@@ -529,16 +621,20 @@ export class Sim {
       const step = p.speed * dt * release;
       const x0 = p.x, y0 = p.y;
       if (landing && p === this.intended) {
-        const pace = clamp(dist(p, landing) / remain, p.speed * 0.8, p.speed); // keep running, ease off only a little
-        moveToward(p, landing, pace * dt * release);
+        // on his route the ball is coming to him: keep running it (the out stays an out); otherwise go get it
+        const onRoute = remain > 0.15 && dist(this.routeAhead(p, remain), landing) < 2.5 * YD;
+        if (onRoute) this.followRoute(p, step);
+        else moveToward(p, landing, clamp(dist(p, landing) / remain, p.speed * 0.9, p.speed) * dt * release);
       } else this.followRoute(p, step);
       if (dt > 0) p.vel = { x: (p.x - x0) / dt, y: (p.y - y0) / dt };
     }
   }
 
-  /** The receiver who can reach the landing spot soonest, if anyone can get there in time. */
+  /** The receiver it was thrown to, if he can get there; otherwise whoever can reach the landing spot soonest. */
   private pickIntended(landing: Vec): Actor | null {
     const remain = Math.max(0.05, this.ball!.dur - this.ball!.t);
+    const t = this.target;
+    if (t && (dist(t, landing) / t.speed - remain <= 0.45 || dist(t, landing) < BALL_HAWK)) return t;
     let best: Actor | null = null, bestSlack = Infinity;
     for (const p of this.receivers) {
       const d = dist(p, landing);
@@ -734,7 +830,9 @@ export class Sim {
     for (const d of this.defense) {
       if (this.steering(d) || (d.job !== 'man' && d.job !== 'zone')) continue;
       const range = d.kind === 'lb' ? 30 : d.kind === 'dl' ? 24 : d.zone?.deep ? 100 : 45;
-      const sees = landing && this.airT >= d.react;
+      // a man defender whose man gets a quick throw is right on his hip: he sees it arrive sooner
+      const quick = d.job === 'man' && d.man === this.target && this.ball ? 0.45 + 0.55 * clamp(dist(this.ball.from, this.ball.to) / (18 * YD), 0, 1) : 1;
+      const sees = landing && this.airT >= d.react * quick;
       if (sees && d.job === 'man' && d.man && dist(d.man, landing) < 24) {
         // ball is coming to my man: race him to the spot and contest the catch
         d.goal = { ...landing };
@@ -775,8 +873,10 @@ export class Sim {
     if (z.spy) return { x: this.qb.x, y: Math.min(this.qb.y - 6 * YD, LOS_Y - 2 * YD) }; // mirror the QB from 6 yards
     const shift = this.ballX * (z.deep || z.wide ? 0.35 : 0.9); // zones slide toward the ball (deep and flat ones less)
     const x0 = fx(z.x - z.wx + shift), x1 = fx(z.x + z.wx + shift);
-    const top = fy(z.dmax), bottom = fy(z.dmin);
-    const land = { x: fx(z.x + shift), y: fy(z.d) };
+    // sitting on short throws: underneath zones play shallower; deep zones creep up (and leave room over the top)
+    const sq = this.squat * (z.deep ? 4 : 2.5);
+    const top = fy(z.dmax - sq), bottom = fy(Math.max(0.5, z.dmin - sq * 0.5));
+    const land = { x: fx(z.x + shift), y: fy(z.d - sq) };
     const inLane = this.receivers.filter((r) => r.x > x0 - 4 && r.x < x1 + 4);
     const threats = inLane.filter((r) => r.y > top && r.y < bottom + 6);
     if (z.deep) {
@@ -786,7 +886,7 @@ export class Sim {
       const xs = threats.map((t) => t.x);
       const mid = (Math.min(...xs) + Math.max(...xs)) / 2;
       const deepX = threats.find((t) => t.y === deepest)!.x;
-      return { x: clamp(lerp(mid, deepX, 0.5), x0, x1), y: Math.min(land.y, deepest - 2 * YD) }; // lean to the deepest
+      return { x: clamp(lerp(mid, deepX, 0.5), x0, x1), y: Math.min(land.y, deepest - (2 - this.squat * 2.5) * YD) }; // lean to the deepest
     }
     if (!threats.length) {
       // nobody here: sink toward the nearest route in my lane, staying in the zone
@@ -797,7 +897,8 @@ export class Sim {
       if (!any || dist(any, land) > 28 * YD) return land;
       return { x: clamp(lerp(land.x, any.x, 0.4), x0 - 8, x1 + 8), y: clamp(lerp(land.y, any.y, 0.4), top, bottom) };
     }
-    const t = z.wide
+    const focus = this.focusId ? threats.find((r) => r.id === this.focusId) : undefined; // the receiver they're keying on
+    const t = focus ? focus : z.wide
       ? threats.reduce((p, q) => (Math.abs(q.x - CX) > Math.abs(p.x - CX) ? q : p)) // widest
       : threats.reduce((p, q) => (dist(q, land) < dist(p, land) ? q : p)); // nearest
     // sit in the zone and shade toward the threat, rather than attaching to him
@@ -857,7 +958,9 @@ export class Sim {
         }
         return { p: best, d: bestD };
       };
-      const o = nearest('off'), d = nearest('def');
+      // the receiver it was thrown to has the right of way (a go route running past doesn't take an out away)
+      const it = this.intended, itD = it ? dist(it, pos) : Infinity;
+      const o = it && itD <= reachOf(it) ? { p: it, d: itD } : nearest('off'), d = nearest('def');
       let outcome: Result | null = null;
       const roll = Math.random();
       if (o.p && !d.p) outcome = 'catch';
@@ -916,7 +1019,9 @@ export class Sim {
 
     // Carrier: head upfield, bending away from nearby tacklers and the sideline.
     const want = { x: 0, y: -1 };
-    for (const d of active) {
+    if (this.sneakStop !== null) { this.updateSneak(c, dt); return; }
+    const steer = c.kind === 'qb' && this.userControl && Math.hypot(this.userMove.x, this.userMove.y) > 0.15; // you steer the QB
+    for (const d of steer ? [] : active) {
       const dd = dist(d, c);
       if (dd > 30 || d.y > c.y + 12) continue; // only worry about those in front or beside
       const away = unit(d, c);
@@ -926,10 +1031,11 @@ export class Sim {
     }
     if (c.x < FIELD_LEFT + 10) want.x += (FIELD_LEFT + 10 - c.x) / 10;
     if (c.x > FIELD_RIGHT - 10) want.x -= (c.x - (FIELD_RIGHT - 10)) / 10;
-    want.y = Math.min(want.y, -0.35); // always keep going forward
+    if (steer) { want.x = this.userMove.x; want.y = this.userMove.y; }
+    else want.y = Math.min(want.y, -0.35); // always keep going forward
     const wl = Math.hypot(want.x, want.y);
-    const turn = Math.min(1, 5 * dt);
-    const speed = c.speed * 0.92 * clamp(this.runStart + this.runT / 0.5, 0, 1); // gathers himself after the catch
+    const turn = Math.min(1, (steer ? 9 : 5) * dt);
+    const speed = c.speed * 0.92 * clamp(this.runStart + this.runT / 0.5, 0, 1) * (steer ? clamp(wl, 0.5, 1) : 1); // gathers himself after the catch
     c.vel = {
       x: lerp(c.vel.x, (want.x / wl) * speed, turn),
       y: lerp(c.vel.y, (want.y / wl) * speed, turn),
@@ -948,12 +1054,12 @@ export class Sim {
       const edge = c.x < left ? left : right;
       const tOut = c.x === x0 ? 0 : (edge - x0) / (c.x - x0); // fraction of this step when he stepped out
       const tGoal = scored ? (y0 - this.goalY) / (y0 - c.y || 1) : Infinity;
-      if (tGoal < tOut) { this.touchdown = true; this.finish('catch', this.goalY); return; }
+      if (tGoal < tOut) { this.touchdown = true; this.finish(this.runResult, this.goalY); return; }
       const yOut = y0 + (c.y - y0) * clamp(tOut, 0, 1);
       c.x = edge; c.y = yOut;
-      this.outOfBounds = true; this.finish('catch', Math.max(yOut, this.goalY + 1)); return;
+      this.outOfBounds = true; this.finish(this.runResult, Math.max(yOut, this.goalY + 1)); return;
     }
-    if (scored) { this.touchdown = true; this.finish('catch', c.y); return; }
+    if (scored) { this.touchdown = true; this.finish(this.runResult, c.y); return; }
 
     // Other receivers try to get in the way of the nearest pursuers.
     const screened = new Set<Actor>();
@@ -981,7 +1087,7 @@ export class Sim {
         if (Math.random() < brk) {
           d.stunUntil = this.t + STUN_TIME; // broken tackle!
         } else {
-          this.finish('catch', Math.max(c.y - FALL_FORWARD * YD, this.goalY + 1)); // falls forward
+          this.finish(this.runResult, Math.max(c.y - FALL_FORWARD * YD, this.goalY + 1)); // falls forward
           return;
         }
       }
@@ -989,6 +1095,19 @@ export class Sim {
     this.separate();
   }
 
+
+  /** A run after the catch counts as a catch; a QB run is a run. */
+  private get runResult(): Result { return this.carrier?.kind === 'qb' ? 'run' : 'catch'; }
+
+  /** The sneak: a slow push into the pile; everyone converges; he goes down where the push stops. */
+  private updateSneak(c: Actor, dt: number): void {
+    const stop = this.sneakStop!;
+    c.y -= 2.2 * YD * dt * clamp(this.runT / 0.3, 0.3, 1);
+    for (const d of this.defense) moveToward(d, { x: c.x + (d.x - c.x) * 0.3, y: c.y - 2 * YD }, d.speed * 0.5 * dt);
+    for (const b of this.offense) if (b.kind === 'ol') moveToward(b, { x: b.x, y: c.y - 1.5 * YD }, 2 * YD * dt);
+    if (c.y <= this.goalY) { this.touchdown = true; this.finish('run', c.y); return; }
+    if (c.y <= stop || (stop > c.y - 0.1 && this.runT > 0.6)) this.finish('run', Math.max(Math.min(c.y, stop), this.goalY + 1));
+  }
 
   ballGround(): Vec {
     const b = this.ball!;

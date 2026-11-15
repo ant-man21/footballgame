@@ -11,7 +11,7 @@ import { type Banner, Match, PLAY_CLOCK, type Side } from './match';
 import { Menu, type MenuAction } from './menu';
 import { PLAYS, type Play } from './playbook/plays';
 import { DIFFICULTY_TUNING, type Difficulty, SPEED_FACTOR, loadSettings, saveSettings } from './settings';
-import { type Actor, HASH_YD, Sim, arcHeight, flightFor, throwSpread } from './sim';
+import { type Actor, HASH_YD, Sim, type Tendency, arcHeight, flightFor, throwSpread } from './sim';
 import { type Facing, HD, type Pose, grassTile, hdBall, hdPlayer, identity } from './hd';
 import { type Kit, type TeamColor, shade } from './sprites';
 import { type Crowd, drawEndStands, drawGoalpost, padColor } from './stadium';
@@ -87,6 +87,7 @@ export class Game {
   private rosterFrom: 'title' | 'pause' | 'career' = 'title';
   cpuTeam: Roster = makeRoster('CPU', DIFFICULTY_TUNING[this.settings.difficulty].strength);
   history: string[] = []; // your recent play calls: the defense notices repeats
+  throws: { who: string | null; depth: number }[] = []; // your recent throws: who to, how deep (the defense adjusts)
   view: View = PORTRAIT;
   clock = 0;
   paused = false; // tests step the sim by hand
@@ -94,7 +95,7 @@ export class Game {
   private confirmRestart = false;
   autoplay = false; // tests: the CPU brain plays your side too
   screen: Screen = 'title';
-  banner: (Banner & { kind: 'play' | 'punt' | 'note' }) | null = null;
+  banner: (Banner & { kind: 'play' | 'punt' | 'note' | 'kick' }) | null = null; // kick: your kickoff, deep or onside
   private bannerAt = 0;
   toast: { text: string; color: string; until: number } | null = null;
   drag: { start: Vec; cur: Vec } | null = null; // offense: throw gesture (screen coordinates)
@@ -223,8 +224,10 @@ export class Game {
     this.careerGame = setup;
     setup.form ??= gauss() * SIM_DEF.formSd; // this week the other offense is hot, cold or in between
     this.match = setup.match;
+    this.hookMatch();
     this.cpuTeam = setup.opp;
     this.history = [];
+    this.throws = [];
     this.lastPlayId = null;
     this.lastCallId = null;
     this.runoff = 0;
@@ -265,13 +268,21 @@ export class Game {
     this.menu = null;
     this.banner = null;
     this.pauseOpen = false;
+    this.match.asks = null; // the rest is simulated: the coach decides
     cg.onDone(this.match, stint);
+  }
+
+  /** You make your own try and kickoff choices when you call your own plays (not with the coach calling them, or on auto-play). */
+  private hookMatch(): void {
+    this.match.asks = (side) => side === 'you' && !this.autoplay && !this.careerGame?.coachCalls;
   }
 
   newGame(): void {
     this.match = new Match('you', Number(this.settings.quarter) * 60);
+    this.hookMatch();
     this.cpuTeam = makeRoster('CPU', DIFFICULTY_TUNING[this.settings.difficulty].strength); // a new opponent each game
     this.history = [];
+    this.throws = [];
     this.lastPlayId = null;
     this.lastCallId = null;
     this.runoff = 0;
@@ -284,6 +295,7 @@ export class Game {
 
   private situation(): string {
     const m = this.match, d = m.drive;
+    if (d.isTry) return m.tryChoice ? 'KICK XP OR A PLAY FOR 2' : `2-PT TRY - ${m.periodText}`;
     const spot = this.onOffense ? d.spotText : flipSpot(d.spotText);
     return `${d.downText} - ${spot} - ${m.periodText}`;
   }
@@ -304,6 +316,12 @@ export class Game {
     if (m.over) { this.screen = 'final'; this.menu = null; return; }
     const cg = this.careerGame;
     if (cg?.endAtHalf && m.quarter >= 3) { this.finishCareerGame({ ...m.stats.you }); return; }
+    // a try or a kickoff waiting on a choice: yours, or made by the charts (if nobody's asking you now)
+    if (m.kickoffBy === 'you' && m.asks?.('you')) { this.showKickChoice(); return; }
+    if ((m.kickoffBy || m.tryChoice) && !m.asks?.('you')) {
+      const q = m.quarter, b = m.autoDecide();
+      if (b) { this.showResult(b, q); return; }
+    }
     const d = m.drive;
     this.fieldBallOn = d.ballOn;
     this.lineToGain = d.ballOn + d.toGo;
@@ -315,7 +333,7 @@ export class Game {
     if (this.onOffense) {
       if (this.autoplay) {
         if (d.down === 4 && this.cpuFourthDown(m.score.you - m.score.cpu)) return;
-        this.play = callPlay(d);
+        this.play = callPlay(d, this.lateFor('you'));
         this.setupSnap();
         return;
       }
@@ -324,6 +342,7 @@ export class Game {
         kind: 'offense', selectedId: this.lastPlayId, settings: this.settings, subtitle: this.situation(),
         fourthDown: d.down === 4 && !m.ot && d.ballOn < 70, // no punting in their 30 (or in overtime)
         fieldGoal: d.down === 4 && m.ot < 3 && fg <= FG_MAX ? fg : null,
+        extraPoint: m.tryChoice, // the try: KICK XP, or pick a play to go for 2
       });
     } else {
       if (d.down === 4 && this.cpuFourthDown(m.score.cpu - m.score.you)) return;
@@ -342,8 +361,8 @@ export class Game {
     if (this.onOffense) {
       if (!cg.coachCalls) return false;
       if (d.down === 4 && this.cpuFourthDown(m.score.you - m.score.cpu)) return true;
-      let play = callPlay(d);
-      for (let i = 0; i < 3 && play.id === this.lastPlayId; i++) play = callPlay(d); // coach mixes it up
+      let play = callPlay(d, this.lateFor('you'));
+      for (let i = 0; i < 3 && play.id === this.lastPlayId; i++) play = callPlay(d, this.lateFor('you')); // coach mixes it up
       this.play = play;
       this.flipped = false;
       this.lastPlayId = play.id;
@@ -358,7 +377,7 @@ export class Game {
       const u = { you: { ...cg.units.you, def: cg.units.you.def + SIM_DEF.bonus }, cpu: { ...cg.units.cpu, off: cg.units.cpu.off + (cg.form ?? 0) } };
       const r = simDrive(m, u, { runoff: SIM_DEF.runoff });
       const name = m.names.cpu;
-      const what = { td: 'TOUCHDOWN', fg: 'FIELD GOAL', fgmiss: 'MISSED FG', punt: 'PUNT', int: 'INTERCEPTED!', downs: 'STOPPED ON DOWNS', half: 'END OF HALF', end: 'END OF GAME' }[r.end];
+      const what = { td: 'TOUCHDOWN', safety: 'SAFETY', fg: 'FIELD GOAL', fgmiss: 'MISSED FG', punt: 'PUNT', int: 'INTERCEPTED!', downs: 'STOPPED ON DOWNS', half: 'END OF HALF', end: 'END OF GAME' }[r.end];
       const good = r.end === 'int' || r.end === 'downs' || r.end === 'fgmiss';
       this.banner = {
         headline: `${name} DRIVE`, color: r.end === 'td' || r.end === 'fg' ? C.red : good ? C.green : C.grey,
@@ -405,11 +424,12 @@ export class Game {
         cpuTeam: 'def', tuning: this.tuning,
         callBias: reps >= 2 ? (c) => (beats(vs, c) ? 1 / (1 + reps * 0.8) : 1) : undefined,
         recognition: clamp((reps - 1) / 4, 0, 1),
+        tendency: this.tendency(),
         ballX: d.ballX, mirror: toField !== this.flipped,
         call: keepCall ? this.sim.call : undefined,
       });
     } else {
-      this.sim.reset(callPlay(d), d.goalY, {
+      this.sim.reset(callPlay(d, this.lateFor('cpu')), d.goalY, {
         userDefender: USER_DEFENDER,
         teams: { off: this.cpuTeam, def: this.yourTeam },
         cpuTeam: 'off', tuning: this.tuning,
@@ -430,20 +450,49 @@ export class Game {
   }
 
   /** A field goal try (simulated). */
-  private showFieldGoal(): void {
+  private showFieldGoal(): void { const q = this.match.quarter; this.showResult(this.match.fieldGoal(), q); }
+
+  private showPunt(): void { const q = this.match.quarter; this.showResult(this.match.punt(), q); }
+
+  /** A kick's (or a try's) result. If you kick off next, the kickoff choice comes with it. */
+  private showResult(b: Banner, q: number): void {
+    const m = this.match;
+    if (m.over) b.note = 'FINAL';
+    else if (m.quarter !== q) b.note = m.ot && q === 4 ? 'TIED: OVERTIME!' : q === 2 ? 'HALFTIME' : `END OF Q${q}`;
     this.menu = null;
-    this.banner = { ...this.match.fieldGoal(), kind: 'punt' };
+    this.runoff = 0;
+    if (m.kickoffBy === 'you' && m.asks?.('you')) { this.showKickChoice(b); return; }
+    this.banner = { ...b, kind: 'punt' };
     this.screen = 'banner';
     this.bannerAt = this.clock;
-    this.runoff = 0;
   }
 
-  private showPunt(): void {
+  /** Your kickoff: KICK DEEP or ONSIDE (deep if you wait). prev: the result that led to it (the try, a safety). */
+  private showKickChoice(prev?: Banner): void {
+    const m = this.match;
     this.menu = null;
-    this.banner = { ...this.match.punt(), kind: 'punt' };
+    this.banner = {
+      headline: prev?.headline ?? 'KICKOFF', color: prev?.color ?? C.white,
+      detail: prev ? prev.detail : `${m.names.you} ${m.score.you} - ${m.names.cpu} ${m.score.cpu}`,
+      note: prev?.note ?? undefined, kind: 'kick',
+    };
     this.screen = 'banner';
     this.bannerAt = this.clock;
-    this.runoff = 0;
+  }
+
+  /** The kickoff buttons on the kick banner. */
+  get kickButtons(): { deep: Rect; onside: Rect } {
+    const v = this.view, mid = v.landscape ? v.w / 2 : v.w / 2, y = (v.landscape ? 40 : 96) + 46;
+    return { deep: { x: mid - 68, y, w: 64, h: 16 }, onside: { x: mid + 4, y, w: 64, h: 16 } };
+  }
+
+  /** Kicks off (your choice). */
+  kick(onside: boolean): void {
+    const m = this.match;
+    if (!m.kickoffBy) { this.afterBanner(); return; }
+    const q = m.quarter, b = m.kickoff(onside);
+    this.showResult(b, q);
+    if (this.banner?.kind === 'kick') this.banner.kind = 'punt'; // (a return TD's try comes in the huddle)
   }
 
   /** Pick a play from code (tests) or the huddle. */
@@ -466,6 +515,7 @@ export class Game {
         break;
       case 'punt': this.showPunt(); break;
       case 'fg': this.showFieldGoal(); break;
+      case 'xp': { const q = this.match.quarter; this.showResult(this.match.kickExtraPoint(), q); break; }
     }
   }
 
@@ -529,10 +579,15 @@ export class Game {
 
     if (this.screen === 'huddle' && this.menu) { this.huddleAction(this.menu.tap(p, this.view)); return; }
     if (this.screen === 'final') { if (this.careerGame) this.finishCareerGame(); else this.newGame(); return; }
-    if (this.screen === 'banner') { this.afterBanner(); return; }
+    if (this.screen === 'banner') {
+      if (this.banner?.kind === 'kick') { const k = this.kickButtons; if (hit(k.deep, p)) this.kick(false); else if (hit(k.onside, p)) this.kick(true); return; }
+      this.afterBanner();
+      return;
+    }
 
     const phase = this.sim.phase;
     if (!this.onOffense) { this.stick = { origin: p, cur: p }; return; } // defense: joystick anywhere
+    if (phase === 'run' && this.sim.carrier === this.sim.qb) { this.stick = { origin: p, cur: p }; return; } // your QB is running: steer him
 
     if (hit(this.modeButton, p)) { this.settings.aim = this.mode === 'pull' ? 'aim' : 'pull'; this.applySettings(); return; }
     if (hit(this.playsButton, p) && !this.careerGame?.coachCalls) { // back to the huddle to change the call
@@ -579,8 +634,41 @@ export class Game {
     const to = this.target();
     this.drag = null;
     if (!to) return;
+    if (this.isScramble(to)) { this.scramble(); return; } // thrown straight back: tuck it and run
     if (this.sim.t < SNAP_CATCH) this.queuedThrow = to; // goes out as soon as he has the ball
     else this.sim.throwTo(to);
+  }
+
+  /** The end of a half (or a trailing team late in the game): time for shots. */
+  private lateFor(side: Side): boolean {
+    const m = this.match, lead = m.score[side] - m.score[side === 'you' ? 'cpu' : 'you'];
+    return !m.ot && ((m.quarter === 2 && m.clock < 12) || (m.quarter === 4 && m.clock < 20 && lead < 0 && lead >= -8));
+  }
+
+  /** What the defense has seen from your last throws (needs 4 to read anything). */
+  tendency(): Tendency | undefined {
+    const t = this.throws;
+    if (t.length < 4) return undefined;
+    const short = t.filter((x) => x.depth <= 6).length / t.length;
+    const last = t.slice(-6), count = new Map<string, number>();
+    for (const x of last) if (x.who) count.set(x.who, (count.get(x.who) ?? 0) + 1);
+    let focus: string | null = null, n = 0;
+    for (const [k, v] of count) if (v > n) { focus = k; n = v; }
+    return { short, focus, focusShare: n / last.length };
+  }
+
+  /** A "throw" aimed almost straight behind the QB means scramble (nobody is back there to throw to). */
+  isScramble(to: Vec): boolean {
+    const qb = this.sim.qb, back = to.y - qb.y;
+    return back > 4 * YD && Math.abs(to.x - qb.x) < back * 0.75;
+  }
+
+  /** Tuck it and run: drag anywhere to steer him (let go and he runs on his own). */
+  scramble(): void {
+    if (this.sim.phase !== 'live' || this.sim.t < SNAP_CATCH * 0.5) return;
+    this.queuedThrow = null;
+    this.sim.keep();
+    this.showToast('SCRAMBLE! DRAG TO STEER', C.yellow);
   }
 
   private snap(): void {
@@ -628,7 +716,8 @@ export class Game {
     }
 
     if (this.screen === 'banner') {
-      if (this.clock - this.bannerAt > RESULT_TIME) this.afterBanner();
+      if (this.banner?.kind === 'kick') { if (this.clock - this.bannerAt > RESULT_TIME * 3) this.kick(false); } // waited: kick it deep
+      else if (this.clock - this.bannerAt > RESULT_TIME) this.afterBanner();
       return;
     }
     if (this.screen !== 'play') return;
@@ -659,6 +748,9 @@ export class Game {
       const q = this.match.quarter;
       const offenseBefore = this.match.offense;
       const spot = this.spotAfter(sim);
+      if (this.onOffense && sim.ball && sim.result !== 'run' && sim.result !== 'sack') { // what the defense remembers about your throws
+        this.throws = [...this.throws, { who: sim.target?.id ?? null, depth: (LOS_Y - sim.ball.aim.y) / YD }].slice(-8);
+      }
       const b = this.match.afterPlay(rawFromSim(sim), sim.t / TIME_SCALE);
       // next snap: where the play ended (on the hash if it ended outside it); the middle after a change of possession,
       // except an interception or turnover on downs, spotted from the other side's view
@@ -668,12 +760,16 @@ export class Game {
         else if (sim.result === 'int' || b.headline === 'TURNOVER ON DOWNS') this.match.drive.ballX = -spot; // their view is flipped
         // (after a touchdown the new drive starts in the middle)
       }
+      if (this.match.drive.isTry) this.match.drive.ballX = 0; // the try is snapped from the middle
       if (this.match.over) b.note = 'FINAL';
       else if (this.match.quarter !== q) b.note = this.match.ot ? 'TIED: OVERTIME!' : q === 2 ? 'HALFTIME' : `END OF Q${q}`;
-      this.banner = { ...b, kind: 'play' };
-      this.screen = 'banner';
-      this.bannerAt = this.clock;
       this.runoff = 0;
+      if (this.match.kickoffBy === 'you' && this.match.asks?.('you')) this.showKickChoice(b); // your kickoff after a try or a safety
+      else {
+        this.banner = { ...b, kind: 'play' };
+        this.screen = 'banner';
+        this.bannerAt = this.clock;
+      }
     }
 
     // camera follows the ball upfield: the runner, or a deep ball in the air
@@ -690,7 +786,7 @@ export class Game {
   private spotAfter(sim: Sim): number {
     let px: number | null = null;
     if (sim.result === 'catch' || sim.result === 'int') px = sim.ball?.carrier?.x ?? null;
-    else if (sim.result === 'sack') px = sim.qb.x;
+    else if (sim.result === 'sack' || sim.result === 'run') px = sim.qb.x;
     if (px === null) return this.match.drive.ballX; // incomplete: same spot
     const x = (px - CX) / YD;
     return Math.abs(x) > HASH_YD ? Math.sign(x) * HASH_YD : Math.round(x * 10) / 10;
@@ -868,7 +964,7 @@ export class Game {
     const sim = this.sim;
     if (sim.phase === 'presnap') return p.kind === 'ol' || p.kind === 'dl' ? 'stance' : 'stand';
     if (sim.phase === 'done') {
-      const tackled = sim.result === 'sack' ? sim.qb : sim.result === 'catch' && !sim.touchdown && !sim.outOfBounds ? sim.carrier : null;
+      const tackled = sim.result === 'sack' ? sim.qb : (sim.result === 'catch' || sim.result === 'run') && !sim.touchdown && !sim.outOfBounds ? sim.carrier : null;
       if (p === tackled) return 'down';
       return speed > 8 ? 'run' : 'stand';
     }
@@ -1003,6 +1099,10 @@ export class Game {
       }
     }
     const qb = this.sim.qb;
+    if (this.isScramble(to)) { // aimed straight back: letting go means scramble
+      drawText(ctx, 'RUN', Math.round(this.sx(qb.x)), Math.round(this.sy(qb.y)) + 8 * s, { align: 'center', color: C.yellow, shadow: '#000' });
+      return;
+    }
     const from = { x: qb.x, y: qb.y - 3 };
     const { peak } = flightFor(from, to);
     const steps = Math.max(6, Math.floor((dist(from, to) * s) / 6));
@@ -1200,6 +1300,14 @@ export class Game {
       if (b.note) { drawText(ctx, b.note, fieldMid, ly, { align: 'center', color: C.yellow }); ly += 10; }
       if (b.kind === 'play') {
         drawText(ctx, `${sim.call.name} - ${rushLabel(sim.call)}`, fieldMid, ly, { align: 'center', color: C.grey });
+      }
+      if (b.kind === 'kick') {
+        const k = this.kickButtons;
+        ctx.fillStyle = 'rgba(17,29,43,0.9)';
+        ctx.fillRect(k.deep.x - 6, k.deep.y - 12, k.onside.x + k.onside.w - k.deep.x + 12, 32);
+        drawText(ctx, 'YOUR KICKOFF', fieldMid, k.deep.y - 9, { align: 'center', color: C.grey });
+        button(ctx, k.deep, 'KICK DEEP', C.green);
+        button(ctx, k.onside, 'ONSIDE', C.orange);
       }
     }
   }

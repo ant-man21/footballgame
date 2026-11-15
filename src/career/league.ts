@@ -1,19 +1,22 @@
-// A league: teams in two regions, a 10-game schedule (3 non-region games, then
-// a 7-game region round robin), standings with tiebreakers, and an 8-team
-// playoff (top 4 of each region, crossed over) for the state title.
+// A league: your classification's teams in regions of 8 (4 regions in new
+// careers, 2 in older saves), a 10-game schedule (3 non-region games against the
+// paired region, then a 7-game region round robin), standings with tiebreakers,
+// and the state playoff: the top 4 of each region, crossed over with the paired
+// region (16 teams: first round, quarterfinals, semifinals, the state title;
+// 8 teams with 2 regions).
 import type { TeamStats } from '../drive';
 import type { SchoolIdentity } from './hsnames';
 import { Rng } from './rng';
 
 export interface Team extends SchoolIdentity {
   id: number;
-  region: number; // 0 or 1
+  region: number; // 0..regions-1 (regions 2k and 2k+1 are paired)
   prestige: number; // 0-100: programs that win keep winning (it pulls strength toward it each off-season)
   off: number; // this season's unit strength, rating points vs the tier norm (0 = average)
   def: number;
 }
 
-export type Round = 'QF' | 'SF' | 'F';
+export type Round = 'R1' | 'QF' | 'SF' | 'F';
 export interface GameRec {
   week: number; // 1-based
   home: number; // team ids
@@ -26,22 +29,31 @@ export interface GameRec {
 }
 
 export const REGULAR_WEEKS = 10;
-export const PLAYOFF_ROUNDS: Round[] = ['QF', 'SF', 'F'];
-export const ROUND_NAMES: Record<Round, string> = { QF: 'QUARTERFINAL', SF: 'SEMIFINAL', F: 'STATE TITLE' };
-export const REGION_NAMES = ['NORTH', 'SOUTH'];
+export const ALL_ROUNDS: Round[] = ['R1', 'QF', 'SF', 'F'];
+export const ROUND_NAMES: Record<Round, string> = { R1: 'FIRST ROUND', QF: 'QUARTERFINAL', SF: 'SEMIFINAL', F: 'STATE TITLE' };
+export const REGION_NAMES = ['NORTH', 'SOUTH', 'EAST', 'WEST'];
+export const TEAMS_PER_REGION = 8;
 
-/** The regular season schedule for 16 teams (8 per region). */
+/** How many regions a league has. */
+export const regionCount = (teams: Team[]) => Math.max(...teams.map((t) => t.region)) + 1;
+/** The playoff rounds for a league (2 regions: 8 teams from the quarterfinals; 4 regions: 16 teams). */
+export const playoffRounds = (teams: Team[]): Round[] => (regionCount(teams) >= 4 ? ALL_ROUNDS : ALL_ROUNDS.slice(1));
+
+/** The regular season schedule (8 teams per region, regions paired 0-1, 2-3). */
 export function makeSchedule(teams: Team[], rng: Rng): GameRec[] {
-  const regions = [0, 1].map((r) => rng.shuffle(teams.filter((t) => t.region === r).map((t) => t.id)));
+  const nr = regionCount(teams);
+  const regions = Array.from({ length: nr }, (_, r) => rng.shuffle(teams.filter((t) => t.region === r).map((t) => t.id)));
   const games: GameRec[] = [];
-  // weeks 1-3: non-region games, each team in region 0 against a different region-1 team each week
-  const offsets = rng.shuffle([0, 1, 2, 3, 4, 5, 6, 7]).slice(0, 3);
-  offsets.forEach((k, w) => {
-    for (let i = 0; i < 8; i++) {
-      const a = regions[0][i], b = regions[1][(i + k) % 8];
-      games.push((i + w) % 2 ? { week: w + 1, home: a, away: b } : { week: w + 1, home: b, away: a });
-    }
-  });
+  // weeks 1-3: non-region games, each team in region 2k against a different team of region 2k+1 each week
+  for (let pr = 0; pr + 1 < nr; pr += 2) {
+    const offsets = rng.shuffle([0, 1, 2, 3, 4, 5, 6, 7]).slice(0, 3);
+    offsets.forEach((k, w) => {
+      for (let i = 0; i < 8; i++) {
+        const a = regions[pr][i], b = regions[pr + 1][(i + k) % 8];
+        games.push((i + w) % 2 ? { week: w + 1, home: a, away: b } : { week: w + 1, home: b, away: a });
+      }
+    });
+  }
   // weeks 4-10: region round robin (circle method)
   for (const ids of regions) {
     const n = ids.length, fixed = ids[0], rot = ids.slice(1);
@@ -100,24 +112,33 @@ export function regionOrder(teams: Team[], games: GameRec[], region: number): St
     || h2h(b.id, a.id) || (b.pf - b.pa) - (a.pf - a.pa) || b.pf - a.pf || a.id - b.id);
 }
 
-/** Quarterfinals: the top 4 of each region, crossed over (N1 v S4, S2 v N3, S1 v N4, N2 v S3). Higher seed at home. */
+/**
+ * The first playoff round: the top 4 of each region, crossed over with the
+ * paired region (N1 v S4, S2 v N3, S1 v N4, N2 v S3; then the same for EAST and
+ * WEST). Higher seed at home. Neighbouring games feed the next round.
+ */
 export function playoffField(teams: Team[], games: GameRec[]): GameRec[] {
-  const [n, s] = [0, 1].map((r) => regionOrder(teams, games, r).slice(0, 4).map((x) => x.id));
-  const w = REGULAR_WEEKS + 1;
-  return [
-    { week: w, round: 'QF', home: n[0], away: s[3] }, { week: w, round: 'QF', home: s[1], away: n[2] },
-    { week: w, round: 'QF', home: s[0], away: n[3] }, { week: w, round: 'QF', home: n[1], away: s[2] },
-  ];
+  const nr = regionCount(teams), w = REGULAR_WEEKS + 1, round = playoffRounds(teams)[0];
+  const out: GameRec[] = [];
+  for (let pr = 0; pr + 1 < nr; pr += 2) {
+    const [n, s] = [pr, pr + 1].map((r) => regionOrder(teams, games, r).slice(0, 4).map((x) => x.id));
+    out.push(
+      { week: w, round, home: n[0], away: s[3] }, { week: w, round, home: s[1], away: n[2] },
+      { week: w, round, home: s[0], away: n[3] }, { week: w, round, home: n[1], away: s[2] },
+    );
+  }
+  return out;
 }
 
 export const winnerOf = (g: GameRec) => (g.hs! > g.as! ? g.home : g.away);
 
 /** The next round's games once a round is complete (null if there is no next round). */
 export function nextRound(games: GameRec[], seedOf: (id: number) => number): GameRec[] | null {
-  for (const [i, round] of PLAYOFF_ROUNDS.entries()) {
+  for (const [i, round] of ALL_ROUNDS.entries()) {
     const these = games.filter((g) => g.round === round);
-    if (!these.length || !these.every(played)) return null;
-    const next = PLAYOFF_ROUNDS[i + 1];
+    if (!these.length) continue; // an 8-team bracket starts at the quarterfinals
+    if (!these.every(played)) return null;
+    const next = ALL_ROUNDS[i + 1];
     if (!next) return null;
     if (games.some((g) => g.round === next)) continue;
     const week = these[0].week + 1, out: GameRec[] = [];

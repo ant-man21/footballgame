@@ -1,7 +1,8 @@
 // Past careers: a small record of every player you've had, kept in its own
 // localStorage key so starting a new career never loses the old one. A career is
-// archived when you sign (graduated) and when you start over mid-career
-// (unfinished); a pasted EXPORT SAVE can be added too.
+// archived when he signs (graduated); a pasted EXPORT SAVE of a finished career
+// can be added too. Unfinished careers are not kept: PAST CAREERS shows the
+// active career (live, from its save) and the finished ones.
 import type { TeamStats } from '../drive';
 import type { CareerSave } from './career';
 import { rivalOf, rivalTrophy } from './news';
@@ -15,7 +16,7 @@ export interface CareerRecord {
   school: { name: string; mascot: string; abbr: string; colors: [string, string] };
   difficulty: string;
   growth: number; // development speed (revealed once he's done)
-  status: 'graduated' | 'unfinished';
+  status: 'graduated' | 'unfinished' | 'active'; // 'unfinished' only in old lists (dropped on load); 'active' = the career in progress, never stored
   seasons: { year: number; role: string; gp: number; gs: number; record: string; finish: string; stats: TeamStats; stars: number; ovr: number; avg?: number }[];
   awards: string[];
   offers: string[]; // college ids
@@ -29,7 +30,7 @@ export function loadHistory(): CareerRecord[] {
   try {
     const raw = localStorage.getItem(HISTORY_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list.filter((r) => r && typeof r.id === 'number' && r.first) : [];
+    return Array.isArray(list) ? list.filter((r) => r && typeof r.id === 'number' && r.first && r.status === 'graduated') : [];
   } catch { return []; }
 }
 
@@ -57,11 +58,11 @@ export function recordFrom(s: CareerSave, difficulty = 'pro'): CareerRecord {
   };
 }
 
-/** Adds or updates a career's record (a graduated record is never replaced by an unfinished one). */
+/** Adds or updates a finished career's record (unfinished ones are not kept). */
 export function archive(rec: CareerRecord): void {
+  if (rec.status !== 'graduated') return;
   const list = loadHistory();
   const i = list.findIndex((x) => x.id === rec.id);
-  if (i >= 0 && list[i].status === 'graduated' && rec.status !== 'graduated') return;
   if (i >= 0) list[i] = rec; else list.unshift(rec);
   saveHistory(list);
 }

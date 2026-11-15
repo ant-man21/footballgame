@@ -18,7 +18,7 @@ const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && 
 export type MenuAction =
   | { type: 'pick'; play: Play }
   | { type: 'pickCall'; call: Call }
-  | { type: 'same' } | { type: 'auto' } | { type: 'punt' } | { type: 'fg' }
+  | { type: 'same' } | { type: 'auto' } | { type: 'punt' } | { type: 'fg' } | { type: 'xp' }
   | { type: 'close' } | { type: 'settings' } | { type: 'start' } | { type: 'team' } | { type: 'career' }
   | null;
 
@@ -29,6 +29,7 @@ export interface MenuOptions {
   subtitle?: string; // e.g. "2ND & 7 - OWN 35 - Q2 1:48"
   fourthDown?: boolean; // offense: show PUNT
   fieldGoal?: number | null; // offense: show FG (the kick's distance in yards)
+  extraPoint?: boolean; // offense, after a touchdown: show KICK XP (any play goes for 2)
   settingsOnly?: boolean; // opened from pause: just the settings panel
   title?: boolean; // the start screen: PLAY NOW, CAREER, TEAM, SETTINGS (game options live in SETTINGS)
 }
@@ -75,7 +76,7 @@ export class Menu {
 
   /** Card grid: 2 columns x 3 rows in portrait, 3 x 2 in landscape; pages beyond that. */
   layout(v: View) {
-    const gap = 3;
+    const gap = this.cats.length > 5 ? 2 : 3;
     const cols = v.landscape ? 3 : 2, rows = v.landscape ? 2 : 3, per = cols * rows;
     const tabY = v.landscape ? 20 : 30, tabH = v.landscape ? 12 : 13;
     const n = this.cats.length;
@@ -93,7 +94,8 @@ export class Menu {
     }));
     // quick buttons along the bottom
     const by = v.h - 18;
-    const labels: { type: 'same' | 'auto' | 'punt' | 'fg'; label: string }[] = [];
+    const labels: { type: 'same' | 'auto' | 'punt' | 'fg' | 'xp'; label: string }[] = [];
+    if (this.o.extraPoint) labels.push({ type: 'xp', label: 'KICK XP' });
     if (this.o.kind === 'defense') labels.push({ type: 'auto', label: 'AUTO' });
     if (this.o.selectedId) labels.push({ type: 'same', label: this.o.kind === 'offense' ? 'SAME PLAY' : 'SAME CALL' });
     if (this.o.fourthDown) labels.push({ type: 'punt', label: 'PUNT' });

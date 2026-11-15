@@ -4,13 +4,14 @@ import type { RouteKey } from './routes';
 // The playbook. Plays are grouped into categories so the menu can grow:
 // add a category here and plays that use it, and the menu picks them up.
 
-export type CategoryId = 'quick' | 'core' | 'crossers' | 'shots' | 'screen';
+export type CategoryId = 'quick' | 'core' | 'crossers' | 'shots' | 'screen' | 'run';
 export const CATEGORIES: { id: CategoryId; name: string }[] = [
   { id: 'quick', name: 'QUICK' },
   { id: 'core', name: 'CORE' },
   { id: 'crossers', name: 'CROSS' },
   { id: 'shots', name: 'SHOTS' },
   { id: 'screen', name: 'SCREEN' },
+  { id: 'run', name: 'RUN' },
 ];
 
 export interface PlayRoute {
@@ -30,6 +31,8 @@ export interface Play {
   screen?: { release: number[]; at: number };
   /** Rollouts: the QB sprints out to this side and throws on the move. */
   rollout?: 'left' | 'right';
+  /** QB runs: a sneak (under center, straight ahead) or a draw (show pass, then run). */
+  run?: 'sneak' | 'draw';
 }
 
 export const PLAYS: Play[] = [
@@ -289,6 +292,46 @@ export const PLAYS: Play[] = [
       { who: 'X', route: 'go' }, { who: 'H', route: 'seam' },
       { who: 'Y', route: 'seam' }, { who: 'Z', route: 'go' },
       { who: 'RB', route: 'checkdown' },
+    ],
+  },
+  {
+    id: 'four-verts', name: 'FOUR VERTS', category: 'shots', formation: 'spread', vs: 'VS COVER 3',
+    routes: [
+      { who: 'X', route: 'go' }, { who: 'H', route: 'seam' },
+      { who: 'Y', route: 'seam' }, { who: 'Z', route: 'go' },
+      { who: 'RB', route: 'checkdown' },
+    ],
+  },
+  {
+    id: 'slants', name: 'SLANTS', category: 'quick', formation: 'spread', vs: 'VS MAN',
+    routes: [
+      { who: 'X', route: 'slant' }, { who: 'H', route: 'slant' },
+      { who: 'Y', route: 'slant' }, { who: 'Z', route: 'slant' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'all-curls', name: 'ALL CURLS', category: 'core', formation: 'spread', vs: 'VS COVER 2',
+    routes: [
+      { who: 'X', route: 'curl' }, { who: 'H', route: 'curl' },
+      { who: 'Y', route: 'curl' }, { who: 'Z', route: 'curl' },
+      { who: 'RB', route: 'checkdown' },
+    ],
+  },
+  {
+    id: 'qb-sneak', name: 'QB SNEAK', category: 'run', formation: 'ace', vs: 'SHORT YARDAGE', run: 'sneak',
+    routes: [
+      { who: 'X', route: 'stalk' }, { who: 'Y', route: 'block' },
+      { who: 'H', route: 'stalk' }, { who: 'Z', route: 'stalk' },
+      { who: 'RB', route: 'block' },
+    ],
+  },
+  {
+    id: 'qb-draw', name: 'QB DRAW', category: 'run', formation: 'spread', vs: 'VS DEEP ZONE', run: 'draw',
+    routes: [
+      { who: 'X', route: 'go' }, { who: 'H', route: 'stalk' },
+      { who: 'Y', route: 'stalk' }, { who: 'Z', route: 'go' },
+      { who: 'RB', route: 'block' },
     ],
   },
 ];

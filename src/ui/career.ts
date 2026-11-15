@@ -5,7 +5,8 @@
 import { C } from '../config';
 import { Career, type GamePlan, HS_YEARS, SITE_NAME, type WeekLog } from '../career/career';
 import { STATES, randomName } from '../career/hsnames';
-import { type GameRec, PLAYOFF_ROUNDS, REGION_NAMES, ROUND_NAMES, played, regionOrder, standings, winnerOf } from '../career/league';
+import { type GameRec, REGION_NAMES, ROUND_NAMES, playoffRounds, played, regionCount, regionOrder, standings, winnerOf } from '../career/league';
+import { NATIONAL_SIZE, natRank, natRow } from '../career/nation';
 import {
   ARCHETYPES, type Archetype, CLASS_NAMES, CLASS_SHORT, FOCUSES, displayName, jerseyNo, letterGrade, passerRating, qbOvr,
 } from '../career/player';
@@ -63,7 +64,7 @@ export class CareerScreens {
   listPage = 0; // recruiting / signing day: which page of schools
   exportNote: { text: string; color: string; until: number } | null = null; // EXPORT SAVE feedback
   flash: { text: string; color: string; until: number } | null = null; // recruiting board: why a visit can't happen, etc.
-  standingsTab: 'regions' | 'top10' | 'playoffs' = 'regions';
+  standingsTab: 'regions' | 'top10' | 'nation' | 'playoffs' = 'regions';
   statsTab: 'you' | 'team' | 'state' = 'you';
   private storyCache: { key: string; story: string | null } | null = null; // the hub's storyline for the next game
   // character creation
@@ -113,7 +114,7 @@ export class CareerScreens {
 
   /** Creates the career (tests call this directly). */
   create(first = this.first, last = this.last, stateId = STATES[this.stateIdx].id, arch = this.arch): Career {
-    if (this.career) archive(recordFrom(this.career.s)); // the old one goes into PAST CAREERS (unfinished if he didn't graduate)
+    if (this.career) archive(recordFrom(this.career.s)); // a graduated one is kept in PAST CAREERS; an unfinished one is gone
     deleteCareer();
     this.career = Career.create(first, last, stateId, arch, Number(this.game.settings.quarter) * 60, this.diff);
     this.screen = 'hub';
@@ -216,7 +217,7 @@ export class CareerScreens {
         if (hit(L.focusR, p)) { c.s.focus = cycle(FOCUSES, c.s.focus, 1) as typeof c.s.focus; this.save(); }
         if (hit(L.gameDay, p)) this.gameDay();
         if (hit(L.schedule, p)) this.screen = 'schedule';
-        if (hit(L.standings, p)) { this.screen = 'standings'; this.standingsTab = c.isPlayoffs ? 'playoffs' : 'regions'; }
+        if (hit(L.standings, p)) { this.screen = 'standings'; this.standingsTab = c.isPlayoffs ? 'playoffs' : 'regions'; this.listPage = Math.floor(c.school.region / 2); }
         if (hit(L.stats, p)) this.screen = 'stats';
         if (hit(L.team, p)) this.game.showRosterOf(c.rosterWithYou());
         if (hit(L.recruiting, p)) { this.screen = 'recruiting'; this.pick = null; this.listPage = 0; }
@@ -246,10 +247,12 @@ export class CareerScreens {
         return;
       }
       case 'standings': {
-        const L = this.standingsLayout(v);
-        if (hit(L.tabR, p)) this.standingsTab = 'regions';
-        if (hit(L.tabT, p)) this.standingsTab = 'top10';
-        if (hit(L.tabP, p) && c?.s.games.some((g) => g.round)) this.standingsTab = 'playoffs';
+        const T = this.standingsTabs(v);
+        if (this.standingsTab === 'regions' && c && this.pagerTap(p, v, Math.ceil(regionCount(c.s.teams) / 2))) return;
+        if (hit(T.regions, p)) this.standingsTab = 'regions';
+        if (hit(T.top10, p)) this.standingsTab = 'top10';
+        if (hit(T.nation, p)) this.standingsTab = 'nation';
+        if (hit(T.playoffs, p) && c?.s.games.some((g) => g.round)) this.standingsTab = 'playoffs';
         if (hit(this.bottomButton(v), p)) this.screen = 'hub';
         return;
       }
@@ -415,6 +418,12 @@ export class CareerScreens {
   }
 
   gamedayLayout(v: View) { return { go: r(v.w / 2 - 55, v.h - (v.landscape ? 30 : 60), 110, 22) }; }
+
+  /** The STANDINGS tabs. */
+  standingsTabs(v: View) {
+    const y = v.landscape ? 4 : 24, w = 42, x = v.w / 2 - (4 * w + 6) / 2;
+    return { regions: r(x, y, w, 13), top10: r(x + w + 2, y, w, 13), nation: r(x + 2 * (w + 2), y, w, 13), playoffs: r(x + 3 * (w + 2), y, w, 13), top: y + 20 };
+  }
 
   standingsLayout(v: View) {
     const y = v.landscape ? 4 : 24;
@@ -595,7 +604,8 @@ export class CareerScreens {
     const c = this.career!, s = c.s, me = s.schoolId;
     const mine = s.games.filter((g) => g.home === me || g.away === me);
     const reg = mine.filter((g) => !g.round).sort((a, b) => a.week - b.week);
-    const pw = 14, cw = Math.min(14, Math.floor((w - 4 - PLAYOFF_ROUNDS.length * pw) / reg.length));
+    const rounds = playoffRounds(s.teams);
+    const pw = 14, cw = Math.min(14, Math.floor((w - 4 - rounds.length * pw) / reg.length));
     const cell = (cx: number, cwid: number, label: string, kind: 'W' | 'L' | 'now' | 'next' | 'off') => {
       const rr = r(cx, y, cwid - 1, 11);
       const [fill, border, col] = kind === 'W' ? ['#0b3d1d', C.green, C.green] : kind === 'L' ? ['#4a0f1f', C.red, C.red]
@@ -611,9 +621,9 @@ export class CareerScreens {
       if (c.isRival(g)) { ctx.fillStyle = C.orange; ctx.fillRect(cx, y + 12, cw - 1, 2); } // rivalry week
       cx += cw;
     }
-    cx = x + w - PLAYOFF_ROUNDS.length * pw;
+    cx = x + w - rounds.length * pw;
     const out = mine.some((g) => g.round && played(g) && winnerOf(g) !== me) || (s.week > reg.length && !mine.some((g) => g.round));
-    for (const round of PLAYOFF_ROUNDS) {
+    for (const round of rounds) {
       const g = mine.find((q) => q.round === round);
       cell(cx, pw, round, g ? (played(g) ? res(g) : 'now') : out ? 'off' : 'next');
       cx += pw;
@@ -630,7 +640,7 @@ export class CareerScreens {
       return;
     }
     const key = `${s.year}:${s.week}:${s.log.length}`;
-    if (this.storyCache?.key !== key) this.storyCache = { key, story: storyline({ rec: g, teams: s.teams, games: s.games, mySchool: s.schoolId, seed: s.seed, year: s.year, poll: s.poll }) };
+    if (this.storyCache?.key !== key) this.storyCache = { key, story: storyline({ rec: g, teams: s.teams, games: s.games, mySchool: s.schoolId, seed: s.seed, year: s.year, poll: s.poll, natPoll: s.nation?.poll }) };
     const rival = c.isRival(g);
     let story = rival ? `RIVALRY WEEK: ${c.trophy}` : this.storyCache.story;
     if (story && textWidth(story) > rr.w - 6 && story.includes(': ')) story = story.slice(story.indexOf(': ') + 2);
@@ -680,6 +690,8 @@ export class CareerScreens {
 
   openHistory(): void {
     this.history = loadHistory();
+    const c = this.career;
+    if (c && c.s.phase !== 'done') this.history.unshift({ ...recordFrom(c.s), status: 'active' }); // the career in progress, live
     this.listPage = 0;
     this.screen = 'history';
   }
@@ -688,9 +700,10 @@ export class CareerScreens {
   importCareer(): void {
     const done = (text: string | null) => {
       const rec = text ? recordFromText(text) : null;
-      if (rec) { archive(rec); this.history = loadHistory(); }
-      this.flash = rec ? { text: `ADDED ${rec.first} ${rec.last}`, color: C.green, until: performance.now() + 4000 }
-        : { text: text ? 'THAT IS NOT A CAREER SAVE' : 'NOTHING TO IMPORT', color: C.orange, until: performance.now() + 4000 };
+      const ok = rec?.status === 'graduated';
+      if (ok) { archive(rec!); this.openHistory(); }
+      this.flash = ok ? { text: `ADDED ${rec!.first} ${rec!.last}`, color: C.green, until: performance.now() + 4000 }
+        : { text: rec ? 'ONLY FINISHED CAREERS ARE KEPT' : text ? 'THAT IS NOT A CAREER SAVE' : 'NOTHING TO IMPORT', color: C.orange, until: performance.now() + 4000 };
     };
     const ask = () => { try { done(window.prompt('PASTE AN EXPORTED SAVE', '')); } catch { done(null); } };
     const clip = navigator.clipboard as Clipboard | undefined;
@@ -712,19 +725,19 @@ export class CareerScreens {
     this.title(ctx, v, 'PAST CAREERS');
     const L = this.historyLayout(v);
     if (!this.history.length) {
-      for (const [i, t] of ['NO PAST CAREERS YET.', 'A CAREER IS KEPT HERE WHEN HE SIGNS', 'OR WHEN YOU START A NEW ONE.', 'IMPORT ADDS AN EXPORTED SAVE.'].entries())
+      for (const [i, t] of ['NO PAST CAREERS YET.', 'A CAREER IS KEPT HERE WHEN HE SIGNS.', 'IMPORT ADDS AN EXPORTED SAVE', 'OF A FINISHED CAREER.'].entries())
         drawText(ctx, t, v.w / 2, L.top + 10 + i * 10, { align: 'center', color: i ? C.grey : C.white });
     }
     for (const { i, r: rr } of this.historyRows(v)) {
       const h = this.history[i], signed = h.signed ? college(h.signed.id) : null;
-      box(ctx, rr, C.navy, h.status === 'graduated' ? '#3b4a6b' : C.darkGrey);
+      box(ctx, rr, C.navy, h.status === 'active' ? C.yellow : '#3b4a6b');
       ctx.fillStyle = h.school.colors[0]; ctx.fillRect(rr.x + 1, rr.y + 1, 3, rr.h - 2);
       drawText(ctx, `${h.first} ${h.last}`, rr.x + 8, rr.y + 4, { color: C.white });
       const last = h.seasons[h.seasons.length - 1];
       drawText(ctx, `${h.state} - ${h.school.name}${h.difficulty === 'allpro' ? ' - ALL-PRO' : ''}`, rr.x + 8, rr.y + 12, { color: C.grey });
       const room = Math.floor((rr.w - 16 - (signed ? badgeWidth(signed.abbr) + 4 : 0)) / 4);
-      const note = h.status === 'graduated' ? `${h.seasons.length} SEASONS${last ? ` - ${last.finish}` : ''}` : `UNFINISHED - ${['SOPHOMORE', 'JUNIOR', 'SENIOR'][Math.min(2, h.seasons.length)]} YEAR`;
-      drawText(ctx, note.slice(0, room), rr.x + 8, rr.y + 19, { color: C.darkGrey });
+      const note = h.status === 'graduated' ? `${h.seasons.length} SEASONS${last ? ` - ${last.finish}` : ''}` : `ACTIVE - ${['SOPHOMORE', 'JUNIOR', 'SENIOR'][Math.min(2, h.seasons.length)]} YEAR`;
+      drawText(ctx, note.slice(0, room), rr.x + 8, rr.y + 19, { color: h.status === 'active' ? C.yellow : C.darkGrey });
       stars(ctx, rr.x + rr.w - 38, rr.y + 4, h.stars);
       if (signed) badge(ctx, rr.x + rr.w - badgeWidth(signed.abbr) - 4, rr.y + 13, signed.abbr, signed.colors);
     }
@@ -747,7 +760,7 @@ export class CareerScreens {
     const arch = ARCHETYPES.find((a) => a.id === h.archetype)?.name ?? h.archetype.toUpperCase();
     drawText(ctx, `${arch} - ${DIFFICULTIES.find((d) => d.id === h.difficulty)?.name ?? 'PRO'}`, x, y, { color: C.grey });
     y += 9;
-    drawText(ctx, h.status === 'graduated' ? `DEVELOPMENT: ${growthLabel(h.growth)} (${h.growth.toFixed(2)})` : 'UNFINISHED CAREER', x, y, { color: h.growth >= 1.08 ? C.green : h.growth <= 0.92 ? C.orange : C.yellow });
+    drawText(ctx, h.status === 'graduated' ? `DEVELOPMENT: ${growthLabel(h.growth)} (${h.growth.toFixed(2)})` : 'ACTIVE CAREER', x, y, { color: h.growth >= 1.08 ? C.green : h.growth <= 0.92 ? C.orange : C.yellow });
     y += 12;
     // the seasons
     for (const sl of h.seasons) {
@@ -1064,7 +1077,7 @@ export class CareerScreens {
     const w = Math.min(v.w - 12, 200), x = (v.w - w) / 2, rowH = v.landscape ? 10 : 12;
     let y = top;
     const week = s.log.length ? s.log[s.log.length - 1] : null;
-    drawText(ctx, week ? `STATE POLL AFTER ${week.round ? ROUND_NAMES[week.round] : `WEEK ${week.week}`}` : 'PRESEASON STATE POLL', v.w / 2, y, { align: 'center', color: C.yellow });
+    drawText(ctx, week ? `${c.classLabel} POLL AFTER ${week.round ? ROUND_NAMES[week.round] : `WEEK ${week.week}`}` : `PRESEASON ${c.classLabel} POLL`, v.w / 2, y, { align: 'center', color: C.yellow });
     y += rowH;
     poll.slice(0, 10).forEach((id, i) => {
       const t = c.team(id), mine = id === s.schoolId;
@@ -1109,20 +1122,22 @@ export class CareerScreens {
   }
 
   private renderStandings(ctx: CanvasRenderingContext2D, v: View): void {
-    const c = this.career!, s = c.s, L = this.standingsLayout(v);
-    if (!v.landscape) this.title(ctx, v, 'STANDINGS');
+    const c = this.career!, s = c.s, T = this.standingsTabs(v), land = v.landscape;
+    if (!land) this.title(ctx, v, 'STANDINGS');
     const hasPO = s.games.some((g) => g.round);
-    for (const [t, rect, label] of [['regions', L.tabR, 'REGIONS'], ['top10', L.tabT, 'TOP 10'], ['playoffs', L.tabP, 'PLAYOFFS']] as const) {
-      const on = this.standingsTab === t;
-      box(ctx, rect, on ? C.yellow : C.ink, on ? C.yellow : hasPO || t === 'regions' ? C.grey : C.darkGrey);
-      drawText(ctx, label, rect.x + rect.w / 2, rect.y + 4, { align: 'center', color: on ? C.ink : hasPO || t === 'regions' ? C.grey : C.darkGrey });
+    for (const [t, rect, label] of [['regions', T.regions, 'REGIONS'], ['top10', T.top10, 'TOP 10'], ['nation', T.nation, 'NATION'], ['playoffs', T.playoffs, 'PLAYOFFS']] as const) {
+      const on = this.standingsTab === t, live = hasPO || t !== 'playoffs';
+      box(ctx, rect, on ? C.yellow : C.ink, on ? C.yellow : live ? C.grey : C.darkGrey);
+      drawText(ctx, label, rect.x + rect.w / 2, rect.y + 4, { align: 'center', color: on ? C.ink : live ? C.grey : C.darkGrey });
     }
     if (this.standingsTab === 'regions') {
-      const regular = s.games.filter((g) => !g.round);
-      const colW = v.landscape ? (v.w - 28) / 2 : Math.min(v.w - 8, 176);
-      [0, 1].forEach((reg) => {
-        const x = v.landscape ? 8 + reg * (colW + 12) : (v.w - colW) / 2;
-        let y = v.landscape ? L.top : L.top + reg * 88;
+      const regular = s.games.filter((g) => !g.round), pages = Math.ceil(regionCount(s.teams) / 2);
+      const pg = Math.min(this.listPage, pages - 1);
+      const colW = land ? (v.w - 28) / 2 : Math.min(v.w - 8, 176);
+      [0, 1].forEach((k) => {
+        const reg = pg * 2 + k;
+        const x = land ? 8 + k * (colW + 12) : (v.w - colW) / 2;
+        let y = land ? T.top : T.top + k * 88;
         drawText(ctx, `${REGION_NAMES[reg]} REGION`, x, y, { color: C.yellow });
         drawText(ctx, 'ALL  REG', x + colW, y, { align: 'right', color: C.darkGrey });
         y += 9;
@@ -1136,24 +1151,59 @@ export class CareerScreens {
           y += 9;
         });
       });
-      const y = v.landscape ? v.h - 32 : L.top + 178;
-      drawText(ctx, 'TOP 4 IN EACH REGION MAKE THE PLAYOFFS', v.w / 2, y, { align: 'center', color: C.darkGrey });
-    } else if (this.standingsTab === 'top10') this.renderPoll(ctx, v, L.top);
+      const y = land ? v.h - 32 : T.top + 178;
+      drawText(ctx, `TOP 4 PER REGION: ${regionCount(s.teams) * 4}-TEAM PLAYOFF`, v.w / 2, y, { align: 'center', color: C.darkGrey });
+      this.renderPager(ctx, v, pages);
+    } else if (this.standingsTab === 'top10') this.renderPoll(ctx, v, T.top);
+    else if (this.standingsTab === 'nation') this.renderNation(ctx, v, T.top);
     else {
-      let y = L.top;
-      const w = v.landscape ? Math.min(v.w - 16, 260) : 120, x = (v.w - w) / 2;
-      for (const round of PLAYOFF_ROUNDS) {
+      const rounds = playoffRounds(s.teams).filter((rd) => s.games.some((g) => g.round === rd));
+      // landscape with a 16-team field: the first round on the left, the rest on the right
+      const split = land && rounds.length >= 3;
+      const w = split ? Math.min((v.w - 24) / 2, 200) : land ? Math.min(v.w - 16, 260) : 120;
+      let x = split ? v.w / 2 - w - 6 : (v.w - w) / 2, y = T.top;
+      for (const [i, round] of rounds.entries()) {
+        if (split && i === 1) { x = v.w / 2 + 6; y = T.top; }
         const gs = s.games.filter((g) => g.round === round);
-        if (!gs.length) continue;
         drawText(ctx, ROUND_NAMES[round], x, y, { color: C.yellow });
         y += 9;
         for (const g of gs) { this.bracketRow(ctx, g, x, y, w); y += 9; }
         y += 4;
       }
       const champ = c.champion;
-      if (champ) drawText(ctx, `STATE CHAMPION: ${champ.name} ${champ.mascot}`, v.w / 2, y + 2, { align: 'center', color: C.green });
+      if (champ) drawText(ctx, `${c.classLabel} STATE CHAMPION: ${champ.name} ${champ.mascot}`, v.w / 2, land ? v.h - 30 : y + 2, { align: 'center', color: C.green });
     }
     button(ctx, this.bottomButton(v), 'BACK');
+  }
+
+  /** The national top 25 (your state's teams lit, yours in yellow). */
+  private renderNation(ctx: CanvasRenderingContext2D, v: View, top: number): void {
+    const c = this.career!, s = c.s, n = s.nation;
+    if (!n?.poll) return;
+    const land = v.landscape, cols = land ? 2 : 1, per = Math.ceil(NATIONAL_SIZE / cols);
+    const w = land ? Math.min((v.w - 24) / 2, 190) : Math.min(v.w - 12, 176), rowH = land ? 9 : 9;
+    const week = s.log.length ? s.log[s.log.length - 1] : null;
+    drawText(ctx, s.phase !== 'season' ? 'FINAL NATIONAL TOP 25' : week ? `NATIONAL TOP 25 AFTER ${week.round ? ROUND_NAMES[week.round] : `WEEK ${week.week}`}` : 'PRESEASON NATIONAL TOP 25', v.w / 2, top, { align: 'center', color: C.yellow });
+    n.poll.forEach((key, i) => {
+      const row = natRow(key, n, s.teams, s.games, s.state), col = Math.floor(i / per);
+      const x = land ? v.w / 2 - w - 6 + col * (w + 12) : (v.w - w) / 2, y = top + 10 + (i % per) * rowH;
+      const mine = row.id === s.schoolId;
+      if (mine) { ctx.fillStyle = C.navy; ctx.fillRect(x - 2, y - 2, w + 4, rowH - 1); }
+      drawText(ctx, `${i + 1}`, x + 8, y, { align: 'right', color: C.grey });
+      const name = `${row.name}`.slice(0, Math.floor((w - 70) / 4));
+      drawText(ctx, name, x + 12, y, { color: mine ? C.yellow : row.local ? C.white : C.grey });
+      drawText(ctx, row.state, x + w - 56, y, { color: row.local ? C.white : C.darkGrey });
+      drawText(ctx, row.record, x + w - 16, y, { align: 'right', color: C.grey });
+      const was = n.prev ? n.prev.indexOf(key) + 1 : -1, d = was - (i + 1);
+      if (n.prev) {
+        const [txt, cl] = was === 0 ? ['NEW', C.yellow] : d > 0 ? [`+${d}`, C.green] : d < 0 ? [`${d}`, C.orange] : ['-', C.darkGrey];
+        drawText(ctx, txt, x + w, y, { align: 'right', color: cl });
+      }
+    });
+    if (!natRank(n.poll, s.schoolId)) {
+      const y = land ? v.h - 30 : top + 12 + per * rowH;
+      drawText(ctx, `${c.school.name}: NOT IN THE NATIONAL TOP 25`, v.w / 2, y, { align: 'center', color: C.darkGrey });
+    }
   }
 
   private bracketRow(ctx: CanvasRenderingContext2D, g: GameRec, x: number, y: number, w: number): void {
@@ -1248,7 +1298,7 @@ export class CareerScreens {
     const c = this.career!, s = c.s, p = c.player;
     let y = top;
     const w = Math.min(v.w - 8, 230), x = (v.w - w) / 2;
-    const tot = s.log.reduce((t, l) => { for (const k of Object.keys(t) as (keyof TeamStats)[]) t[k] += l.line[k]; return t; },
+    const tot = s.log.reduce((t, l) => { for (const k of Object.keys(t) as (keyof TeamStats)[]) t[k] += l.line[k] ?? 0; return t; },
       { plays: 0, yards: 0, tds: 0, cmp: 0, att: 0, int: 0, sacks: 0 } as TeamStats);
     drawText(ctx, `${CLASS_NAMES[s.year]} SEASON`, x, y, { color: C.yellow });
     y += 9;
@@ -1429,7 +1479,7 @@ export class CareerScreens {
     if (land) { x = v.w / 2 + 4; y = cy; }
     const tot = { plays: 0, yards: 0, tds: 0, cmp: 0, att: 0, int: 0, sacks: 0 } as TeamStats;
     let wins = 0;
-    for (const sl of p.seasons) { for (const k of Object.keys(tot) as (keyof TeamStats)[]) tot[k] += sl.stats[k]; wins += +sl.record.split('-')[0]; }
+    for (const sl of p.seasons) { for (const k of Object.keys(tot) as (keyof TeamStats)[]) tot[k] += sl.stats[k] ?? 0; wins += +sl.record.split('-')[0]; }
     drawText(ctx, 'CAREER', x + 2, y, { color: C.yellow });
     y += 8;
     const tw = (colW - 9) / 4;

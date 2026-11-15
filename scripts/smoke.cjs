@@ -348,6 +348,124 @@ const OUT = process.env.SHOT_DIR || '.';
   check(ot.ots >= 380 && ot.ties === 0 && ot.maxOt <= 20, `quick-simmed overtimes always end with a winner (${ot.ots}/400 went to OT, ${ot.ties} ties, longest OT${ot.maxOt}: one-play shootouts from OT3)`);
   check(ot.simTd >= 20 && ot.simTd <= 48, `simulated defense: an even opponent scores a TD on ${ot.simTd}% of drives from its 25 (target ~35%, before the game's form)`);
 
+  // 8b. Scoring rules: a safety, the try (kick or go for 2), kickoffs (deep / onside), returns, the CPU's charts
+  const rules = await G(() => {
+    const g = window.__game, M = g.match.constructor, out = {};
+    g.autoplay = false;
+    const mk = () => { const m = new M('you', 180); m.asks = (sd) => sd === 'you'; return m; };
+    // a safety: sacked in your own end zone -> CPU +2, you free kick (your choice)
+    let m = mk(); m.drive.ballOn = 3;
+    m.afterPlay({ result: 'sack', yards: -6, touchdown: false, outOfBounds: false }, 3);
+    out.safety = m.score.cpu === 2 && m.kickoffBy === 'you';
+    let b = m.kickoff(false);
+    out.freeKick = m.offense === 'cpu' && m.kickoffBy === null && m.drive.ballOn >= 20 && /FREE KICK/.test(b.headline);
+    // your touchdown: 6 points, then your choice; KICK XP or a play for 2
+    m = mk(); m.drive.ballOn = 90;
+    b = m.afterPlay({ result: 'catch', yards: 10, touchdown: true, outOfBounds: false }, 4);
+    out.td6 = m.score.you === 6 && m.tryFor === 'you' && m.tryChoice && m.drive.ballOn === 97 && m.drive.downText === '2-PT TRY';
+    m.afterPlay({ result: 'catch', yards: 3, touchdown: true, outOfBounds: false }, 3);
+    out.two = m.score.you === 8 && m.tryFor === null && m.kickoffBy === 'you' && m.stats.you.tds === 1;
+    b = m.kickoff(true);
+    out.onside = /ONSIDE/.test(b.headline) && (m.drive.ballOn === 51 || m.drive.ballOn === 49);
+    // the CPU scores: its chart decides, then it kicks off to you
+    m = mk(); m.offense = 'cpu'; m.drive.ballOn = 95;
+    m.afterPlay({ result: 'catch', yards: 5, touchdown: true, outOfBounds: false }, 4);
+    out.cpuTd = m.score.cpu >= 6 && m.score.cpu <= 7 && m.offense === 'you' && !m.pending;
+    // the clock runs out on a touchdown: the try still happens, then halftime (no kickoff)
+    m = mk(); m.quarter = 2; m.clock = 2; m.drive.ballOn = 80;
+    m.afterPlay({ result: 'catch', yards: 20, touchdown: true, outOfBounds: false }, 4);
+    const held = m.quarter === 2 && m.tryChoice;
+    m.kickExtraPoint();
+    out.half = held && m.quarter === 3 && m.kickoffBy === null && !m.pending;
+    // a punt returned / fair caught: the other team's ball somewhere sensible
+    let ok = 0;
+    for (let i = 0; i < 300; i++) { const p = new M('you', 180); p.drive.ballOn = 30; p.drive.down = 4; p.punt(); if (p.score.cpu > 0 || p.offense === 'cpu' ? p.drive.ballOn >= 1 && p.drive.ballOn <= 95 : p.drive.ballOn > 30 || p.pending) ok++; }
+    out.punts = ok;
+    // charts: 2 down 8 late -> go for 2 (trailing by 2 after the TD); a two-score deficit late -> onside
+    const C = window.__cpu;
+    out.charts = C.twoPointCall(-2, 4, 0) && !C.twoPointCall(-1, 4, 0) && !C.twoPointCall(-2, 2, 0) && C.twoPointCall(0, 1, 2) && C.onsideCall(-8, 4, 60, 180);
+    return out;
+  });
+  check(rules.safety && rules.freeKick, 'SAFETY: sacked in your own end zone is 2 points, then you free kick');
+  check(rules.td6 && rules.two, 'a touchdown is 6, then the try: a play from the 3 is worth 2 (not in the passing stats)');
+  check(rules.onside, 'an onside kick: recovered at the 51 or lost at the 49');
+  check(rules.cpuTd, 'the CPU decides its own try and kicks off to you');
+  check(rules.half, 'a touchdown as the half ends: the try first, then halftime with no kickoff');
+  check(rules.punts === 300, `punts: returns, fair catches, muffs and blocks land sensibly (${rules.punts}/300)`);
+  check(rules.charts, 'the two-point chart (late, down 2 -> go) and onside kicks when down two scores late');
+  // on the field: the XP button in your huddle after a touchdown, then your kickoff choice
+  const xpUi = await G(() => {
+    const g = window.__game, m = g.match;
+    m.offense = 'you'; m.drive.ballOn = 90; m.drive.down = 1; m.tryFor = null; m.tryChoice = false; m.kickoffBy = null;
+    m.afterPlay({ result: 'catch', yards: 10, touchdown: true, outOfBounds: false }, 4);
+    g.startHuddle();
+    const L = g.menu && g.menu.layout(g.view), xp = L && L.quick.find((q) => q.type === 'xp');
+    return { scr: g.screen, xp: xp && { x: xp.r.x + xp.r.w / 2, y: xp.r.y + xp.r.h / 2 } };
+  });
+  check(xpUi.scr === 'huddle' && !!xpUi.xp, 'after your touchdown the huddle offers KICK XP (or pick a play for 2)');
+  await tap(xpUi.xp);
+  const kc = await G(() => { const g = window.__game; return { kind: g.banner && g.banner.kind, k: g.kickButtons }; });
+  check(kc.kind === 'kick', 'then your kickoff: KICK DEEP or ONSIDE');
+  await tap({ x: kc.k.deep.x + 20, y: kc.k.deep.y + 8 });
+  check(await G(() => { const g = window.__game; return g.match.offense === 'cpu' && !g.match.pending && g.banner && g.banner.kind === 'punt'; }), 'KICK DEEP: the CPU gets the ball after the return');
+  await G(() => { const g = window.__game; g.newGame(); });
+
+  // 8c. Gameplay: the receiver you throw to has the right of way; QB runs (sneak, draw, scramble); the coach's calls
+  const gp = await G(() => {
+    const g = window.__game, P = window.__plays, sim = g.sim, out = { thrown: 0, wrong: 0, caught: 0 };
+    g.autoplay = false; g.match.offense = 'you'; g.match.drive.ballOn = 30; g.match.drive.down = 1; g.match.drive.toGo = 10;
+    g.match.tryFor = null; g.match.tryChoice = false; g.match.kickoffBy = null;
+    const step = (secs) => { for (let i = 0; i < secs * 60 && sim.phase !== 'done'; i++) sim.update(1 / 60); };
+    for (const id of ['flood', 'stick', 'quick-outs', 'smash', 'levels', 'drive']) {
+      for (let k = 0; k < 25; k++) {
+        g.startHuddle(); g.pickPlay(P.find((p) => p.id === id)); sim.snap(); step(0.9);
+        if (sim.phase !== 'live') continue;
+        const short = sim.receivers.filter((r) => r.path.length).sort((a, b) => Math.max(...a.path.map((q) => q.y)) < Math.max(...b.path.map((q) => q.y)) ? 1 : -1);
+        const r = short[k % short.length];
+        let aim = sim.routeAhead(r, 0.6);
+        for (let j = 0; j < 3; j++) aim = sim.routeAhead(r, 0.35 + Math.hypot(aim.x - sim.qb.x, aim.y - sim.qb.y) / 150 * 1.2);
+        sim.throwTo(aim, true); out.thrown++;
+        if (sim.target !== r) out.wrong++;
+        step(4);
+        if (sim.result === 'catch') { out.caught++; if (sim.carrier !== r) out.wrong++; }
+      }
+    }
+    // QB sneak: a yard or two most of the time
+    const gains = [];
+    for (let k = 0; k < 40; k++) { g.startHuddle(); g.pickPlay(P.find((p) => p.id === 'qb-sneak')); sim.snap(); step(4); gains.push(sim.result === 'run' ? (sim.spotY - 0) : null); }
+    const LOS = sim.qb ? null : null;
+    out.sneak = gains.filter((x) => x !== null).length;
+    // a draw: the QB keeps it after showing pass
+    g.startHuddle(); g.pickPlay(P.find((p) => p.id === 'qb-draw')); sim.snap(); step(1.2);
+    out.draw = sim.phase === 'run' && sim.carrier === sim.qb;
+    step(8); out.drawDone = sim.result === 'run';
+    // scramble: aim straight back -> the QB runs; steering moves him
+    g.startHuddle(); g.pickPlay(P.find((p) => p.id === 'smash')); sim.snap(); step(0.5);
+    out.isScr = g.isScramble({ x: sim.qb.x + 3, y: sim.qb.y + 40 }) && !g.isScramble({ x: sim.qb.x + 60, y: sim.qb.y + 10 }) && !g.isScramble({ x: sim.qb.x, y: sim.qb.y - 60 });
+    g.scramble();
+    const x0 = sim.qb.x; sim.userControl = true; sim.userMove = { x: 1, y: 0 }; step(0.4); sim.userControl = false;
+    out.scr = sim.carrier === sim.qb && sim.result === 'run' && (sim.phase === 'done' || sim.qb.x > x0 + 5);
+    // the coach: 3rd and 15 -> no quick game or screens; 3rd and 1 -> no deep shots
+    const C = window.__cpu, d = { ballOn: 40, down: 3, toGo: 15 };
+    let bad = 0;
+    for (let i = 0; i < 300; i++) { const p = C.callPlay(d); if (p.category === 'quick' || p.category === 'screen' || p.category === 'run') bad++; }
+    const d1 = { ballOn: 40, down: 3, toGo: 1 };
+    for (let i = 0; i < 300; i++) { const p = C.callPlay(d1); if (p.category === 'shots') bad++; }
+    out.coach = bad;
+    // the defense reads you: a run of check-downs and they sit on them
+    g.throws = Array.from({ length: 8 }, () => ({ who: 'RB', depth: 3 }));
+    const t = g.tendency(); g.startHuddle(); g.pickPlay(P.find((p) => p.id === 'smash'));
+    out.squat = sim.squat; out.focus = sim.focusId; out.tend = t;
+    g.throws = [];
+    return out;
+  });
+  check(gp.thrown >= 100 && gp.wrong <= 2, `the receiver you throw to gets the ball (${gp.caught} caught of ${gp.thrown} on-the-money throws, ${gp.wrong} to the wrong man)`);
+  check(gp.sneak >= 38, `QB SNEAK: the QB keeps it (${gp.sneak}/40 runs)`);
+  check(gp.draw && gp.drawDone, 'QB DRAW: shows pass, then the QB runs');
+  check(gp.isScr && gp.scr, 'SCRAMBLE: a throw aimed straight back tucks it and runs; you steer him');
+  check(gp.coach === 0, `the coach: no quick game or screens on 3rd and 15, no deep shots on 3rd and 1 (${gp.coach} bad calls)`);
+  check(gp.squat === 1 && gp.focus === 'RB', `the defense reads you: 8 check-downs and they sit on them (squat ${gp.squat}, keying on ${gp.focus})`);
+
   // 9. Career: create a QB from the title screen, the hub, a backup scenario played on the field (coach calls the
   // plays), the save round-trip, simulated defense, a full season into the playoffs and the next season.
   await G(() => { const g = window.__game; g.autoplay = false; g.showTitle(); localStorage.removeItem('footballgame.career.v1'); });
@@ -358,8 +476,8 @@ const OUT = process.env.SHOT_DIR || '.';
   await tap({ x: cl.archR.x + 5, y: cl.archR.y + 5 }); // gunslinger
   await tap({ x: cl.start.x + cl.start.w / 2, y: cl.start.y + cl.start.h / 2 });
   const made = await G(() => { const c = window.__careerUI.career; return c && { scr: window.__careerUI.screen, arch: c.player.archetype, games: c.s.games.length, role: c.s.role, saved: !!localStorage.getItem('footballgame.career.v1') }; });
-  check(made && made.scr === 'hub' && made.arch === 'gunslinger' && made.games === 80 && made.role === 'backup' && made.saved,
-    `START CAREER: a sophomore backup gunslinger, an 80-game schedule, saved (${JSON.stringify(made)})`);
+  check(made && made.scr === 'hub' && made.arch === 'gunslinger' && made.games === 160 && made.role === 'backup' && made.saved,
+    `START CAREER: a sophomore backup gunslinger, a 160-game schedule (32 teams), saved (${JSON.stringify(made)})`);
   await page.screenshot({ path: `${OUT}/smoke-career-hub.png` });
   // practice focus from the hub
   const hl = await G(() => window.__careerUI.hubLayout(window.__game.view));
@@ -472,13 +590,16 @@ const OUT = process.env.SHOT_DIR || '.';
   const season = await G(() => {
     const ui = window.__careerUI, c = ui.career, Q = window.__quicksim; let n = 0;
     while (c.s.phase === 'season' && n++ < 20) { const p = c.prepareGame(); if (p.kind !== 'none') Q.simToEnd(p.match, p.units); c.finishGame(p); }
-    const rounds = ['QF', 'SF', 'F'].map((r) => c.s.games.filter((g) => g.round === r).length);
-    const out = { phase: c.s.phase, rounds, finish: c.finish(), champ: c.champion && c.champion.name, seasons: c.player.seasons.length, prod: c.player.seasons[0] && c.player.seasons[0].prod };
+    const rounds = ['R1', 'QF', 'SF', 'F'].map((r) => c.s.games.filter((g) => g.round === r).length);
+    const nat = c.s.nation, keys = (nat && nat.poll) || [];
+    const out = { phase: c.s.phase, rounds, finish: c.finish(), champ: c.champion && c.champion.name, seasons: c.player.seasons.length, prod: c.player.seasons[0] && c.player.seasons[0].prod,
+      nat: keys.length, natOk: keys.every((k) => /^[NS]\d+$/.test(k)) && new Set(keys).size === keys.length, natWeek: nat && nat.week, regions: new Set(c.s.teams.map((t) => t.region)).size };
     ui.screen = 'summary';
     return out;
   });
-  check(season.phase === 'summary' && season.rounds.join() === '4,2,1' && !!season.champ && season.seasons === 1 && typeof season.prod === 'number',
-    `a full season into an 8-team playoff (${season.finish}; state champion ${season.champ})`);
+  check(season.phase === 'summary' && season.rounds.join() === '8,4,2,1' && season.regions === 4 && !!season.champ && season.seasons === 1 && typeof season.prod === 'number',
+    `a full season into a 16-team playoff from 4 regions (${season.finish}; state champion ${season.champ})`);
+  check(season.nat === 25 && season.natOk && season.natWeek === 14, `the national top 25 runs through the season (${season.nat} teams, week ${season.natWeek})`);
   // flavor: the state poll, headlines, storylines, the box score, teammates signing, stars frozen after the season
   const fl = await G(() => {
     const c = window.__careerUI.career, s = c.s, R = window.__recruiting, sl = c.player.seasons[0];
@@ -531,7 +652,7 @@ const OUT = process.env.SHOT_DIR || '.';
   await page.screenshot({ path: `${OUT}/smoke-career-summary.png` });
   await tap({ x: 90, y: 312 }); // OFF-SEASON
   const jr = await G(() => { const c = window.__careerUI.career; return { yr: c.s.year, wk: c.s.week, games: c.s.games.filter((g) => g.hs === undefined).length, scr: window.__careerUI.screen }; });
-  check(jr.yr === 1 && jr.wk === 1 && jr.games === 80 && jr.scr === 'hub', 'OFF-SEASON: on to the junior year with a new schedule');
+  check(jr.yr === 1 && jr.wk === 1 && jr.games === 160 && jr.scr === 'hub', 'OFF-SEASON: on to the junior year with a new schedule');
   // events: the junior year has scouts, a recruiting site evaluation and TV games
   const evs = await G(() => {
     const ui = window.__careerUI, c = ui.career, Q = window.__quicksim;
@@ -593,12 +714,13 @@ const OUT = process.env.SHOT_DIR || '.';
   // lots of offers: the board pages through all of them with < >
   const pg = await G(() => {
     const ui = window.__careerUI, rs = ui.career.s.recruit, C = window.__recruiting;
+    ui.listPage = 0; // (the visit search above may have left it on another page)
     for (const c of C.COLLEGES.slice(0, 30)) { if (!rs.offers.includes(c.id)) rs.offers.push(c.id); rs.interest[c.id] = Math.max(rs.interest[c.id] || 0, 70); }
-    const v = window.__game.view; return { pages: ui.recruitPages(v), first: ui.recruitRows(v)[0].c.id, next: ui.pagerLayout(v).next, offers: rs.offers.length };
+    const v = window.__game.view; return { pages: ui.recruitPages(v), first: ui.recruitRows(v)[0].c.id, next: ui.pagerLayout(v).next, offers: rs.offers.length, lp: ui.listPage, scr: ui.screen };
   });
   await tap(mid(pg.next));
   const pg2 = await G(() => { const ui = window.__careerUI; return { page: ui.listPage, first: ui.recruitRows(window.__game.view)[0].c.id }; });
-  check(pg.pages >= 3 && pg2.page === 1 && pg2.first !== pg.first, `${pg.offers} offers page through the board (${pg.pages} pages, > shows the next page)`);
+  check(pg.pages >= 3 && pg2.page === 1 && pg2.first !== pg.first, `${pg.offers} offers page through the board (${pg.pages} pages, > shows the next page: ${pg.lp} -> ${pg2.page} on ${pg.scr})`);
   await page.screenshot({ path: `${OUT}/smoke-career-recruiting-pages.png` });
   const sr = await G(() => {
     const ui = window.__careerUI, c = ui.career, Q = window.__quicksim; let n = 0;
@@ -632,6 +754,20 @@ const OUT = process.env.SHOT_DIR || '.';
   const tc = await G(() => { const p = window.__careerUI.career.player; return p.seasons.map((sl) => ({ balls: (sl.balls || []).length, rival: sl.rival, avg: sl.avg })); });
   check(tc.length === 3 && tc.every((t) => t.rival === 'W' || t.rival === 'L') && tc.some((t) => typeof t.avg === 'number'), `the trophy case: game balls ${tc.map((t) => t.balls).join('/')}, rivalry ${tc.map((t) => t.rival).join('')}`);
   await page.screenshot({ path: `${OUT}/smoke-career-done.png` });
+  // PAST CAREERS keeps only finished careers plus the active one: starting over mid-career doesn't keep the old one
+  const pc = await G(() => {
+    const ui = window.__careerUI, old = ui.career, raw = localStorage.getItem('footballgame.career.v1'), H0 = localStorage.getItem('footballgame.history.v1');
+    const kept = () => JSON.parse(localStorage.getItem('footballgame.history.v1') || '[]');
+    const n0 = kept().length;
+    const a = ui.create('ACTIVE', 'ONE', 'TX', 'pocket'); ui.openHistory();
+    const first = ui.history[0] && ui.history[0].status, firstId = ui.history[0] && ui.history[0].id;
+    ui.create('ACTIVE', 'TWO', 'TX', 'pocket'); ui.openHistory();
+    const out = { n0, n1: kept().length, first, isA: firstId === a.s.seed, noUnfinished: kept().every((r) => r.status === 'graduated'), shown: ui.history.length, aGone: !ui.history.some((r) => r.id === a.s.seed) };
+    localStorage.setItem('footballgame.career.v1', raw); localStorage.setItem('footballgame.history.v1', H0); ui.career = old; ui.screen = 'done';
+    return out;
+  });
+  check(pc.first === 'active' && pc.isA && pc.n1 === pc.n0 && pc.noUnfinished && pc.aGone && pc.shown === pc.n0 + 1,
+    `PAST CAREERS: the active career first, finished ones kept, an abandoned one dropped (${pc.shown} shown)`);
   // a save from before recruiting (v1, mid senior year) is upgraded and caught up
   await G(() => {
     const s = JSON.parse(localStorage.getItem('footballgame.career.v1'));

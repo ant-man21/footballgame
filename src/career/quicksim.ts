@@ -24,6 +24,7 @@ const EDGE_MAX = 15;
  */
 export function simPlay(m: Match, u: Record<Side, Units>, o: SimOptions = {}): boolean {
   if (m.over) return false;
+  if (m.tryChoice || m.kickoffBy) { m.autoDecide(); return !m.over; } // nobody to ask here: the charts decide
   const off = m.offense, def = m.defense, d = m.drive;
   if (d.down === 4) {
     const lead = m.score[off] - m.score[def];
@@ -68,12 +69,13 @@ export function simUntil(m: Match, u: Record<Side, Units>, stop: (m: Match) => b
   while (!m.over && !stop(m) && guard++ < 2000) simPlay(m, u, o);
 }
 
-export type DriveEnd = 'td' | 'fg' | 'fgmiss' | 'punt' | 'int' | 'downs' | 'half' | 'end';
+export type DriveEnd = 'td' | 'safety' | 'fg' | 'fgmiss' | 'punt' | 'int' | 'downs' | 'half' | 'end';
 export interface DriveSummary { team: Side; end: DriveEnd; plays: number; yards: number; secs: number; startOn: number }
 
 /** Simulates the rest of the current drive: until the ball changes hands, the half ends or the game ends. */
 export function simDrive(m: Match, u: Record<Side, Units>, o: SimOptions = {}): DriveSummary {
   const team = m.offense, startOn = m.drive.ballOn, half = m.quarter <= 2 ? 1 : 2;
+  const opp0 = m.score[team === 'you' ? 'cpu' : 'you'];
   const t0 = elapsed(m), score0 = m.score[team], int0 = m.stats[team].int, yds0 = m.stats[team].yards, plays0 = m.stats[team].plays;
   let kick: 'punt' | 'fg' | null = null;
   let guard = 0;
@@ -85,7 +87,7 @@ export function simDrive(m: Match, u: Record<Side, Units>, o: SimOptions = {}): 
   }
   const halfOver = (m.quarter <= 2 ? 1 : 2) !== half;
   const pts = m.score[team] - score0;
-  const end: DriveEnd = pts >= 6 || (pts > 0 && m.ot >= 3) ? 'td' : pts === 3 ? 'fg' : m.stats[team].int > int0 ? 'int'
+  const end: DriveEnd = pts >= 6 || (pts > 0 && m.ot >= 3) ? 'td' : pts === 3 ? 'fg' : m.score[team === 'you' ? 'cpu' : 'you'] - opp0 === 2 ? 'safety' : m.stats[team].int > int0 ? 'int'
     : kick === 'fg' ? 'fgmiss' : kick === 'punt' ? 'punt' : m.over ? 'end' : halfOver ? 'half' : 'downs';
   return { team, end, plays: m.stats[team].plays - plays0, yards: m.stats[team].yards - yds0, secs: elapsed(m) - t0, startOn };
 }

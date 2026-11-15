@@ -5,6 +5,7 @@
 import { FIELD_LEFT, FIELD_RIGHT } from './config';
 import type { Drive } from './drive';
 import { PLAYS, type Play } from './playbook/plays';
+import { ROUTES, type RouteKey } from './playbook/routes';
 import { type Actor, type Sim, flightFor } from './sim';
 import { type Vec, clamp, dist, rand } from './util';
 
@@ -129,15 +130,42 @@ export class CpuQb {
 }
 
 /** CPU play calling: quick game when it's short, more shots when it's long. */
-export function callPlay(drive: Drive): Play {
-  const weights: Record<string, number> =
-    drive.toGo <= 4 ? { quick: 3, crossers: 2, core: 1, shots: 0.5 }
-    : drive.toGo >= 10 ? { quick: 1, crossers: 1.5, core: 2, shots: 1.2 }
-    : { quick: 1.5, crossers: 1.5, core: 1.5, shots: 0.8 };
-  const pool = PLAYS.map((p) => ({ p, w: weights[p.category] ?? 1 }));
-  let x = Math.random() * pool.reduce((s, e) => s + e.w, 0);
+/** How deep each route in a play goes (yards past the line, where it ends up), for play calling. */
+const depthsOf = (p: Play): number[] => p.routes.filter((r) => r.route !== 'block' && r.route !== 'stalk')
+  .map((r) => Math.max(...ROUTES[r.route as RouteKey].pts.map((q) => q.d)));
+const PROFILE = new Map(PLAYS.map((p) => [p.id, depthsOf(p)]));
+
+/**
+ * The CPU's (and your coach's) play call for the down and distance. Plays are
+ * weighed by how many routes get past the sticks without being a prayer: 3rd
+ * and 15 calls routes at 15-27 yards (no flat routes, no screens); 3rd and 2
+ * calls quick, short routes (and maybe a sneak), never a deep shot. 1st and 2nd
+ * down mix it up. Deep shots are for long yardage, 2nd down shots, or the end
+ * of a half.
+ */
+export function callPlay(drive: Drive, late = false): Play {
+  const toGo = drive.toGo, down = drive.down, goal = drive.ballOn + toGo >= 100, room = 100 - drive.ballOn;
+  const pool = PLAYS.map((p) => {
+    const ds = PROFILE.get(p.id)!;
+    const reach = ds.filter((d) => d >= toGo && d <= toGo + 12 && d <= room + 8).length; // routes that move the sticks
+    let w: number;
+    if (p.run === 'sneak') w = toGo <= 1 ? (down >= 3 ? 4 : 1.5) : 0;
+    else if (p.run === 'draw') w = toGo >= 7 && down <= 2 && !goal ? 0.5 : down <= 2 ? 0.1 : 0;
+    else if (late) w = p.category === 'shots' ? 3 : reach + 0.2; // the clock is running out: go get it
+    else if (down >= 3) {
+      if (toGo <= 3) w = p.category === 'shots' ? 0 : p.category === 'screen' ? 0.3 : ds.filter((d) => d >= toGo && d <= 8).length;
+      else if (toGo >= 8) w = p.category === 'screen' || p.category === 'quick' ? 0 : reach * (p.category === 'shots' && toGo < 18 ? 0.5 : 1);
+      else w = reach + (p.category === 'shots' ? -1 : 0);
+    } else {
+      const base: Record<string, number> = { quick: 1.2, core: 1.5, crossers: 1.3, shots: down === 2 && toGo <= 5 ? 1.2 : 0.6, screen: 0.6, run: 0 };
+      w = (base[p.category] ?? 1) * (toGo >= 12 ? (p.category === 'screen' || p.category === 'quick' ? 0.5 : 1.2) : 1) + reach * 0.2;
+    }
+    if (goal && room <= 12 && (p.category === 'shots' || p.category === 'screen')) w *= 0.2; // in close: no bombs, no room for screens
+    return { p, w: Math.max(0, w) };
+  });
+  let x = Math.random() * pool.reduce((t, e) => t + e.w, 0);
   for (const e of pool) { x -= e.w; if (x <= 0) return e.p; }
-  return pool[0].p;
+  return pool.find((e) => e.w > 0)?.p ?? PLAYS[0];
 }
 
 /** Field goal distance (yards) from a yard line: the end zone plus the hold, 7 yards back. */
@@ -146,6 +174,23 @@ export const fgDistance = (ballOn: number) => Math.round(100 - ballOn + 17);
 export const FG_MAX = 55;
 /** Chance a field goal is good: ~95% from 20 yards, ~75% from 30, ~55% from 40, ~35% from 50. */
 export const fgOdds = (dist: number) => clamp(0.95 - (dist - 20) * 0.019, 0.05, 0.97);
+
+/**
+ * After a touchdown: go for two? lead = the scoring team's lead with the 6
+ * points, before the try. The standard chart, from the 4th quarter on; from the
+ * 2nd overtime every try is for two (college rules).
+ */
+export function twoPointCall(lead: number, quarter: number, ot = 0): boolean {
+  if (ot >= 2) return true;
+  if (ot || quarter < 4) return false;
+  return [-2, -5, -9, -10, -13, -16, 1, 5, 12].includes(lead);
+}
+
+/** Kickoff: onside? lead = the kicking team's lead. Late and down two scores or less; very rarely as a surprise. */
+export function onsideCall(lead: number, quarter: number, clock: number, quarterSeconds: number): boolean {
+  if (quarter === 4 && lead < 0 && lead >= -16 && clock < Math.min(150, quarterSeconds * 0.6)) return true;
+  return Math.random() < 0.01;
+}
 
 /**
  * 4th down for the CPU (or your coach): go for it, kick a field goal or punt.

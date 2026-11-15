@@ -90,7 +90,14 @@ export function drawPlayArt(ctx: CanvasRenderingContext2D, play: Play, x: number
     if (play.screen?.release.includes(i)) pixelLine(ctx, x0, y0 - 2, x0 + (ox >= 0 ? 2 : -2), y0 - 5); // releases downfield
   });
   ctx.fillStyle = C.yellow;
-  const qx = Math.round(px(0)), qy = Math.round(py(-5));
+  const qx = Math.round(px(0)), qy = Math.round(py(play.run === 'sneak' ? -1.5 : -5));
+  if (play.run) { // the QB's run: straight ahead (a sneak), or a step back and up the middle (a draw)
+    const top = Math.round(py(play.run === 'sneak' ? 3 : 8));
+    if (play.run === 'draw') pixelLine(ctx, qx, qy, qx, Math.round(py(-6.5)));
+    pixelLine(ctx, qx, qy, qx, top);
+    pixelLine(ctx, qx - 2, top + 2, qx, top);
+    pixelLine(ctx, qx + 2, top + 2, qx, top);
+  }
   if (play.rollout) { // the QB's sprint-out path
     const ex = Math.round(px(play.rollout === 'right' ? 8 : -8)), ey = Math.round(py(-6.5));
     pixelLine(ctx, qx, qy, ex, ey);

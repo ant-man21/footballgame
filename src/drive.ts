@@ -11,10 +11,11 @@ export type DriveEvent =
   | { kind: 'continue' }
   | { kind: 'td' }
   | { kind: 'int'; atYard: number } // where the defender caught it (offense's yard line)
-  | { kind: 'downs' };
+  | { kind: 'downs' }
+  | { kind: 'safety' }; // tackled (or sacked) in his own end zone
 
 export interface PlayOutcome {
-  result: 'catch' | 'int' | 'inc' | 'sack';
+  result: 'catch' | 'int' | 'inc' | 'sack' | 'run';
   gained: number;
   firstDown: boolean;
   outOfBounds: boolean;
@@ -33,8 +34,9 @@ export const rawFromSim = (sim: Sim): PlayRaw => ({
   result: sim.result!, yards: (LOS_Y - sim.spotY) / YD, touchdown: sim.touchdown, outOfBounds: sim.outOfBounds,
 });
 
-export interface TeamStats { plays: number; yards: number; tds: number; cmp: number; att: number; int: number; sacks: number }
-export const newStats = (): TeamStats => ({ plays: 0, yards: 0, tds: 0, cmp: 0, att: 0, int: 0, sacks: 0 });
+/** A team's (or a QB's) line. yards / tds are passing; rush / ryds / rtd are QB runs (older saves lack them: read with ?? 0). */
+export interface TeamStats { plays: number; yards: number; tds: number; cmp: number; att: number; int: number; sacks: number; rush: number; ryds: number; rtd: number }
+export const newStats = (): TeamStats => ({ plays: 0, yards: 0, tds: 0, cmp: 0, att: 0, int: 0, sacks: 0, rush: 0, ryds: 0, rtd: 0 });
 
 const ORD = ['', '1ST', '2ND', '3RD', '4TH'];
 
@@ -44,6 +46,7 @@ export class Drive {
   toGo = 10;
   plays = 0;
   ballX = 0; // where the next snap is spotted across the field (yards from the middle)
+  isTry = false; // a two-point try after a touchdown (one play from the 3)
 
   constructor(ballOn = START_YARD) { this.ballOn = ballOn; }
 
@@ -51,6 +54,7 @@ export class Drive {
   get goalY(): number { return LOS_Y - (100 - this.ballOn) * YD; }
 
   get downText(): string {
+    if (this.isTry) return '2-PT TRY';
     const goal = this.ballOn + this.toGo >= 100;
     return `${ORD[this.down]} & ${goal ? 'GOAL' : this.toGo}`;
   }
@@ -66,7 +70,8 @@ export class Drive {
     st.plays++;
     this.plays++;
     const r = p.result;
-    if (r !== 'sack') st.att++;
+    if (r !== 'sack' && r !== 'run') st.att++;
+    if (r === 'run') st.rush = (st.rush ?? 0) + 1;
     const base = { result: r, outOfBounds: p.outOfBounds, playsInDrive: this.plays };
 
     if (r === 'int') {
@@ -78,16 +83,22 @@ export class Drive {
     let gained = r === 'inc' ? 0 : Math.round(p.yards);
     if (r === 'sack') { st.sacks++; gained = Math.min(gained, -1); }
     if (r === 'catch') st.cmp++;
-    gained = Math.max(gained, 1 - this.ballOn); // can't go back past our own 1
+    const credit = (g: number) => { if (r === 'run') st.ryds = (st.ryds ?? 0) + g; else st.yards += g; };
+    if (this.ballOn + gained <= 0 && r !== 'inc') { // down in his own end zone
+      gained = -this.ballOn;
+      credit(gained);
+      return { ...base, gained, firstDown: false, event: { kind: 'safety' } };
+    }
+    gained = Math.max(gained, 1 - this.ballOn);
 
     if (p.touchdown || this.ballOn + gained >= 100) {
       gained = 100 - this.ballOn;
-      st.yards += gained;
-      st.tds++;
+      credit(gained);
+      if (r === 'run') st.rtd = (st.rtd ?? 0) + 1; else st.tds++;
       return { ...base, gained, firstDown: false, event: { kind: 'td' } };
     }
 
-    st.yards += gained;
+    credit(gained);
     this.ballOn += gained;
     if (gained >= this.toGo) {
       this.down = 1;
