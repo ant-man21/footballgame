@@ -31,8 +31,8 @@ const BALL_READ = 0.25; // sim seconds for receivers to pick the ball up in the 
  * are on the money; deep balls can drift a few yards, mostly long or short.
  * The ball always lands inside this oval; pressure makes it bigger.
  */
-export function throwSpread(d: number, pressured: boolean): { along: number; lat: number } {
-  const e = (d * 0.02 + Math.max(0, d - 70) * 0.07) * (pressured ? 1.6 : 1);
+export function throwSpread(d: number, pressured: boolean, arm = 1, poise = 1): { along: number; lat: number } {
+  const e = (d * 0.02 + Math.max(0, d - 70) * 0.07 * arm) * (pressured ? 1 + 0.6 * poise : 1);
   return { along: 1 + e * 1.6, lat: 1 + e * 0.9 };
 }
 const PRESSURE_DIST = 18; // a free rusher this close doubles the error
@@ -193,7 +193,11 @@ export class Sim {
   /** The level of play of each roster (see Roster.tier): ratings are judged against that tier's norms. */
   tier: Record<Team, number> = { off: 0, def: 0 };
   /** QB accuracy: scales the landing oval. */
-  get accFactor(): number { return clamp(1 - this.rd(this.qb, 'acc') * 0.008, 0.65, 1.4); }
+  get accFactor(): number { return clamp(1 - this.rd(this.qb, 'acc') * 0.012, 0.55, 1.45); }
+  /** QB arm: deep balls stay tighter (the deep part of the oval). */
+  get armFactor(): number { return clamp(1 - this.rd(this.qb, 'arm') * 0.015, 0.6, 1.4); }
+  /** QB reads (decisions): poise under pressure (how much a rush widens the oval). */
+  get poise(): number { return clamp(1 - this.rd(this.qb, 'dec') * 0.03, 0.4, 1.6); }
   /** QB arm: the longest throw he can make. */
   get maxThrow(): number { return MAX_THROW * clamp(1 + this.rd(this.qb, 'arm') * 0.004, 0.85, 1.15); }
   /** Throwing on the run spreads the ball out a bit more. */
@@ -541,7 +545,7 @@ export class Sim {
     // but always inside the oval the player sees while aiming.
     let to = { ...aim };
     if (!accurate) {
-      const sp = throwSpread(dist(from, aim), this.pressured);
+      const sp = throwSpread(dist(from, aim), this.pressured, this.armFactor, this.poise);
       const along = sp.along * this.movingFactor * this.accFactor, lat = sp.lat * this.movingFactor * this.accFactor;
       const u = unit(from, aim);
       let a = 0, b = 0;
@@ -978,7 +982,8 @@ export class Sim {
         const hang = clamp(1.45 - dist(ball.from, ball.to) / 150, 0.4, 1.2); // quick throws favour the receiver
         const pCatch = clamp(0.55 + edge * 0.06, 0.12, 0.85) * hang + this.catchBias
           + this.rd(o.p, 'hnd') * 0.004 - this.rd(d.p, 'cov') * 0.002;
-        const pInt = clamp(0.02 + Math.max(0, -edge) * 0.02, 0.02, 0.12) * clamp(1 + this.rd(d.p, 'bsk') * 0.03, 0.4, 1.8);
+        const pInt = clamp(0.02 + Math.max(0, -edge) * 0.02, 0.02, 0.12) * clamp(1 + this.rd(d.p, 'bsk') * 0.03, 0.4, 1.8)
+          * clamp(1 - this.rd(this.qb, 'dec') * 0.02, 0.6, 1.4); // a QB who reads it well puts it where only his man can get it
         outcome = roll < pCatch ? 'catch' : roll < pCatch + pInt ? 'int' : 'inc';
       }
       if (outcome) this.lastContest = { off: o.p ? o.d : null, def: d.p ? d.d : null, outcome }; // for tuning

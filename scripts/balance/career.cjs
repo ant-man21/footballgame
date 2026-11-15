@@ -8,11 +8,11 @@ const N = +(process.argv[2] || 40);
   const b = await chromium.launch(); const p = await b.newPage();
   const errs = []; p.on('pageerror', e => errs.push(e.message));
   await p.goto(process.env.GAME_URL || 'http://localhost:4173/');
-  const out = await p.evaluate((N) => {
+  const out = await p.evaluate(([N, ARCH]) => {
     const ui = window.__careerUI, Q = window.__quicksim, C = window.__recruiting;
     const agg = { offers: { P4: 0, G5: 0, FCS: 0 }, best: { P4: 0, G5: 0, FCS: 0, none: 0 }, byStars: {}, jrOffers: 0, firstOffer: 0, firstOfferN: 0, app: [0, 0, 0], games: [0, 0, 0], kinds: {}, battleEnd: [0, 0], wonJob: 0, wonWeek: 0, ovr: [0, 0, 0], stars: [0, 0, 0], wins: [0, 0, 0], titles: 0, playoffs: [0, 0, 0], grade: [0, 0, 0], gradeN: [0, 0, 0], pf: 0, gamesAll: 0 };
     for (let k = 0; k < N; k++) {
-      const c = ui.create('TEST', 'QB', 'TX', ['pocket', 'gunslinger', 'manager'][k % 3]);
+      const c = ui.create('TEST', 'QB', 'TX', (ARCH || ['pocket', 'gunslinger', 'manager', 'dual'][k % 4]));
       let guard = 0;
       while (c.s.phase !== 'done' && guard++ < 100) {
         if (c.s.phase === 'summary') { c.nextSeason(); continue; }
@@ -62,7 +62,7 @@ const N = +(process.argv[2] || 40);
       'by final stars: ' + Object.entries(agg.byStars).sort().map(([k, b]) => `${k}*: ${b.n} careers, ${(b.offers / b.n).toFixed(1)} offers, best P4 ${b.P4} G5 ${b.G5} FCS ${b.FCS} none ${b.none}`).join(' | '),
       `made playoffs ${agg.playoffs.map((x) => (100 * x / N).toFixed(0) + '%').join(' / ')}   state titles ${(100 * agg.titles / N).toFixed(0)}% of careers   your team ${(agg.pf / agg.gamesAll).toFixed(1)} pts/game`,
     ].join('\n');
-  }, N);
+  }, [N, process.env.ARCH || '']);
   console.log(out, errs.length ? '\nERR ' + errs[0] : '');
   await b.close();
 })();

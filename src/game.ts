@@ -23,7 +23,9 @@ import { PORTRAIT, type View } from './view';
 import { inkOn } from './ui/kit';
 
 export type AimMode = 'pull' | 'aim';
-const SNAP_CATCH = 0.3; // sim seconds for the QB to catch the shotgun snap
+const SNAP_CATCH = 0.3;
+/** Half of all throws land inside this fraction of the landing oval (the throw error is centre-weighted). */
+const HALF_RING = 0.6; // sim seconds for the QB to catch the shotgun snap
 const AIM_OFFSET = 10; // AIM mode: the landing spot sits this far above your finger (screen px)
 const DEF_PRESNAP = 2.2; // seconds after you call your defense before the CPU snaps
 const STICK_RANGE = 22; // joystick: drag this far (screen px) for full speed
@@ -1124,24 +1126,31 @@ export class Game {
     // Landing oval: the ball will come down somewhere inside it. It stretches
     // along the throw line with distance and grows under pressure (orange).
     const pressured = this.sim.pressured;
-    const sp = throwSpread(dist(from, to), pressured);
+    const sp = throwSpread(dist(from, to), pressured, this.sim.armFactor, this.sim.poise);
     const k = this.sim.movingFactor * this.sim.accFactor; // throwing on the run spreads it; accuracy tightens it
     const along = sp.along * s * k, lat = sp.lat * s * k;
     const u = { x: (to.x - from.x) / (dist(from, to) || 1), y: (to.y - from.y) / (dist(from, to) || 1) };
     const x = Math.round(this.sx(to.x)), y = Math.round(this.sy(to.y));
     ctx.fillStyle = pressured ? C.orange : C.yellow;
-    const n = Math.max(14, Math.round((along + lat) * 2.5));
-    for (let i = 0; i < n; i += 2) { // dotted outline
-      const t = (i / n) * Math.PI * 2;
-      const a = Math.cos(t) * along, b = Math.sin(t) * lat;
-      ctx.fillRect(Math.round(x + u.x * a - u.y * b), Math.round(y + u.y * a + u.x * b), 1, 1);
-    }
+    // the outer ring (faint) is as far off as the ball can land; the inner ring is where half the throws land
+    const ring = (k: number, alpha: number, gap: number) => {
+      const ra = along * k, rb = lat * k, n = Math.max(12, Math.round((ra + rb) * 2.5));
+      ctx.globalAlpha = alpha;
+      for (let i = 0; i < n; i += gap) {
+        const t = (i / n) * Math.PI * 2;
+        const a = Math.cos(t) * ra, b = Math.sin(t) * rb;
+        ctx.fillRect(Math.round(x + u.x * a - u.y * b), Math.round(y + u.y * a + u.x * b), 1, 1);
+      }
+      ctx.globalAlpha = 1;
+    };
+    ring(1, 0.4, 3);
+    if (along > 4) ring(HALF_RING, 1, 2);
     ctx.fillRect(x - 1, y, 3, 1); // aim point
     ctx.fillRect(x, y - 1, 1, 3);
-    if (along > 6) { // faint fill so the big ovals read as an area
-      ctx.globalAlpha = 0.12;
+    if (along > 6) { // faint fill of the likely area so the big ovals read as an area
+      ctx.globalAlpha = 0.14;
       ctx.beginPath();
-      ctx.ellipse(x, y, along, lat, Math.atan2(u.y, u.x), 0, Math.PI * 2);
+      ctx.ellipse(x, y, along * HALF_RING, lat * HALF_RING, Math.atan2(u.y, u.x), 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
     }

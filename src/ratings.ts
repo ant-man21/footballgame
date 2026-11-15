@@ -41,7 +41,7 @@ const NORMS: Record<Pos, Partial<Ratings>> = {
 };
 /** Which ratings matter for a position's overall, and how much. */
 const OVR_WEIGHTS: Record<Pos, Partial<Record<RatingKey, number>>> = {
-  QB: { acc: 4, arm: 2, dec: 3, spd: 0.5 },
+  QB: { acc: 4, arm: 2, dec: 3, spd: 1.2, elu: 0.4 }, // a QB who can run is worth more now there's a run game
   WR: { spd: 3, hnd: 3, rte: 3, elu: 1 },
   TE: { hnd: 3, blk: 3, rte: 2, spd: 1 },
   RB: { spd: 3, elu: 3, hnd: 2, blk: 1 },

@@ -10,16 +10,17 @@ export const HS_CAP = 86; // the most a rating can grow to in high school
 export const CLASS_NAMES = ['SOPHOMORE', 'JUNIOR', 'SENIOR'];
 export const CLASS_SHORT = ['SO', 'JR', 'SR'];
 
-export type Archetype = 'pocket' | 'gunslinger' | 'manager';
+export type Archetype = 'pocket' | 'gunslinger' | 'manager' | 'dual';
 export const ARCHETYPES: { id: Archetype; name: string; note: string; base: Partial<Ratings> }[] = [
   { id: 'pocket', name: 'POCKET PASSER', note: 'ACCURATE, READS THE FIELD', base: { acc: 60, dec: 58, arm: 54, spd: 50 } },
   { id: 'gunslinger', name: 'GUNSLINGER', note: 'BIG ARM, TAKES CHANCES', base: { arm: 62, acc: 55, dec: 52, spd: 53 } },
   { id: 'manager', name: 'GAME MANAGER', note: 'SMART, PROTECTS THE BALL', base: { dec: 62, acc: 57, arm: 52, spd: 50 } },
+  { id: 'dual', name: 'DUAL THREAT', note: 'FAST, BEATS YOU WITH HIS LEGS', base: { spd: 64, elu: 58, arm: 58, acc: 55, dec: 54 } },
 ];
 
-export type Focus = 'acc' | 'arm' | 'dec';
+export type Focus = 'acc' | 'arm' | 'dec' | 'spd';
 export const FOCUSES: { id: Focus; name: string }[] = [
-  { id: 'acc', name: 'ACCURACY' }, { id: 'arm', name: 'ARM' }, { id: 'dec', name: 'READS' },
+  { id: 'acc', name: 'ACCURACY' }, { id: 'arm', name: 'ARM' }, { id: 'dec', name: 'READS' }, { id: 'spd', name: 'MOBILITY' },
 ];
 
 /** One season of your career. */
@@ -89,25 +90,28 @@ export function addXp(p: CareerPlayer, k: RatingKey, amount: number, cap = HS_CA
 /** A week of practice: most of it goes into the focus. Returns the points gained per rating. */
 export function practice(p: CareerPlayer, focus: Focus): Partial<Record<RatingKey, number>> {
   const out: Partial<Record<RatingKey, number>> = {};
-  for (const k of ['acc', 'arm', 'dec'] as RatingKey[]) {
-    const n = addXp(p, k, k === focus ? rand(0.35, 0.6) : rand(0.05, 0.12));
+  for (const k of ['acc', 'arm', 'dec', 'spd', 'elu'] as RatingKey[]) {
+    const on = k === focus || (focus === 'spd' && k === 'elu'); // MOBILITY works on speed and elusiveness
+    const n = addXp(p, k, on ? rand(0.35, 0.6) * (focus === 'spd' ? 0.75 : 1) : k === 'spd' || k === 'elu' ? rand(0, 0.04) : rand(0.05, 0.12));
     if (n) out[k] = n;
   }
   return out;
 }
 
 /** Playing time teaches too: a good game more than a bad one. */
-export function gameXp(p: CareerPlayer, grade: number, snaps: number): Partial<Record<RatingKey, number>> {
+export function gameXp(p: CareerPlayer, grade: number, snaps: number, runs = 0): Partial<Record<RatingKey, number>> {
   const out: Partial<Record<RatingKey, number>> = {};
   const w = clamp(snaps / 25, 0.2, 1) * (0.25 + grade / 200);
   for (const k of ['acc', 'dec'] as RatingKey[]) { const n = addXp(p, k, w * rand(0.4, 0.7)); if (n) out[k] = n; }
+  if (runs >= 3) { const n = addXp(p, 'elu', clamp(runs / 8, 0, 1) * rand(0.2, 0.4)); if (n) out.elu = n; } // running teaches running
   return out;
 }
 
 /** Off-season: a year older, stronger, better. */
 export function offseason(p: CareerPlayer): void {
   for (const k of ['acc', 'arm', 'dec'] as RatingKey[]) addXp(p, k, rand(1, 3));
-  addXp(p, 'spd', rand(0, 1.5));
+  addXp(p, 'spd', rand(0, 1.5) + (p.archetype === 'dual' ? 1 : 0));
+  if (p.archetype === 'dual') addXp(p, 'elu', rand(0.5, 1.5));
 }
 
 /** Recruiting score per win as the starter (see production). */
@@ -142,11 +146,14 @@ export function passerRating(s: TeamStats): number {
  * passer rating; at 3 a sack outweighed 4 points of completion percentage).
  */
 export function gradeGame(s: TeamStats, won: boolean | null): number {
-  if (!s.att && !s.sacks) return 50;
+  if (!s.att && !s.sacks && !(s.rush ?? 0)) return 50;
   let g = clamp((passerRating(s) - 40) * 0.85, 0, 100);
   g -= s.sacks * SACK_COST;
+  // QB runs: yards past ~3 a carry and rushing touchdowns add to the grade (a scramble for 15 is a good play)
+  const rush = s.rush ?? 0, ryds = s.ryds ?? 0, rtd = s.rtd ?? 0;
+  if (rush) g += clamp((ryds - rush * 3) * 0.12 + rtd * 5, -8, 20);
   if (won !== null) g += won ? 5 : -3;
-  const weight = clamp((s.att + s.sacks) / 12, 0, 1);
+  const weight = clamp((s.att + s.sacks + (s.rush ?? 0)) / 12, 0, 1);
   return Math.round(clamp(50 + (g - 50) * weight, 0, 100));
 }
 

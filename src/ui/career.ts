@@ -509,7 +509,7 @@ export class CareerScreens {
     drawText(ctx, a.note, L.archX, y, { align: 'center', color: C.grey });
     y += 10;
     const b = a.base;
-    drawText(ctx, `ACC ${b.acc}  ARM ${b.arm}  DEC ${b.dec}`, L.archX, y, { align: 'center' });
+    drawText(ctx, `ACC ${b.acc} ARM ${b.arm} DEC ${b.dec} SPD ${b.spd}`, L.archX, y, { align: 'center' });
     y += 14;
     for (const t of wrap('START AS A SOPHOMORE BACKUP. EARN THE JOB, WIN STATE, GET RECRUITED.', v.landscape ? 34 : 40)) {
       drawText(ctx, t, L.archX, y, { align: 'center', color: C.grey }); y += 8;
@@ -569,7 +569,7 @@ export class CareerScreens {
       drawText(ctx, 'QB BATTLE', x + 4, Y + 31, { color: C.grey });
       meter(ctx, r(x + 42, Y + 31, w - 66, 5), s.battle, s.battle >= 75 ? C.green : C.yellow);
       drawText(ctx, String(s.battle), x + w - 4, Y + 31, { align: 'right', color: C.yellow });
-    } else drawText(ctx, `ACC ${p.r.acc}  ARM ${p.r.arm}  DEC ${p.r.dec}  SPD ${p.r.spd}`, x + 4, Y + 31, { color: C.darkGrey });
+    } else drawText(ctx, `ACC ${p.r.acc} ARM ${p.r.arm} DEC ${p.r.dec} SPD ${p.r.spd} ELU ${p.r.elu}`, x + 4, Y + 31, { color: C.darkGrey });
 
     this.ticker(ctx, L.ticker);
 

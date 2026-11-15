@@ -337,7 +337,7 @@ export class Career {
     const gains: Partial<Record<RatingKey, number>> = {};
     const add = (g: Partial<Record<RatingKey, number>>) => { for (const [k, n] of Object.entries(g) as [RatingKey, number][]) gains[k] = (gains[k] ?? 0) + n; };
     add(practice(this.player, s.focus));
-    if (grade !== null) add(gameXp(this.player, grade, line.att + line.sacks));
+    if (grade !== null) add(gameXp(this.player, grade, line.att + line.sacks + (line.rush ?? 0), line.rush ?? 0));
     const news: string[] = [];
 
     let battle: number | null = null;
