@@ -103,7 +103,7 @@ Reuses the league engine: recruiting a whole class, roster management, depth cha
 - Game rules: safeties, the try (kick or go for 2), kickoffs with returns and onside kicks, punt returns / fair catches / muffs / blocks.
 - Gameplay: QB sneak, QB draw, scrambles (throw straight back, then steer), FOUR VERTS / SLANTS / ALL CURLS, coach calls by down and distance, the thrown-to receiver has the right of way, the defense sits on check-downs (opening the deep ball) and keys on a favourite target.
 
-### Next (owner's order)
+### Next (owner's order) - detailed notes in `docs/HANDOFF.md`
 - **College career** (milestone 3, simple first): win the job, play seasons, rankings, real-ish scheduling, the 12-team playoff; no recruiting. Multiple save slots so a graduated high school career can continue into college.
 - **Unlocks for exhibitions**: teams you finished a career with (high school first, then college / NFL).
 - Playable kick and punt returns (the MIKE's joystick on the returner).

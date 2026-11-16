@@ -8,7 +8,7 @@ Vite + TypeScript, plain Canvas 2D, no framework, no runtime dependencies.
 Live at https://ant-man21.github.io/footballgame/ (GitHub Pages, deployed on every push to `main`).
 The owner plays on an iPhone (portrait and landscape) and tunes by feel; keep changes testable on a phone.
 
-Current phase: **franchise / career mode** (plan and status in `docs/FRANCHISE.md`). Milestone 1 (foundation) is built and the high school career is playable: create a QB, three seasons, the QB battle, state playoffs, recruiting (live stars, offers from real colleges, commit, signing day). Camps and the college career are next.
+Current phase: **franchise / career mode** (plan and status in `docs/FRANCHISE.md`; **what to build next, with design notes for the college career and abilities: `docs/HANDOFF.md`**). Milestone 1 (foundation) is built and the high school career is playable: create a QB, three seasons, the QB battle, state playoffs, recruiting (live stars, offers from real colleges, commit, signing day). Camps and the college career are next.
 
 ## Commands
 ```sh
