@@ -71,7 +71,7 @@ export class CollegeScreens {
       match: plan.match, you: c.rosterWithYou(), opp: plan.oppRoster,
       units: { you: plan.units.you, cpu: { off: plan.units.cpu.off + shift, def: plan.units.cpu.def + shift } },
       kits,
-      crowd: home || plan.rec.neutral ? { home: sc.colors, away: o.colors, homeName: sc.mascot } : { home: o.colors, away: sc.colors, homeName: o.mascot },
+      crowd: home || plan.rec.neutral ? { home: sc.colors, away: o.colors, homeName: sc.mascot, big: true, abbr: sc.abbr } : { home: o.colors, away: sc.colors, homeName: o.mascot, big: true, abbr: o.abbr },
       intro: this.introFor(plan, home),
       simDefense: s.defense === 'sim', coachCalls: s.calls !== 'you', endAtHalf: plan.endAtHalf, label: plan.label,
       onDone: (_m, stint) => this.finish(stint),
@@ -82,10 +82,11 @@ export class CollegeScreens {
     const c = this.career!, m = plan.match, sc = c.school, o = plan.opp;
     if (m.quarter > 1 || m.clock < m.quarterSeconds || m.score.you + m.score.cpu > 0) return undefined;
     const big = !!(plan.rec.round || plan.rec.ccg || plan.rec.bowl || (c.rank(o.id) && c.rank(sc.id)));
+    const tag = (id: string) => `${c.rank(id) ? `NO.${c.rank(id)} ` : ''}${c.record(id).text}`;
     return {
-      home: home || plan.rec.neutral ? 'you' : 'cpu', top: plan.title, big,
+      home: home || plan.rec.neutral ? 'you' : 'cpu', top: plan.title, big, college: true,
       names: { you: sc.name, cpu: o.name }, mascots: { you: sc.mascot, cpu: o.mascot }, abbrs: { you: sc.abbr, cpu: o.abbr },
-      colors: { you: sc.colors, cpu: o.colors },
+      colors: { you: sc.colors, cpu: o.colors }, tags: { you: tag(sc.id), cpu: tag(o.id) },
     };
   }
 

@@ -15,6 +15,7 @@ import { type Actor, HASH_YD, Sim, type Tendency, arcHeight, flightFor, throwSpr
 import { type Facing, HD, type Pose, grassTile, hdBall, hdPlayer, identity } from './hd';
 import { type Kit, type TeamColor, shade } from './sprites';
 import { type Crowd, drawEndStands, drawGoalpost, padColor } from './stadium';
+import { drawBlimp } from './blimp';
 import { Intro, type IntroInfo } from './intro';
 import { type Vec, clamp, dist, lerp } from './util';
 import { type Roster, loadRoster, makeRoster, saveRoster } from './ratings';
@@ -56,7 +57,7 @@ export interface CareerGameSetup {
   endAtHalf: boolean; // a two-minute drill: your stint ends at halftime
   label: string; // shown as you take the field
   kits?: Record<Side, Kit>; // the two schools' uniforms (otherwise blue vs red)
-  crowd?: { home: [string, string]; away: [string, string]; homeName: string }; // the schools' colours: the home crowd fills the stadium
+  crowd?: { home: [string, string]; away: [string, string]; homeName: string; big?: boolean; abbr?: string }; // the schools' colours: the home crowd fills the stadium (big: a college stadium)
   intro?: IntroInfo; // the pregame show (only for a game from the opening kickoff)
   form?: number; // simulated defense: the opponent offense's form this game (rating points), set when the game starts
   difficulty?: Difficulty; // the career's difficulty (otherwise the settings')
@@ -825,7 +826,7 @@ export class Game {
     }
     if (this.screen === 'intro' && this.intro) {
       this.camY = 0;
-      this.intro.render(ctx, { view: this.view, sx: this.sx, sy: this.sy, field: (c, yard) => drawField(c, this, yard, 200, this.intro?.info.home === 'you', false) });
+      this.intro.render(ctx, { view: this.view, sx: this.sx, sy: this.sy, crowd: () => this.crowd(), field: (c, yard) => drawField(c, this, yard, 200, this.intro?.info.home === 'you', false) });
       return;
     }
     if (this.screen === 'huddle' && this.menu) {
@@ -961,7 +962,7 @@ export class Game {
     const cc = this.careerGame?.crowd;
     return {
       home: cc?.home ?? ['#29adff', '#1d2b53'], away: cc?.away ?? ['#ff004d', '#7e2553'], homeName: cc?.homeName ?? 'PIXEL BOWL',
-      hype: this.hype, t: this.clock,
+      hype: this.hype, t: this.clock, big: cc?.big, stunt: this.screen === 'intro' && !!this.intro?.stunt,
     };
   }
 
@@ -1303,6 +1304,10 @@ export class Game {
     }
 
     const b = this.banner;
+    // college: halftime cuts to the blimp shot of the whole stadium
+    if (this.screen === 'banner' && b && this.careerGame?.crowd?.big && (b.headline === 'HALFTIME' || b.note === 'HALFTIME')) {
+      drawBlimp(ctx, v, { ...this.crowd(), stunt: true }, this.careerGame.crowd.abbr ?? this.careerGame.crowd.homeName.slice(0, 3), this.clock - this.bannerAt);
+    }
     if (this.screen === 'banner' && b) {
       const y = v.landscape ? 40 : 96;
       const bw = v.landscape ? v.w - v.panel * 2 - 20 : v.w - 20;

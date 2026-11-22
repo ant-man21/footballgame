@@ -3,12 +3,13 @@
 // out of its tunnel and bursts through a paper banner, with smoke, fireworks
 // and the crowd on its feet; then the coin toss at midfield. Drawn with the
 // real field, stadium and player sprites; the Game hands over the camera.
+import { drawBlimp } from './blimp';
 import { C, LOS_Y, YD, fx } from './config';
-import { drawText, textWidth } from './font';
+import { drawText, glyphMask, textWidth } from './font';
 import { HD, hdPlayer, identity } from './hd';
 import type { Side } from './match';
 import { type TeamColor, shade } from './sprites';
-import { STANDS_YD } from './stadium';
+import { type Crowd, standsYd } from './stadium';
 import type { View } from './view';
 
 export interface IntroInfo {
@@ -19,6 +20,8 @@ export interface IntroInfo {
   mascots: Record<Side, string>;
   abbrs: Record<Side, string>;
   colors: Record<Side, [string, string]>;
+  college?: boolean; // a college game: the blimp shot, a marching band, a bigger stadium
+  tags?: Record<Side, string>; // under each badge on the title card, e.g. "NO.4 9-1"
 }
 
 /** What the intro needs from the Game. */
@@ -28,7 +31,13 @@ export interface IntroHost {
   sy(y: number): number;
   /** Draws the field and stadium with the camera on this yard line (no scrimmage lines). */
   field(ctx: CanvasRenderingContext2D, camYard: number): void;
+  /** The crowd (colours, how loud). */
+  crowd(): Crowd;
 }
+
+/** College: the blimp shot before the camera comes down (seconds). */
+const BLIMP = 3;
+const BAND_YD = 74; // the band's formation, yards from the near goal line (the home team's end is at 100+)
 
 // the timeline (seconds)
 const PAN_END = 2.8, RUN_END = 6.6, TOSS_END = 10.2;
@@ -55,6 +64,9 @@ export class Intro {
   private bits: Spark[] = []; // torn banner paper
   private torn = false;
   private runners: { delay: number; lane: number; exitYd: number; num: number; skin: number; build: 'skill' | 'big' }[] = [];
+  /** Seconds into the blimp shot (college games open with it; the rest of the show runs after). */
+  pre = 0;
+  private band: { x: number; yd: number }[] = [];
 
   constructor(public info: IntroInfo, public kits: Record<Side, TeamColor>, public receiving: Side) {
     for (let i = 0; i < N_RUNNERS; i++) {
@@ -64,14 +76,26 @@ export class Intro {
         num: i === 0 ? 7 : id.num, skin: id.skin, build: i % 4 === 3 ? 'big' : 'skill',
       });
     }
+    if (info.college) { // the band spells the school's letters on the field, one bandsman per pixel
+      const mask = glyphMask(info.abbrs[info.home]), cols = mask[0].length;
+      mask.forEach((row, r) => row.forEach((on, c) => {
+        if (on) this.band.push({ x: (c - (cols - 1) / 2) * 2, yd: BAND_YD + (4 - r) * 2.3 });
+      }));
+    } else this.pre = BLIMP;
   }
 
+  /** Still in the blimp shot? */
+  get inBlimp(): boolean { return this.pre < BLIMP; }
+  /** The card stunt in the stands: the blimp shot and the camera's sweep down. */
+  get stunt(): boolean { return !!this.info.college && this.t < PAN_END; }
+
   /** How loud the crowd is. */
-  get hype(): number { return this.t < PAN_END - 0.4 ? 0.15 : this.t < RUN_END ? 1 : 0.2; }
+  get hype(): number { return this.inBlimp ? 0.3 : this.t < PAN_END - 0.4 ? 0.15 : this.t < RUN_END ? 1 : 0.2; }
 
   /** The camera: the yard line at the scrimmage spot of the screen. */
   private cam(): number {
-    if (this.t < PAN_END) return CAM_START + (CAM_RUN - CAM_START) * ease(this.t / PAN_END);
+    const start = this.info.college ? CAM_START + 14 : CAM_START; // a college sweep starts up in the upper deck
+    if (this.t < PAN_END) return start + (CAM_RUN - start) * ease(this.t / PAN_END);
     if (this.t < RUN_END) return CAM_RUN;
     return CAM_RUN + (CAM_TOSS - CAM_RUN) * ease((this.t - RUN_END) / 0.8);
   }
@@ -79,13 +103,14 @@ export class Intro {
   skip(): void { this.done = true; }
 
   update(dt: number): void {
+    if (this.inBlimp) { this.pre += dt; return; }
     this.t += dt;
     if (this.t >= TOSS_END) { this.done = true; return; }
     const colors = this.info.colors[this.info.home];
     // fireworks over the stands while the team runs out
     if (this.t >= this.nextRocket && this.t < RUN_END - 0.6) {
       this.nextRocket = this.t + (this.info.big ? 0.32 : 0.55) * (0.7 + Math.random() * 0.6);
-      const sky = 110 + STANDS_YD + 2;
+      const sky = 110 + standsYd(this.info.college) + 2;
       this.rockets.push({
         x: (Math.random() - 0.5) * 50, y: sky, vy: 22 + Math.random() * 6, burstY: sky + 6 + Math.random() * 10,
         colors: [colors[0], colors[1], '#fff1e8', C.yellow].filter((c) => c), done: false,
@@ -142,7 +167,9 @@ export class Intro {
   }
 
   render(ctx: CanvasRenderingContext2D, host: IntroHost): void {
-    const v = host.view, s = v.s, cam = this.cam();
+    const v = host.view, s = v.s;
+    if (this.inBlimp) { this.renderBlimp(ctx, host); return; }
+    const cam = this.cam();
     host.field(ctx, cam);
     const X = (xYd: number) => host.sx(fx(xYd));
     const Y = (yd: number) => host.sy(LOS_Y - (yd - cam) * YD);
@@ -177,6 +204,9 @@ export class Intro {
       ctx.globalAlpha = 1;
     }
 
+    // the band on the field (until the toss)
+    if (this.band.length && this.t < RUN_END + 0.6) this.drawBand(ctx, X, Y, s);
+
     // the runners, the banner between them
     const people = this.runners.map((r) => ({ r, at: this.runnerAt(r) })).filter((p) => p.at.on).sort((a, b) => b.at.yd - a.at.yd);
     const drawRunner = ({ r, at }: (typeof people)[number]) => {
@@ -205,6 +235,44 @@ export class Intro {
     if (this.t < PAN_END + 0.4) this.titleCard(ctx, v, home, away);
     else if (this.t < RUN_END - 0.3) this.caption(ctx, v, `HERE COME THE ${this.info.mascots[home]}`, this.t - PAN_END - 0.4);
     if (this.t > 0.6) drawText(ctx, 'TAP TO SKIP', v.w - 3, v.h - 8, { align: 'right', color: 'rgba(255,241,232,0.55)' });
+  }
+
+  /** The opening blimp shot: the whole stadium, a caption, the matchup. */
+  private renderBlimp(ctx: CanvasRenderingContext2D, host: IntroHost): void {
+    const v = host.view, home = this.info.home, away: Side = home === 'you' ? 'cpu' : 'you';
+    drawBlimp(ctx, v, { ...host.crowd(), stunt: false }, this.info.abbrs[home], this.pre);
+    const k = ease(this.pre / 0.5);
+    ctx.globalAlpha = k;
+    ctx.fillStyle = 'rgba(11,18,32,0.82)'; ctx.fillRect(0, 0, v.w, 22);
+    ctx.fillStyle = C.yellow; ctx.fillRect(0, 22, v.w, 1);
+    drawText(ctx, `LIVE FROM ${this.info.names[home]}`, v.w / 2, 4, { align: 'center', color: C.yellow });
+    drawText(ctx, `${this.info.abbrs[away]} AT ${this.info.abbrs[home]} - ${this.info.top}`.slice(0, Math.floor(v.w / 4)), v.w / 2, 13, { align: 'center', color: C.white });
+    ctx.globalAlpha = 1;
+    if (this.pre > 0.6) drawText(ctx, 'TAP TO SKIP', v.w - 3, v.h - 8, { align: 'right', color: 'rgba(255,241,232,0.55)' });
+  }
+
+  /** The marching band: the school's letters on the field, in uniform, marking time; a drum major out front. */
+  private drawBand(ctx: CanvasRenderingContext2D, X: (x: number) => number, Y: (y: number) => number, s: number): void {
+    const [c0, c1] = this.info.colors[this.info.home], px = 2 / HD; // each bandsman about player size
+    const lum = (h: string) => { const n = parseInt(h.slice(1), 16); return 0.3 * ((n >> 16) & 255) + 0.59 * ((n >> 8) & 255) + 0.11 * (n & 255); };
+    const hat = Math.abs(lum(c1) - lum(c0)) > 60 ? c1 : '#fff1e8';
+    const step = Math.floor(this.t * 4) & 1; // marking time
+    const fade = this.t > RUN_END ? Math.max(0, 1 - (this.t - RUN_END) / 0.6) : 1;
+    ctx.globalAlpha = fade;
+    const member = (x: number, y: number, i: number, major = false) => {
+      const lift = (step + i) & 1 ? px : 0;
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x - px, y + 2 * px, 4 * px, px); // shadow
+      ctx.fillStyle = '#1d1d24'; ctx.fillRect(x, y - lift, px, 2 * px); ctx.fillRect(x + 2 * px, y - (lift ? 0 : px), px, 2 * px); // legs
+      ctx.fillStyle = major ? '#fff1e8' : c0; ctx.fillRect(x, y - 4 * px, 3 * px, 3 * px); // the coat
+      ctx.fillStyle = '#fff1e8'; ctx.fillRect(x + px, y - 4 * px, px, 3 * px); // the cross belt
+      ctx.fillStyle = hat; ctx.fillRect(x, y - 7 * px, 3 * px, 3 * px); // the shako
+      ctx.fillStyle = major ? c0 : '#fff1e8'; ctx.fillRect(x + px, y - 9 * px, px, 2 * px); // the plume
+      if (!major && i % 3 === 0) { ctx.fillStyle = '#ffec27'; ctx.fillRect(x + 3 * px, y - 4 * px, px, px); } // a horn catching the light
+    };
+    this.band.forEach((b, i) => member(X(b.x) - 1.5 * px, Y(b.yd), i));
+    member(X(0) - 1.5 * px, Y(BAND_YD - 3), 0, true);
+    ctx.globalAlpha = 1;
+    void s;
   }
 
   private drawBanner(ctx: CanvasRenderingContext2D, X: (x: number) => number, Y: (y: number) => number, s: number): void {
@@ -293,10 +361,16 @@ export class Intro {
     };
     badge(away, mid - 42);
     badge(home, mid + 42);
+    const tags = this.info.tags;
+    if (tags) {
+      drawText(ctx, tags[away], mid - 42, y + 36, { align: 'center', color: C.yellow });
+      drawText(ctx, tags[home], mid + 42, y + 36, { align: 'center', color: C.yellow });
+    }
     drawText(ctx, 'AT', mid, y + 23, { scale: 1, align: 'center', color: C.grey });
     const line = `${this.info.mascots[away]} AT ${this.info.mascots[home]}`;
-    drawText(ctx, textWidth(line) < v.w - 8 ? line : `${this.info.abbrs[away]} AT ${this.info.abbrs[home]}`, mid, y + 44, { align: 'center', color: C.white });
-    drawText(ctx, this.info.big ? 'BIG NIGHT UNDER THE LIGHTS' : 'KICKOFF IS MOMENTS AWAY', mid, y + 54, { align: 'center', color: C.grey });
+    drawText(ctx, textWidth(line) < v.w - 8 ? line : `${this.info.abbrs[away]} AT ${this.info.abbrs[home]}`, mid, y + (tags ? 46 : 44), { align: 'center', color: C.white });
+    const sub = this.info.college ? (this.info.big ? 'SATURDAY NIGHT: THE WHOLE COUNTRY IS WATCHING' : 'COLLEGE FOOTBALL SATURDAY') : this.info.big ? 'BIG NIGHT UNDER THE LIGHTS' : 'KICKOFF IS MOMENTS AWAY';
+    drawText(ctx, textWidth(sub) < v.w - 6 ? sub : 'PRIMETIME SATURDAY', mid, y + 55, { align: 'center', color: C.grey });
   }
 
   /** A lower-third caption that slides up. */

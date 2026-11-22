@@ -3,6 +3,9 @@
 // packed lower bowl of fans (darker toward the back), the facade, light towers
 // and the night sky; goalposts on the end lines. The crowd wears the home
 // school's colours (a few visitors' too) and jumps when something big happens.
+// A college stadium is bigger: a club level with lit suites over the lower
+// bowl, an upper deck above it, and a video board over the far end. A card
+// stunt turns the rows into stripes of the school's colours.
 import { YD } from './config';
 import { drawText, textWidth } from './font';
 import { HD } from './hd';
@@ -14,6 +17,8 @@ export interface Crowd {
   homeName: string; // painted on the end zone walls
   hype: number; // 0 = sitting, 1 = going wild
   t: number; // seconds, for the animation
+  big?: boolean; // a college stadium: club level, upper deck, video board
+  stunt?: boolean; // a card stunt: rows of the school's colours
 }
 
 const FIELD = '#00873f';
@@ -24,8 +29,13 @@ const SEAT = 4; // canvas px per seat along a row
 const ROW = 7; // canvas px per row
 const ROWS = 19; // rows in the bowl
 const APRON_YD = 3, WALL_YD = 2.2, FACADE = 7;
+const UPPER = 17; // rows in a college upper deck
+const CLUB = 16; // canvas px of the club level (suites) between the decks
 /** How far the stands reach behind an end line (yards), to the top of the facade. */
 export const STANDS_YD = APRON_YD + WALL_YD + (ROWS * ROW + FACADE) / (YD * HD);
+/** The same for a college stadium (the upper deck and the club level on top). */
+export const BIG_STANDS_YD = STANDS_YD + (CLUB + UPPER * ROW) / (YD * HD);
+export const standsYd = (big?: boolean) => (big ? BIG_STANDS_YD : STANDS_YD);
 
 /** Stable pseudo-random number in [0, 1) for a seat. */
 function hash(a: number, b: number): number {
@@ -42,7 +52,8 @@ export function padColor(c: Crowd): string {
 interface Fan { shirt: string; head: string; ph: number; empty: boolean }
 function fan(c: Crowd, row: number, seat: number, faces: boolean): Fan {
   const r = hash(row * 7 + 1, seat), q = hash(seat * 3 + 5, row);
-  const shirt = r < 0.55 ? c.home[0] : r < 0.72 ? c.home[1] : r < 0.85 ? c.away[0] : NEUTRAL[Math.floor(q * 4)];
+  const stripe = c.stunt && r < 0.93; // a card stunt: whole rows in one colour, alternating
+  const shirt = stripe ? c.home[Math.floor(row / 2) % 2] : r < 0.55 ? c.home[0] : r < 0.72 ? c.home[1] : r < 0.85 ? c.away[0] : NEUTRAL[Math.floor(q * 4)];
   const i = Math.floor(q * 5);
   return { shirt, head: faces ? SKIN[i] : HAIR[i], ph: hash(seat, row * 13 + 7), empty: q > 0.94 };
 }
@@ -57,16 +68,17 @@ function drawFan(ctx: CanvasRenderingContext2D, f: Fan, x: number, y: number, up
 
 /** The bowl (steps and fans) for one end, cached while the crowd sits still. */
 const bowls = new Map<string, HTMLCanvasElement>();
-function bowl(c: Crowd, W: number, faces: boolean, live: boolean): HTMLCanvasElement {
-  const key = `${c.home}${c.away}${W}${faces}`;
+function bowl(c: Crowd, W: number, faces: boolean, live: boolean, rows = ROWS, first = 0, dark = 0): HTMLCanvasElement {
+  const key = `${c.home}${c.away}${W}${faces}${rows}${first}${!!c.stunt}`;
   let cv = live ? null : bowls.get(key) ?? null;
   if (cv) return cv;
   cv = document.createElement('canvas');
-  cv.width = W; cv.height = ROWS * ROW + 4;
+  cv.width = W; cv.height = rows * ROW + 4;
   const ctx = cv.getContext('2d')!;
   const seats = Math.ceil(W / SEAT);
-  for (let row = 0; row < ROWS; row++) { // row 0 = the front row, drawn at the bottom of this canvas
-    const y = cv.height - (row + 1) * ROW;
+  for (let r = 0; r < rows; r++) { // row 0 = the front row, drawn at the bottom of this canvas
+    const row = first + r;
+    const y = cv.height - (r + 1) * ROW;
     ctx.fillStyle = row & 1 ? '#262c3a' : '#2b3242'; ctx.fillRect(0, y, W, ROW);
     ctx.fillStyle = '#3a4255'; ctx.fillRect(0, y + ROW - 1, W, 1); // the step's edge
     for (let i = 0; i < seats; i++) {
@@ -80,7 +92,7 @@ function bowl(c: Crowd, W: number, faces: boolean, live: boolean): HTMLCanvasEle
       }
       drawFan(ctx, f, i * SEAT + 1 + (row & 1) * 2, y + ROW - 1, up, arms);
     }
-    ctx.fillStyle = `rgba(8,12,22,${(row / ROWS) * 0.45})`; ctx.fillRect(0, y - 3, W, ROW + 3); // the back rows sit in shadow
+    ctx.fillStyle = `rgba(8,12,22,${dark + (r / rows) * 0.45})`; ctx.fillRect(0, y - 3, W, ROW + 3); // the back rows sit in shadow
   }
   if (!live) bowls.set(key, cv);
   return cv;
@@ -108,8 +120,27 @@ export function drawEndStands(ctx: CanvasRenderingContext2D, c: Crowd, endLine: 
     if (dir < 0) ctx.drawImage(img, 0, by + bh - img.height); // front row against the wall
     else { ctx.save(); ctx.translate(0, by + img.height); ctx.scale(1, -1); ctx.drawImage(img, 0, 0); ctx.restore(); }
   }
+  // a college stadium: the club level (suites) and the upper deck above the lower bowl
+  let top = apron + wall + ROWS * ROW;
+  if (c.big) {
+    const [cy] = span(top, top + CLUB);
+    ctx.fillStyle = '#141b2b'; ctx.fillRect(0, cy, W, CLUB);
+    ctx.fillStyle = pad; ctx.fillRect(0, dir < 0 ? cy + CLUB - 2 : cy, W, 2); // the band in the school colour
+    for (let x = 3; x < W - 8; x += 11) { // suite windows, some lit
+      ctx.fillStyle = hash(x, 77) < 0.7 ? '#ffe9a8' : '#3a4255';
+      ctx.fillRect(x, cy + (dir < 0 ? 4 : 6), 8, 5);
+    }
+    top += CLUB;
+    const [uy, uh] = span(top, top + UPPER * ROW);
+    if (uy < H && uy + uh > 0) {
+      const img = bowl(c, W, dir < 0, c.hype > 0.05, UPPER, ROWS, 0.15);
+      if (dir < 0) ctx.drawImage(img, 0, uy + uh - img.height);
+      else { ctx.save(); ctx.translate(0, uy + img.height); ctx.scale(1, -1); ctx.drawImage(img, 0, 0); ctx.restore(); }
+    }
+    top += UPPER * ROW;
+  }
   // the facade along the top of the bowl, and the night beyond it
-  const [fy] = span(apron + wall + ROWS * ROW, apron + wall + ROWS * ROW + FACADE);
+  const [fy] = span(top, top + FACADE);
   ctx.fillStyle = '#141b2b'; ctx.fillRect(0, fy, W, FACADE);
   ctx.fillStyle = pad; ctx.fillRect(0, dir < 0 ? fy + FACADE - 2 : fy, W, 2);
   for (let x = 6; x < W; x += 14) { ctx.fillStyle = '#ffe9a8'; ctx.fillRect(x, fy + (dir < 0 ? 2 : 3), 2, 1); } // lights under the roof
@@ -122,6 +153,17 @@ export function drawEndStands(ctx: CanvasRenderingContext2D, c: Crowd, endLine: 
       const x = Math.floor(hash(i, 9) * W), d = 30 + hash(i, 4) * 400, y = dir < 0 ? fy - d : fy + FACADE + d;
       if (y < sky[0] || y > sky[1]) continue;
       ctx.fillStyle = hash(i, 2) < 0.3 ? '#fff1e8' : '#5f6b85'; ctx.fillRect(x, y, 1, 1);
+    }
+    if (c.big && dir < 0) { // the video board over the far end
+      const bw = Math.min(W - 40, 150 * HD / 3 * 2), bh = 30, bx = Math.round((W - bw) / 2), byy = fy - bh - 14;
+      ctx.fillStyle = '#3a4255'; ctx.fillRect(bx + 10, byy + bh, 3, 14); ctx.fillRect(bx + bw - 13, byy + bh, 3, 14);
+      ctx.fillStyle = '#0b1220'; ctx.fillRect(bx - 2, byy - 2, bw + 4, bh + 4);
+      ctx.fillStyle = pad; ctx.fillRect(bx, byy, bw, bh);
+      ctx.fillStyle = shade(pad, -0.35); ctx.fillRect(bx, byy + bh - 8, bw, 8);
+      ctx.setTransform(HD, 0, 0, HD, 0, 0);
+      const word = c.homeName;
+      drawText(ctx, word, (bx + bw / 2) / HD, (byy + 5) / HD, { align: 'center', color: '#fff1e8' });
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
     for (const lx of [0.14, 0.86]) { // light towers
       const x = Math.round(lx * W), top = dir < 0 ? fy - 46 : fy + FACADE + 30;

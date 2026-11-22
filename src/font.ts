@@ -16,6 +16,17 @@ const GLYPHS: Record<string, string> = {
   '%': '101001010100101', ',': '000000000010100', '#': '101111101111101', '=': '000111000111000',
 };
 
+/** A text's pixels as rows of booleans (5 rows; 4 columns a letter with the gap): for drawing words out of things, like a marching band. */
+export function glyphMask(text: string): boolean[][] {
+  const rows: boolean[][] = [[], [], [], [], []];
+  for (const ch of text.toUpperCase()) {
+    const g = GLYPHS[ch] ?? GLYPHS[' '];
+    for (let r = 0; r < 5; r++) rows[r].push(g[r * 3] === '1', g[r * 3 + 1] === '1', g[r * 3 + 2] === '1', false);
+  }
+  for (const r of rows) r.pop(); // no gap after the last letter
+  return rows;
+}
+
 export function textWidth(text: string, scale = 1): number {
   return text.length * 4 * scale - scale;
 }
