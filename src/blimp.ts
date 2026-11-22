@@ -21,6 +21,32 @@ function hash(a: number, b: number): number {
 }
 const hex = (c: string) => { const n = parseInt(c.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
 
+const LOT = 24; // yards of parking lot around the stadium
+const CARS = [[150, 30, 40], [40, 60, 120], [180, 180, 185], [30, 32, 36], [120, 120, 125], [90, 20, 30], [200, 200, 205], [50, 90, 60]];
+
+/** The ground around the stadium at night, seen from above. e = yards past the rim; L, X = field yards. */
+function outside(e: number, L: number, X: number, x: number, y: number): number[] {
+  const n = hash(x, y) * 6; // grain
+  if (e < 2) return [44 + n, 45 + n, 52 + n]; // the concourse plaza
+  if (e < LOT) {
+    // stalls 2.7 yds wide in rows 5.5 deep, every third row an aisle
+    const fl = L / 2.7, fx = X / 5.5, row = Math.floor(fx), stall = Math.floor(fl);
+    const asphalt = [22 + n, 24 + n, 30 + n];
+    if (((row % 3) + 3) % 3 === 2) return asphalt; // the aisle
+    const u = fl - stall, w = fx - row;
+    if (u < 0.1) return [78, 80, 88]; // a stall line
+    const h = hash(stall * 13 + 7, row * 29 + 3);
+    if (h < 0.62 && u > 0.22 && u < 0.92 && w > 0.12 && w < 0.88) { // a car, roof a shade lighter
+      const c = CARS[Math.floor(h * 100) % CARS.length], roof = u > 0.38 && u < 0.76 && w > 0.3 && w < 0.7 ? 1.18 : 0.85;
+      return c.map((v) => Math.min(255, v * roof * 0.7));
+    }
+    return asphalt;
+  }
+  // beyond the lots: dark grass and the tops of trees
+  const t = hash(Math.floor(x / 5), Math.floor(y / 5));
+  return t < 0.35 ? [10 + n, 30 + n, 18 + n] : [14 + n, 22 + n, 16 + n];
+}
+
 interface Shot { cv: HTMLCanvasElement; k: number; cx: number; cy: number; horiz: boolean; seats: { x: number; y: number }[] }
 const cache = new Map<string, Shot>();
 
@@ -65,11 +91,7 @@ function build(v: View, c: Crowd, abbr: string): Shot {
         if ((Math.floor(d * 1.4 * 4) & 3) === 0) col = col.map((v) => v * 0.7); // the step edge
         if (hash(seat, row * 13) < 0.002) seats.push({ x, y });
       } else if (d < RIM) col = [20, 27, 43];
-      else {
-        // the night: dark, the odd star, a glow of city light low on the edges
-        const g = hash(x, y) < 0.0016 ? 200 : 0;
-        col = g ? [g, g, g] : [7 + d * 0.05, 11 + d * 0.06, 20 + d * 0.1];
-      }
+      else col = outside(d - RIM, L, X, x, y); // looking down: the plaza, the parking lots, the trees
       const i = (y * W + x) * 4;
       px[i] = col[0]; px[i + 1] = col[1]; px[i + 2] = col[2]; px[i + 3] = 255;
     }
@@ -101,6 +123,19 @@ function build(v: View, c: Crowd, abbr: string): Shot {
     g.addColorStop(0, 'rgba(255,241,200,0.45)'); g.addColorStop(1, 'rgba(255,241,200,0)');
     ctx.fillStyle = g; ctx.fillRect(p.x - 60, p.y - 60, 120, 120);
     ctx.fillStyle = '#fff6d5'; ctx.fillRect(Math.round(p.x) - 5, Math.round(p.y) - 3, 10, 6);
+  }
+  // lamps over the parking lots: warm pools of light on a grid
+  for (let L = -(HALF_L + RIM + LOT); L <= HALF_L + RIM + LOT; L += 13) {
+    for (let X = -(HALF_W + RIM + LOT); X <= HALF_W + RIM + LOT; X += 13) {
+      const dx = Math.max(Math.abs(L) - HALF_L, 0), dy = Math.max(Math.abs(X) - HALF_W, 0), e = Math.hypot(dx, dy) - RIM;
+      if (e < 4 || e > LOT - 2) continue;
+      const p = P(L, X), r = 5 * k;
+      if (p.x < -r || p.y < -r || p.x > W + r || p.y > H + r) continue;
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      g.addColorStop(0, 'rgba(255,200,120,0.32)'); g.addColorStop(1, 'rgba(255,200,120,0)');
+      ctx.fillStyle = g; ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+      ctx.fillStyle = '#ffe3a8'; ctx.fillRect(Math.round(p.x) - 1, Math.round(p.y) - 1, 2, 2);
+    }
   }
   return { cv, k, cx, cy, horiz, seats };
 }
