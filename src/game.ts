@@ -17,6 +17,7 @@ import { type Kit, type TeamColor, shade } from './sprites';
 import { type Crowd, drawEndStands, drawGoalpost, padColor } from './stadium';
 import { drawBlimp } from './blimp';
 import { Intro, type IntroInfo } from './intro';
+import { type Level, exhibitionSetup } from './exhibition';
 import { type Vec, clamp, dist, lerp } from './util';
 import { type Roster, loadRoster, makeRoster, saveRoster } from './ratings';
 import { RosterView } from './roster';
@@ -65,6 +66,7 @@ export interface CareerGameSetup {
   card?: { story: string | null; weather: string }; // the who's-who card as you take the field: the storyline and the weather
   weather?: { sky: string; night: boolean }; // rain / snow / fog over the field, darker stands at night
   onDone: (m: Match, stint?: TeamStats) => void; // stint: your team's stats when your part ended early
+  exhibition?: boolean; // PLAY NOW at high school / college level: random schools, no career behind it
 }
 
 /** The career screens (src/ui/career.ts) as the Game sees them. */
@@ -109,7 +111,8 @@ export class Game {
   private queuedThrow: Vec | null = null; // released before the QB had the snap
   runoff = 0; // game seconds run off since the last play ended (the play clock)
   camY = 0; // how far (world px) the view has scrolled upfield to follow the ball
-  careerGame: CareerGameSetup | null = null; // playing a career game (coach calls the plays)
+  careerGame: CareerGameSetup | null = null; // playing a career game (coach calls the plays), or a high school / college exhibition
+  level: Level = 'pro'; // PLAY NOW's level of play
   intro: Intro | null = null; // the pregame show
   private afterIntro: (() => void) | null = null;
   /** The pregame show plays before a game (automated tests turn it off unless they test it). */
@@ -130,6 +133,7 @@ export class Game {
 
   /** The start screen: pick quarter length, difficulty, speed, aim mode; then KICKOFF. */
   showTitle(): void {
+    this.careerGame = null;
     this.screen = 'title';
     this.pauseOpen = false;
     this.menu = new Menu({ kind: 'offense', selectedId: null, settings: this.settings, title: true });
@@ -260,6 +264,9 @@ export class Game {
     then?.();
   }
 
+  /** A real career game (not a PLAY NOW exhibition at high school / college level). */
+  get inCareer(): boolean { return !!this.careerGame && !this.careerGame.exhibition; }
+
   /** The difficulty tuning in play: the career's, or the settings'. */
   private get tuning() { return DIFFICULTY_TUNING[this.careerGame?.difficulty ?? this.settings.difficulty]; }
 
@@ -282,6 +289,11 @@ export class Game {
   }
 
   newGame(): void {
+    if (this.level !== 'pro') { // random schools at that level, in their colours and stadium
+      this.playCareerGame(exhibitionSetup(this.level, Number(this.settings.quarter) * 60, DIFFICULTY_TUNING[this.settings.difficulty].strength, () => this.newGame()));
+      return;
+    }
+    this.careerGame = null;
     this.match = new Match('you', Number(this.settings.quarter) * 60);
     this.hookMatch();
     this.cpuTeam = makeRoster('CPU', DIFFICULTY_TUNING[this.settings.difficulty].strength); // a new opponent each game
@@ -568,7 +580,7 @@ export class Game {
       const a = this.menu.tap(p, this.view);
       if (a?.type === 'settings') this.applySettings();
       if (a?.type === 'team') this.openRoster('title');
-      if (a?.type === 'start') { this.applySettings(); this.newGame(); }
+      if (a?.type === 'start') { this.applySettings(); this.level = a.level; this.newGame(); }
       if (a?.type === 'career') { this.applySettings(); this.onCareer?.(); }
       return;
     }
@@ -583,7 +595,7 @@ export class Game {
     if (this.screen !== 'final' && hit(this.pauseButton, p)) { this.pauseOpen = true; this.confirmRestart = false; return; }
 
     if (this.screen === 'huddle' && this.menu) { this.huddleAction(this.menu.tap(p, this.view)); return; }
-    if (this.screen === 'final') { if (this.careerGame) this.finishCareerGame(); else this.newGame(); return; }
+    if (this.screen === 'final') { if (this.careerGame && !this.careerGame.exhibition) this.finishCareerGame(); else this.newGame(); return; }
     if (this.screen === 'banner') {
       if (this.banner?.kind === 'kick') { const k = this.kickButtons; if (hit(k.deep, p)) this.kick(false); else if (hit(k.onside, p)) this.kick(true); return; }
       this.afterBanner();
@@ -617,13 +629,13 @@ export class Game {
       this.huddleMenu = this.menu;
       this.menu = new Menu({ kind: 'offense', selectedId: null, settings: this.settings, settingsOnly: true });
       this.pauseOpen = false;
-    } else if (this.careerGame && hit(b.restart, p)) { // career: simulate the rest of the game
+    } else if (this.inCareer && hit(b.restart, p)) { // career: simulate the rest of the game
       if (this.confirmSim) this.simRestOfCareerGame();
       else this.confirmSim = true;
     } else if (hit(b.restart, p)) {
       if (this.confirmRestart) this.newGame();
       else this.confirmRestart = true;
-    } else if (hit(b.title, p) && !this.careerGame) this.showTitle();
+    } else if (hit(b.title, p) && !this.inCareer) this.showTitle();
     else if (hit(b.team, p)) this.openRoster('pause');
   }
 
@@ -939,7 +951,7 @@ export class Game {
     button(ctx, b.timeout, `TIMEOUT (${m.timeouts.you} LEFT)`, this.canTimeout() ? C.white : C.darkGrey);
     button(ctx, b.settings, 'SETTINGS', C.white);
     button(ctx, b.team, 'TEAM', C.blue);
-    if (this.careerGame) {
+    if (this.inCareer) {
       button(ctx, b.restart, this.confirmSim ? 'TAP AGAIN TO SIM' : 'SIM REST OF GAME', this.confirmSim ? C.orange : C.white);
     } else {
       button(ctx, b.restart, this.confirmRestart ? 'TAP AGAIN TO RESTART' : 'RESTART GAME', this.confirmRestart ? C.orange : C.white);
@@ -1358,7 +1370,7 @@ export class Game {
       if (st.rush) { drawText(ctx, `QB RUNS ${st.rush} FOR ${st.ryds ?? 0} YDS${st.rtd ? ` ${st.rtd} TD` : ''}`, mid, y + 24, { align: 'center', color: C.grey }); y += 8; }
       y += 28;
     }
-    if (Math.floor(this.clock * 2) % 2 === 0) drawText(ctx, this.careerGame ? 'TAP TO CONTINUE' : 'TAP FOR A NEW GAME', mid, y + 4, { align: 'center', color: C.yellow });
+    if (Math.floor(this.clock * 2) % 2 === 0) drawText(ctx, this.inCareer ? 'TAP TO CONTINUE' : 'TAP FOR A NEW GAME', mid, y + 4, { align: 'center', color: C.yellow });
   }
 }
 

@@ -56,7 +56,19 @@ const OUT = process.env.SHOT_DIR || '.';
   await tap({ x: rv.back.x + rv.back.w / 2, y: rv.back.y + rv.back.h / 2 });
   check(await G(() => !window.__game.rosterView && window.__game.screen === 'title'), 'BACK returns to the title screen');
   await tap(mid(tt.play));
-  check(await G(() => window.__game.screen === 'huddle' && window.__game.match.clockText === '3:00'), 'PLAY NOW starts a game with 3:00 quarters');
+  const lv = await G(() => { const g = window.__game; return g.menu.pickLevel && g.menu.levelLayout(g.view); });
+  check(!!lv, 'PLAY NOW asks for a level (HIGH SCHOOL / COLLEGE / PRO)');
+  await tap(mid(lv.college));
+  const exg = await G(() => { const g = window.__game, cg = g.careerGame; return cg && { ex: cg.exhibition, big: cg.crowd.big, tier: cg.you.tier, opp: cg.opp.tier, screen: g.screen, you: g.match.names.you, cpu: g.match.names.cpu, coach: cg.coachCalls, sim: cg.simDefense }; });
+  check(exg && exg.ex && exg.big && exg.tier === -6 && exg.opp === -6 && exg.screen === 'huddle' && exg.you !== exg.cpu && !exg.coach && !exg.sim, `COLLEGE: random schools at college level, you call the plays (${exg && exg.you} vs ${exg && exg.cpu})`);
+  check(await G(() => { const g = window.__game; g.pauseOpen = true; const b = g.pauseButtons; g.pointerDown({ x: b.title.x + 5, y: b.title.y + 5 }); g.pointerUp({ x: b.title.x + 5, y: b.title.y + 5 }); return g.screen === 'title' && !g.careerGame; }), 'exhibition: MAIN MENU from pause returns to the title');
+  await tap(mid(tt.play));
+  await tap(mid(lv.hs));
+  check(await G(() => { const g = window.__game, cg = g.careerGame; return !!cg && cg.exhibition && !cg.crowd.big && cg.you.tier === -16 && g.screen === 'huddle'; }), 'HIGH SCHOOL: random high schools at high school level');
+  await G(() => window.__game.showTitle());
+  await tap(mid(tt.play));
+  await tap(mid(lv.pro));
+  check(await G(() => window.__game.screen === 'huddle' && window.__game.match.clockText === '3:00' && !window.__game.careerGame), 'PRO starts the classic game with 3:00 quarters');
   // the pregame show (off by default under automation): it plays, the crowd is up, a tap skips to the huddle
   check(await G(() => { const g = window.__game; g.introEnabled = true; g.newGame(); return g.screen === 'intro' && !!g.intro; }), 'a new game opens with the pregame show');
   await page.waitForTimeout(3500);
@@ -820,7 +832,10 @@ const OUT = process.env.SHOT_DIR || '.';
   check(lw >= 320, `landscape: ${lw}x180 view (fills a ${(915/412).toFixed(2)}:1 phone) when the phone is sideways`);
   const ldone = await LG(() => { const g = window.__game; return g.menu.titleLayout(g.view).play; });
   const ld = await lscreen({ x: ldone.x + ldone.w / 2, y: ldone.y + ldone.h / 2 });
-  await ltouch('touchStart', [ld]); await ltouch('touchEnd', []); // KICKOFF
+  await ltouch('touchStart', [ld]); await ltouch('touchEnd', []); // PLAY NOW
+  const lpro = await LG(() => { const g = window.__game; return g.menu.levelLayout(g.view).pro; });
+  const lpt = await lscreen({ x: lpro.x + lpro.w / 2, y: lpro.y + lpro.h / 2 });
+  await ltouch('touchStart', [lpt]); await ltouch('touchEnd', []); // PRO
   const card = await LG(() => { const g = window.__game; const c = g.menu.layout(g.view).cards[2]; return { x: c.r.x + c.r.w / 2, y: c.r.y + c.r.h / 2, id: c.it.play.id }; });
   const cp = await lscreen(card);
   await ltouch('touchStart', [cp]); await ltouch('touchEnd', []);

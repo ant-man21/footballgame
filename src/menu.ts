@@ -11,6 +11,7 @@ import { CATEGORIES, PLAYS, type Play } from './playbook/plays';
 import { DIFFICULTIES, QUARTERS, SPEEDS, type Settings, cycle } from './settings';
 import type { Vec } from './util';
 import type { View } from './view';
+import type { Level } from './exhibition';
 
 type Rect = { x: number; y: number; w: number; h: number };
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
@@ -19,7 +20,7 @@ export type MenuAction =
   | { type: 'pick'; play: Play }
   | { type: 'pickCall'; call: Call }
   | { type: 'same' } | { type: 'auto' } | { type: 'punt' } | { type: 'fg' } | { type: 'xp' }
-  | { type: 'close' } | { type: 'settings' } | { type: 'start' } | { type: 'team' } | { type: 'career' }
+  | { type: 'close' } | { type: 'settings' } | { type: 'start'; level: Level } | { type: 'team' } | { type: 'career' }
   | null;
 
 export interface MenuOptions {
@@ -55,6 +56,7 @@ export class Menu {
   tab: string;
   page = 0;
   showSettings: boolean;
+  pickLevel = false; // the title screen: PLAY NOW's level picker is open
   private items: Item[];
   private cats: readonly { id: string; name: string }[];
 
@@ -119,6 +121,15 @@ export class Menu {
     return { play, career, team, settings };
   }
 
+  /** PLAY NOW's level picker: HIGH SCHOOL / COLLEGE (random schools) / PRO (the classic game), BACK. */
+  levelLayout(v: View) {
+    const w = v.landscape ? 150 : 128, x = Math.round((v.w - w) / 2);
+    const y0 = v.landscape ? 52 : 120, h = v.landscape ? 22 : 26, gap = v.landscape ? 5 : 7;
+    const r = (i: number) => ({ x, y: y0 + i * (h + gap), w, h });
+    const back = { x: Math.round(v.w / 2 - 30), y: y0 + 3 * (h + gap) + (v.landscape ? 2 : 6), w: 60, h: 16 };
+    return { hs: r(0), college: r(1), pro: r(2), back };
+  }
+
   /** Settings panel rows: label plus < value > arrows. From the title screen it also has the quarter length. */
   settingsLayout(v: View) {
     const title = !!this.o.title;
@@ -137,8 +148,14 @@ export class Menu {
 
   tap(p: Vec, v: View): MenuAction {
     if (this.o.title && !this.showSettings) {
+      if (this.pickLevel) { // PLAY NOW: which level
+        const P = this.levelLayout(v);
+        if (hit(P.back, p)) { this.pickLevel = false; return null; }
+        for (const [k, r] of [['hs', P.hs], ['college', P.college], ['pro', P.pro]] as const) if (hit(r, p)) { this.pickLevel = false; return { type: 'start', level: k }; }
+        return null;
+      }
       const L = this.titleLayout(v);
-      if (hit(L.play, p)) return { type: 'start' };
+      if (hit(L.play, p)) { this.pickLevel = true; return null; }
       if (hit(L.career, p)) return { type: 'career' };
       if (hit(L.team, p)) return { type: 'team' };
       if (hit(L.settings, p)) this.showSettings = true;
@@ -239,6 +256,16 @@ export class Menu {
       box(ctx, r, C.ink, color);
       drawText(ctx, label, r.x + r.w / 2, r.y + Math.floor((r.h - 5 * scale) / 2), { align: 'center', color, scale });
     };
+    if (this.pickLevel) {
+      const P = this.levelLayout(v);
+      drawText(ctx, 'PLAY NOW: PICK A LEVEL', mid, P.hs.y - (v.landscape ? 11 : 16), { align: 'center', color: C.white });
+      btn(P.hs, 'HIGH SCHOOL', C.orange, 2);
+      btn(P.college, 'COLLEGE', C.yellow, 2);
+      btn(P.pro, 'PRO', C.green, 2);
+      btn(P.back, 'BACK', C.grey);
+      drawText(ctx, 'RANDOM SCHOOLS', mid, P.back.y + P.back.h + 6, { align: 'center', color: C.darkGrey });
+      return;
+    }
     btn(L.play, 'PLAY NOW', C.green, 2);
     btn(L.career, 'CAREER', C.yellow, 2);
     btn(L.team, 'TEAM', C.blue);
