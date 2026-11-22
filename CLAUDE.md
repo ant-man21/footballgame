@@ -32,7 +32,7 @@ After `npm run build`, the preview server serves the new `dist/` without a resta
 - **Gate every push on the smoke test**: run it to a log and check the last line is exactly `SMOKE OK` before committing/pushing (`grep -q "^SMOKE OK" log && git commit ...`). Piping it through `grep` for display is not a gate.
 - Measure before and after any gameplay change with the balance scripts; tune with numbers, then describe the change in football terms.
 - Commit messages: a short summary line plus bullets of what changed and why; end with the attribution lines the session provides.
-- Keep UI text in the 3x5 pixel font: uppercase letters, digits and the symbols in `src/font.ts` only (add glyphs there if needed).
+- Keep UI text in the pixel font: uppercase letters, digits and the symbols in `src/font.ts` only (add glyphs there if needed: both the 5x7 `FINE` set and the 3x5 `GLYPHS`). Layout is on the 3x5 grid (4 px a letter, 5 tall, `textWidth`); `drawText` draws the finer 5x7 glyphs (each pixel 2 canvas px on the HD grid) and falls back to 3x5 where 5x7 wouldn't land on whole pixels.
 
 ## Architecture (src/)
 | File | Role |

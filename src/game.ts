@@ -248,7 +248,7 @@ export class Game {
     this.confirmSim = false;
     this.cardAt = null;
     this.halfShown = setup.match.quarter >= 3; // (a game picked up in the second half has had its halftime)
-    const go = () => { this.startHuddle(); this.showToast(setup.label); };
+    const go = () => { this.startHuddle(); if (setup.label) this.showToast(setup.label); };
     if (setup.intro) this.startIntro(setup.intro, go); else go();
   }
 
@@ -937,12 +937,13 @@ export class Game {
   }
 
   /** A team's abbreviation on its jersey colour (career games); yours outlined in yellow. */
-  private teamChip(ctx: CanvasRenderingContext2D, side: Side, x: number, y: number): void {
+  private teamChip(ctx: CanvasRenderingContext2D, side: Side, x: number, y: number): number {
     const k = this.careerGame!.kits![side], ab = this.match.names[side], w = textWidth(ab) + 6;
     if (side === 'you') { ctx.fillStyle = C.yellow; ctx.fillRect(x - 1, y - 1, w + 2, 11); }
     ctx.fillStyle = k.trim; ctx.fillRect(x, y, w, 9);
     ctx.fillStyle = k.jersey; ctx.fillRect(x + 1, y + 1, w - 2, 7);
     drawText(ctx, ab, x + 3, y + 2, { color: inkOn(k.jersey) });
+    return w; // its width
   }
 
   /** Career games: who's who as you take the field (both schools, which one is you), the storyline and the weather. */
@@ -1309,10 +1310,10 @@ export class Game {
       ctx.fillRect(v.w - v.panel, 0, 1 / HD, v.h);
       const lx = 3;
       if (this.careerGame?.kits) {
-        this.teamChip(ctx, 'you', lx, 3); drawText(ctx, String(m.score.you), lx + 21, 5);
-        pips(lx + 32, 7, m.timeouts.you, C.yellow);
-        this.teamChip(ctx, 'cpu', lx, 13); drawText(ctx, String(m.score.cpu), lx + 21, 15);
-        pips(lx + 32, 17, m.timeouts.cpu, C.grey);
+        drawText(ctx, String(m.score.you), lx + this.teamChip(ctx, 'you', lx, 3) + 3, 5);
+        pips(lx + 34, 7, m.timeouts.you, C.yellow);
+        drawText(ctx, String(m.score.cpu), lx + this.teamChip(ctx, 'cpu', lx, 13) + 3, 15);
+        pips(lx + 34, 17, m.timeouts.cpu, C.grey);
       } else {
         drawText(ctx, `${m.names.you} ${m.score.you}`, lx, 5, { color: C.blue });
         pips(lx + 30, 7, m.timeouts.you, C.blue);
@@ -1342,9 +1343,9 @@ export class Game {
       ctx.fillStyle = 'rgba(17,29,43,0.9)';
       ctx.fillRect(0, 0, v.w, 19);
       if (this.careerGame?.kits) { // the schools' colours, yours outlined in yellow
-        this.teamChip(ctx, 'you', 3, 2); drawText(ctx, String(m.score.you), 23, 4);
+        drawText(ctx, String(m.score.you), 3 + this.teamChip(ctx, 'you', 3, 2) + 3, 4);
         pips(5, 13, m.timeouts.you, C.yellow);
-        this.teamChip(ctx, 'cpu', 43, 2); drawText(ctx, String(m.score.cpu), 63, 4);
+        drawText(ctx, String(m.score.cpu), 43 + this.teamChip(ctx, 'cpu', 43, 2) + 3, 4);
         pips(45, 13, m.timeouts.cpu, C.grey);
       } else {
         drawText(ctx, `${m.names.you} ${m.score.you}`, 5, 3, { color: C.blue });

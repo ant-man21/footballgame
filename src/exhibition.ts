@@ -55,7 +55,7 @@ export function exhibitionSetup(level: 'hs' | 'college', quarterSecs: number, op
     opp: makeRoster(cpu.name, cpu.strength + oppStrength, tier),
     units: { you: { off: you.strength, def: you.strength }, cpu: { off: cpu.strength, def: cpu.strength } },
     simDefense: false, coachCalls: false, endAtHalf: false,
-    label: `${you.abbr} VS ${cpu.abbr}`,
+    label: '', // the who's-who card says it
     kits: home ? { you: k.home, cpu: k.away } : { you: k.away, cpu: k.home },
     crowd: { home: h.colors, away: a.colors, homeName: h.mascot, big: college, abbr: h.abbr },
     schools: { you: { name: you.name, mascot: you.mascot }, cpu: { name: cpu.name, mascot: cpu.mascot } },

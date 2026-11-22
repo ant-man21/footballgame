@@ -767,7 +767,7 @@ export class CareerScreens {
 
   historyLayout(v: View) {
     const per = v.landscape ? 4 : 7, top = v.landscape ? 24 : 34, h = 26, w = Math.min(v.w - 12, 260);
-    return { per, top, h, w, x: (v.w - w) / 2, imp: r(v.w / 2 - 84, v.h - 20, 80, 16), back: r(v.w / 2 + 4, v.h - 20, 80, 16) };
+    return { per, top, h, w, x: (v.w - w) / 2, imp: r(v.w / 2 - 56, v.h - 20, 54, 16), back: r(v.w / 2 + 2, v.h - 20, 54, 16) }; // between the page arrows
   }
 
   historyRows(v: View): { i: number; r: Rect }[] {
