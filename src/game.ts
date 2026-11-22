@@ -45,7 +45,7 @@ const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random() * 0.999)) * Math.c
 const hit = (r: Rect, p: Vec) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 
 
-type Screen = 'title' | 'intro' | 'huddle' | 'play' | 'banner' | 'final' | 'roster' | 'career';
+type Screen = 'title' | 'intro' | 'huddle' | 'play' | 'banner' | 'halftime' | 'final' | 'roster' | 'career';
 
 /** A career game handed to the field: the match (maybe already in progress) and how to run it. */
 export interface CareerGameSetup {
@@ -75,6 +75,9 @@ export interface Screens {
   render(ctx: CanvasRenderingContext2D, v: View): void;
 }
 
+const SHOW_SECS = 6; // college halftime: the band on the field from the blimp before the stats
+const HALFTIME_SECS = 25; // then the stats wait this long for a tap
+
 export class Game {
   settings = loadSettings();
   sim = new Sim();
@@ -103,6 +106,8 @@ export class Game {
   screen: Screen = 'title';
   banner: (Banner & { kind: 'play' | 'punt' | 'note' | 'kick' }) | null = null; // kick: your kickoff, deep or onside
   private bannerAt = 0;
+  private halftimeAt = 0; // the halftime show started (school games)
+  private halfShown = false; // this game's halftime show has played
   toast: { text: string; color: string; until: number } | null = null;
   drag: { start: Vec; cur: Vec } | null = null; // offense: throw gesture (screen coordinates)
   stick: { origin: Vec; cur: Vec } | null = null; // defense: joystick (screen coordinates)
@@ -242,6 +247,7 @@ export class Game {
     this.pauseOpen = false;
     this.confirmSim = false;
     this.cardAt = null;
+    this.halfShown = setup.match.quarter >= 3; // (a game picked up in the second half has had its halftime)
     const go = () => { this.startHuddle(); this.showToast(setup.label); };
     if (setup.intro) this.startIntro(setup.intro, go); else go();
   }
@@ -576,6 +582,7 @@ export class Game {
       return;
     }
     if (this.screen === 'intro') { this.intro?.skip(); return; } // tap to skip the pregame show
+    if (this.screen === 'halftime') { if (this.clock - this.halftimeAt > 1) this.startHuddle(); return; } // on to the second half
     if (this.screen === 'title' && this.menu) {
       const a = this.menu.tap(p, this.view);
       if (a?.type === 'settings') this.applySettings();
@@ -706,7 +713,15 @@ export class Game {
   }
 
   private afterBanner(): void {
-    if (this.match.over) { this.screen = 'final'; this.banner = null; return; }
+    const m = this.match, cg = this.careerGame;
+    if (m.over) { this.screen = 'final'; this.banner = null; return; }
+    if (cg?.crowd && !cg.endAtHalf && !this.halfShown && m.quarter >= 3 && !m.ot) { // school games: the halftime show
+      this.halfShown = true;
+      this.screen = 'halftime';
+      this.banner = null;
+      this.halftimeAt = this.clock;
+      return;
+    }
     this.startHuddle();
   }
 
@@ -733,6 +748,7 @@ export class Game {
       if (ev === 'quarter') this.quarterEndedBetweenPlays();
     }
 
+    if (this.screen === 'halftime') { if (this.clock - this.halftimeAt > HALFTIME_SECS) this.startHuddle(); return; }
     if (this.screen === 'banner') {
       if (this.banner?.kind === 'kick') { if (this.clock - this.bannerAt > RESULT_TIME * 3) this.kick(false); } // waited: kick it deep
       else if (this.clock - this.bannerAt > RESULT_TIME) this.afterBanner();
@@ -841,6 +857,7 @@ export class Game {
       this.intro.render(ctx, { view: this.view, sx: this.sx, sy: this.sy, crowd: () => this.crowd(), field: (c, yard) => drawField(c, this, yard, 200, this.intro?.info.home === 'you', false) });
       return;
     }
+    if (this.screen === 'halftime') { this.renderHalftime(ctx); return; }
     if (this.screen === 'huddle' && this.menu) {
       this.menu.render(ctx, this.view);
       this.renderPauseButton(ctx);
@@ -865,6 +882,58 @@ export class Game {
     if (this.screen === 'final') this.renderFinal(ctx);
     if (this.pauseOpen) this.renderPause(ctx);
     if (this.menu?.showSettings) this.menu.render(ctx, this.view);
+  }
+
+  /**
+   * The halftime show (school games): college cuts to the blimp, the home band marches on and spells the
+   * school's letters, then the first-half stats; high school shows the stats over the field. Tap to go on.
+   */
+  private renderHalftime(ctx: CanvasRenderingContext2D): void {
+    const v = this.view, cg = this.careerGame!, cc = cg.crowd!, m = this.match, t = this.clock - this.halftimeAt;
+    const mid = v.w / 2, big = !!cc.big;
+    if (big) drawBlimp(ctx, v, { ...this.crowd(), stunt: false }, cc.abbr ?? cc.homeName.slice(0, 3), t, { band: true });
+    else {
+      this.camY = 0;
+      drawField(ctx, this, 50, 200, true, false);
+      ctx.fillStyle = 'rgba(17,29,43,0.45)'; ctx.fillRect(0, 0, v.w, v.h);
+    }
+    const score = `${m.names.you} ${m.score.you} - ${m.names.cpu} ${m.score.cpu}`;
+    if (big && t < SHOW_SECS) { // the band's on: a TV lower third
+      const y = v.h - (v.landscape ? 34 : 52);
+      ctx.fillStyle = 'rgba(17,29,43,0.88)'; ctx.fillRect(0, y, v.w, 26);
+      ctx.fillStyle = cc.home[0]; ctx.fillRect(0, y, v.w, 2);
+      drawText(ctx, 'HALFTIME', 6, y + 5, { scale: 2, color: C.yellow, shadow: '#000' });
+      drawText(ctx, score, v.w - 6, y + 5, { align: 'right', color: C.white });
+      drawText(ctx, `THE ${cc.homeName} BAND TAKES THE FIELD`, v.w - 6, y + 15, { align: 'right', color: C.grey });
+      return;
+    }
+    // the first-half stats
+    const st = m.stats, w = Math.min(168, v.w - 16), x = Math.round(mid - w / 2);
+    const rows: [string, (s: TeamStats) => string][] = [
+      ['PASSING', (s) => `${s.cmp}/${s.att} ${s.yards}`],
+      ['RUSHING', (s) => `${s.rush ?? 0}-${s.ryds ?? 0}`],
+      ['TOTAL YARDS', (s) => `${s.yards + (s.ryds ?? 0)}`],
+      ['TOUCHDOWNS', (s) => `${s.tds}`],
+      ['TURNOVERS', (s) => `${s.int}`],
+      ['SACKED', (s) => `${s.sacks}`],
+    ];
+    const rh = v.landscape ? 10 : 12, h = 52 + rows.length * rh;
+    const y = Math.round((v.h - h) / 2) - (v.landscape ? 0 : 10);
+    ctx.fillStyle = 'rgba(17,29,43,0.93)'; ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = cc.home[0]; ctx.fillRect(x, y, w, 2);
+    drawText(ctx, 'HALFTIME', mid, y + 7, { scale: 2, align: 'center', color: C.yellow, shadow: '#000' });
+    const cy = y + 25, cx1 = x + w - 62, cx2 = x + w - 26;
+    if (cg.kits) { this.teamChip(ctx, 'you', cx1 - 12, cy); this.teamChip(ctx, 'cpu', cx2 - 12, cy); }
+    drawText(ctx, 'SCORE', x + 6, cy + 2, { color: C.grey });
+    drawText(ctx, `${m.score.you}`, cx1, cy + 14, { align: 'center', color: C.white, scale: 2 });
+    drawText(ctx, `${m.score.cpu}`, cx2, cy + 14, { align: 'center', color: C.white, scale: 2 });
+    rows.forEach(([label, f], i) => {
+      const ry = cy + 30 + i * rh;
+      drawText(ctx, label, x + 6, ry, { color: C.grey });
+      drawText(ctx, f(st.you), cx1, ry, { align: 'center', color: C.white });
+      drawText(ctx, f(st.cpu), cx2, ry, { align: 'center', color: C.white });
+    });
+    if (t > 1 && Math.floor(this.clock * 2) % 2 === 0) drawText(ctx, 'TAP FOR THE SECOND HALF', mid, y + h + 6, { align: 'center', color: C.yellow, shadow: '#000' });
   }
 
   /** A team's abbreviation on its jersey colour (career games); yours outlined in yellow. */
@@ -1316,10 +1385,6 @@ export class Game {
     }
 
     const b = this.banner;
-    // college: halftime cuts to the blimp shot of the whole stadium
-    if (this.screen === 'banner' && b && this.careerGame?.crowd?.big && (b.headline === 'HALFTIME' || b.note === 'HALFTIME')) {
-      drawBlimp(ctx, v, { ...this.crowd(), stunt: true }, this.careerGame.crowd.abbr ?? this.careerGame.crowd.homeName.slice(0, 3), this.clock - this.bannerAt);
-    }
     if (this.screen === 'banner' && b) {
       const y = v.landscape ? 40 : 96;
       const bw = v.landscape ? v.w - v.panel * 2 - 20 : v.w - 20;

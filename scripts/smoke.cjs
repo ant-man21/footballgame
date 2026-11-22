@@ -61,6 +61,7 @@ const OUT = process.env.SHOT_DIR || '.';
   await tap(mid(lv.college));
   const exg = await G(() => { const g = window.__game, cg = g.careerGame; return cg && { ex: cg.exhibition, big: cg.crowd.big, tier: cg.you.tier, opp: cg.opp.tier, screen: g.screen, you: g.match.names.you, cpu: g.match.names.cpu, coach: cg.coachCalls, sim: cg.simDefense }; });
   check(exg && exg.ex && exg.big && exg.tier === -6 && exg.opp === -6 && exg.screen === 'huddle' && exg.you !== exg.cpu && !exg.coach && !exg.sim, `COLLEGE: random schools at college level, you call the plays (${exg && exg.you} vs ${exg && exg.cpu})`);
+  check(await G(() => { const g = window.__game; g.match.quarter = 3; g.afterBanner(); const on = g.screen === 'halftime'; g.render(g.ctx ?? document.getElementById('game').getContext('2d')); g.halftimeAt -= 2; g.pointerDown({ x: 90, y: 160 }); g.pointerUp({ x: 90, y: 160 }); return on && g.screen === 'huddle'; }), 'COLLEGE: the half brings the halftime show (blimp, band, stats); a tap starts the second half');
   check(await G(() => { const g = window.__game; g.pauseOpen = true; const b = g.pauseButtons; g.pointerDown({ x: b.title.x + 5, y: b.title.y + 5 }); g.pointerUp({ x: b.title.x + 5, y: b.title.y + 5 }); return g.screen === 'title' && !g.careerGame; }), 'exhibition: MAIN MENU from pause returns to the title');
   await tap(mid(tt.play));
   await tap(mid(lv.hs));

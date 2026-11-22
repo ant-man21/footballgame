@@ -5,7 +5,7 @@
 // and cached; each frame adds camera flashes in the stands and a slow zoom.
 // Portrait shows the field top to bottom; landscape lays it across.
 import { HD } from './hd';
-import { drawText } from './font';
+import { drawText, glyphMask } from './font';
 import { type Crowd, padColor } from './stadium';
 import type { View } from './view';
 
@@ -105,23 +105,74 @@ function build(v: View, c: Crowd, abbr: string): Shot {
   return { cv, k, cx, cy, horiz, seats };
 }
 
-/** Draws the blimp shot over the whole screen. t = seconds into the shot (for the zoom and the flashes). */
-export function drawBlimp(ctx: CanvasRenderingContext2D, v: View, c: Crowd, abbr: string, t: number): void {
+/**
+ * Draws the blimp shot over the whole screen. t = seconds into the shot (the zoom and the flashes).
+ * band: the home band marches on from the sideline and spells the school's letters (halftime).
+ */
+export function drawBlimp(ctx: CanvasRenderingContext2D, v: View, c: Crowd, abbr: string, t: number, opts: { band?: boolean } = {}): void {
   const key = `${v.w}x${v.h}|${c.home}|${c.away}|${abbr}|${!!c.stunt}`;
   let shot = cache.get(key);
   if (!shot) { if (cache.size > 6) cache.clear(); shot = build(v, c, abbr); cache.set(key, shot); }
-  const z = 1 + Math.min(1, t / 6) * 0.08; // a slow push in
+  const e = Math.min(1, t / 7), z = 1 + (e * e * (3 - 2 * e)) * 0.08; // a slow, eased push in
   const W = shot.cv.width, H = shot.cv.height;
+  const S = (x: number, y: number) => ({ x: W / 2 + (x - W / 2) * z, y: H / 2 + (y - H / 2) * z }); // the zoom
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.imageSmoothingEnabled = false;
+  // smoothing on while it scales, so the push in glides instead of rows of pixels popping
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(shot.cv, (W - W * z) / 2, (H - H * z) / 2, W * z, H * z);
+  ctx.imageSmoothingEnabled = false;
+  if (opts.band) drawBand(ctx, shot, c, abbr, t, S);
   // camera flashes around the bowl
   const n = shot.seats.length;
   for (let i = 0; i < 14 && n; i++) {
-    const s = shot.seats[Math.floor(hash(Math.floor(t * 9), i * 31) * n)];
+    const s = shot.seats[Math.floor(hash(Math.floor(t * 9), i * 31) * n)], p = S(s.x, s.y);
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(Math.round(W / 2 + (s.x - W / 2) * z), Math.round(H / 2 + (s.y - H / 2) * z), 2, 2);
+    ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2);
   }
   ctx.restore();
+}
+
+const BAND_L = 22; // the formation's middle, yards from midfield (portrait; landscape spells along the field, so further out)
+
+/** The band from the blimp: a dot per bandsman in the school's colours, marching on in columns, then marking time. */
+function drawBand(ctx: CanvasRenderingContext2D, shot: Shot, c: Crowd, abbr: string, t: number, S: (x: number, y: number) => { x: number; y: number }): void {
+  const mask = glyphMask(abbr), rows = mask.length, cols = mask[0]?.length ?? 0;
+  const { k, cx, cy, horiz } = shot;
+  // field yards -> canvas pixels (before the zoom)
+  const P = (L: number, X: number) => (horiz ? { x: cx + L * k, y: cy + X * k } : { x: cx + X * k, y: cy - L * k });
+  const side = -(HALF_W + 2); // they come on from the near sideline
+  const gap = Math.min(3, (horiz ? 38 : 46) / Math.max(cols, 1)), rgap = 3.4; // yards between bandsmen (wider letters fit the field)
+  const BL = horiz ? 28 : BAND_L;
+  const sz = Math.max(3, Math.round(k * 1.1));
+  // the uniform colour that shows on the grass
+  const grass = [0, 140, 70], far = (h: string) => { const [r, g, b] = hex(h); return Math.hypot(r - grass[0], g - grass[1], b - grass[2]); };
+  const [suit, plume] = far(c.home[0]) >= 120 || far(c.home[0]) >= far(c.home[1]) ? [c.home[0], c.home[1]] : [c.home[1], c.home[0]];
+  let i = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let col = 0; col < cols; col++) {
+      if (!mask[r][col]) continue;
+      // along the field: the letter columns (portrait: across the screen); across it: the rows
+      const along = horiz ? (col - (cols - 1) / 2) * gap : (r - (rows - 1) / 2) * -rgap;
+      const across = horiz ? (r - (rows - 1) / 2) * rgap : (col - (cols - 1) / 2) * gap;
+      const L = BL + along;
+      const p = Math.min(1, Math.max(0, (t - 0.4 - col * 0.05) / 2.2)), ep = p * p * (3 - 2 * p);
+      const X = side + (across - side) * ep;
+      const step = p < 1 ? Math.sin(t * 14 + i) * 0.35 : Math.floor(t * 4 + i) % 2 ? 0.2 : -0.2; // marching, then marking time
+      const q = S(P(L + step, X).x, P(L + step, X).y);
+      const bx = Math.round(q.x - sz / 2), by = Math.round(q.y - sz / 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(bx + 1, by + 1, sz, sz); // a shadow on the grass
+      ctx.fillStyle = suit; ctx.fillRect(bx, by, sz, sz);
+      ctx.fillStyle = plume; ctx.fillRect(bx + 1, by, sz - 2, 1); // the plume
+      i++;
+    }
+  }
+  // the drum major out front, in white
+  const dm = Math.min(1, Math.max(0, (t - 0.2) / 2.2)), de = dm * dm * (3 - 2 * dm);
+  const front = -((rows - 1) / 2) * rgap - 3.5;
+  const dq = horiz ? P(BL - ((cols - 1) / 2) * gap - 3.5, side + (0 - side) * de) : P(BL + front, side + (0 - side) * de);
+  const d = S(dq.x, dq.y);
+  ctx.fillStyle = '#fff1e8';
+  ctx.fillRect(Math.round(d.x - sz / 2), Math.round(d.y - sz), sz, sz + 1);
 }
