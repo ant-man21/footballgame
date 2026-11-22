@@ -43,6 +43,20 @@ compare against the numbers in `CLAUDE.md` > QB runs):
 
 ## 1. The college career (milestone 3)
 
+**Status (Nov 2026): phase 1 is built** (`career/college.ts`, `ui/college.ts`):
+GO TO COLLEGE from a graduated save, every FBS + FCS school, the schedule
+algorithm, weekly rankings, conference title games, the 12-team playoff,
+bowls, the FCS playoff, the QB battle, redshirts, eligibility, awards. The
+college save has its own key (one high school + one college save on the
+device). Not yet: true save slots / several careers at once, keeping ratings
+in PAST CAREERS records, rivalry games, the transfer portal, NIL, the NFL
+draft, a college `career.cjs`-style balance script (`scratchpad` runs showed a
+~72 overall recruit at a P4 starts by year 2, ends ~83; simulated QBs grade
+~90 so they win awards far more than people will). Known: independents
+(Notre Dame) end up with many Group of 5 games because Power 4 schools are
+booked mid-season.
+
+
 ### What the owner asked for (Nov 2026)
 "At first super simple. Similar: win the job, play career as is, no recruiting,
 with a 12-team playoff. Needs rankings, real scheduling of opponents with

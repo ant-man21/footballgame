@@ -114,30 +114,30 @@ export function addXp(p: CareerPlayer, k: RatingKey, amount: number, cap = HS_CA
 }
 
 /** A week of practice: most of it goes into the focus. Returns the points gained per rating. */
-export function practice(p: CareerPlayer, focus: Focus): Partial<Record<RatingKey, number>> {
+export function practice(p: CareerPlayer, focus: Focus, cap = HS_CAP): Partial<Record<RatingKey, number>> {
   const out: Partial<Record<RatingKey, number>> = {};
   for (const k of ['acc', 'arm', 'dec', 'spd', 'elu'] as RatingKey[]) {
     const on = k === focus || (focus === 'spd' && k === 'elu'); // MOBILITY works on speed and elusiveness
-    const n = addXp(p, k, on ? rand(0.35, 0.6) * (focus === 'spd' ? 0.75 : 1) : k === 'spd' || k === 'elu' ? rand(0, 0.04) : rand(0.05, 0.12));
+    const n = addXp(p, k, on ? rand(0.35, 0.6) * (focus === 'spd' ? 0.75 : 1) : k === 'spd' || k === 'elu' ? rand(0, 0.04) : rand(0.05, 0.12), cap);
     if (n) out[k] = n;
   }
   return out;
 }
 
 /** Playing time teaches too: a good game more than a bad one. */
-export function gameXp(p: CareerPlayer, grade: number, snaps: number, runs = 0): Partial<Record<RatingKey, number>> {
+export function gameXp(p: CareerPlayer, grade: number, snaps: number, runs = 0, cap = HS_CAP): Partial<Record<RatingKey, number>> {
   const out: Partial<Record<RatingKey, number>> = {};
   const w = clamp(snaps / 25, 0.2, 1) * (0.25 + grade / 200);
-  for (const k of ['acc', 'dec'] as RatingKey[]) { const n = addXp(p, k, w * rand(0.4, 0.7)); if (n) out[k] = n; }
-  if (runs >= 3) { const n = addXp(p, 'elu', clamp(runs / 8, 0, 1) * rand(0.2, 0.4)); if (n) out.elu = n; } // running teaches running
+  for (const k of ['acc', 'dec'] as RatingKey[]) { const n = addXp(p, k, w * rand(0.4, 0.7), cap); if (n) out[k] = n; }
+  if (runs >= 3) { const n = addXp(p, 'elu', clamp(runs / 8, 0, 1) * rand(0.2, 0.4), cap); if (n) out.elu = n; } // running teaches running
   return out;
 }
 
 /** Off-season: a year older, stronger, better. */
-export function offseason(p: CareerPlayer): void {
-  for (const k of ['acc', 'arm', 'dec'] as RatingKey[]) addXp(p, k, rand(1, 3));
-  addXp(p, 'spd', rand(0, 1.5) + (p.archetype === 'dual' ? 1 : 0));
-  if (p.archetype === 'dual') addXp(p, 'elu', rand(0.5, 1.5));
+export function offseason(p: CareerPlayer, cap = HS_CAP): void {
+  for (const k of ['acc', 'arm', 'dec'] as RatingKey[]) addXp(p, k, rand(1, 3), cap);
+  addXp(p, 'spd', rand(0, 1.5) + (p.archetype === 'dual' ? 1 : 0), cap);
+  if (p.archetype === 'dual') addXp(p, 'elu', rand(0.5, 1.5), cap);
 }
 
 /** Recruiting score per win as the starter (see production). */

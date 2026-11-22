@@ -15,6 +15,8 @@ import { deleteCareer, loadCareer, saveCareer } from '../career/save';
 import { type CareerRecord, archive, growthLabel, loadHistory, recordFrom, recordFromText } from '../career/history';
 import { frontPage, paperName, playersToWatch, pollRank, recText, rivalOf, rivalTrophy, statePoll, storyline, weatherText, yds } from '../career/news';
 import { copyText, exportText } from './export';
+import { CollegeCareer, loadCollege } from '../career/college';
+import { CollegeScreens } from './college';
 import { type Kit, kitsFor } from '../sprites';
 import { type TeamStats, newStats } from '../drive';
 import type { Game } from '../game';
@@ -84,7 +86,41 @@ export class CareerScreens {
   history: CareerRecord[] = []; // PAST CAREERS (loaded when opened)
   recordIdx = 0; // the past career being looked at
 
-  constructor(private game: Game) {}
+  college: CollegeScreens;
+  confirmCollege = false;
+
+  constructor(private game: Game) { this.college = new CollegeScreens(game, () => this.open()); }
+
+  /** The college save on this device, if any. */
+  collegeSave() { return loadCollege(); }
+
+  /** Is the college save this graduated player's? */
+  private collegeIsMine(): boolean {
+    const cs = loadCollege(), c = this.career;
+    return !!cs && !!c && cs.player.first === c.player.first && cs.player.last === c.player.last && cs.seed === ((c.s.seed ^ 0x2c011e9e) | 0);
+  }
+
+  /** GO TO COLLEGE (the trophy case): his college career, started from this save, or continued. Tests call it too. */
+  goToCollege(force = false): CollegeCareer | null {
+    const c = this.career;
+    if (!c || c.s.phase !== 'done' || !c.s.recruit.signed) return null;
+    const cs = loadCollege();
+    if (cs && this.collegeIsMine()) { const cc = new CollegeCareer(cs); this.college.open(cc); return cc; }
+    if (cs && !force && !this.confirmCollege) { this.confirmCollege = true; return null; } // another player's college save would be replaced
+    this.confirmCollege = false;
+    const cc = CollegeCareer.fromHighSchool(c.s);
+    this.college.open(cc);
+    return cc;
+  }
+
+  /** COLLEGE (the start screen): continue the college save. */
+  openCollege(): CollegeCareer | null {
+    const cs = loadCollege();
+    if (!cs) return null;
+    const cc = new CollegeCareer(cs);
+    this.college.open(cc);
+    return cc;
+  }
 
   /** From the title screen's CAREER button. */
   open(): void {
@@ -197,6 +233,7 @@ export class CareerScreens {
         const L = this.startLayout(v);
         if (hit(L.cont, p) && c) { this.toHub(); return; }
         if (hit(L.fresh, p)) { if (this.confirmNew || !c) this.newCreate(); else this.confirmNew = true; return; }
+        if (hit(L.col, p) && loadCollege()) { this.openCollege(); return; }
         if (hit(L.exp, p) && c) { this.confirmNew = false; this.game.afterTap = () => this.exportSave(); return; }
         if (hit(L.hist, p)) { this.openHistory(); return; }
         if (hit(L.back, p)) this.game.showTitle();
@@ -325,6 +362,7 @@ export class CareerScreens {
         return;
       case 'done': {
         const L = this.doneLayout(v);
+        if (hit(L.college, p)) { this.goToCollege(); return; }
         if (hit(L.fresh, p)) { if (this.confirmNew) { this.confirmNew = false; this.newCreate(); } else this.confirmNew = true; }
         if (hit(L.menu, p)) this.game.showTitle();
         return;
@@ -364,7 +402,7 @@ export class CareerScreens {
 
   startLayout(v: View) {
     const mid = v.w / 2, y = v.landscape ? 74 : 170;
-    return { cont: r(mid - 60, y, 120, 20), fresh: r(mid - 60, y + 26, 120, 16), exp: r(mid - 60, y + 48, 58, 16), hist: r(mid + 2, y + 48, 58, 16), back: r(mid - 40, v.h - 20, 80, 16) };
+    return { cont: r(mid - 60, y, 120, 20), fresh: r(mid - 60, y + 26, 120, 16), exp: r(mid - 60, y + 48, 58, 16), hist: r(mid + 2, y + 48, 58, 16), col: r(mid - 60, y + 70, 120, 16), back: r(mid - 40, v.h - 20, 80, 16) };
   }
 
   createLayout(v: View) {
@@ -437,9 +475,9 @@ export class CareerScreens {
   }
 
   doneLayout(v: View) {
-    if (v.landscape) { const x = v.w / 2 + 4, w = (v.w / 2 - 14) / 2; return { fresh: r(x, v.h - 20, w, 16), menu: r(x + w + 4, v.h - 20, w, 16) }; }
+    if (v.landscape) { const x = v.w / 2 + 4, w = (v.w / 2 - 14) / 2; return { fresh: r(x, v.h - 20, w, 16), menu: r(x + w + 4, v.h - 20, w, 16), college: r(x, v.h - 40, w * 2 + 4, 16) }; }
     const y = v.h - 20;
-    return { fresh: r(6, y, 80, 16), menu: r(v.w - 86, y, 80, 16) };
+    return { fresh: r(6, y, 80, 16), menu: r(v.w - 86, y, 80, 16), college: r(6, y - 20, v.w - 12, 16) };
   }
 
   // ---------- drawing ----------
@@ -490,6 +528,8 @@ export class CareerScreens {
     button(ctx, L.fresh, this.confirmNew ? 'TAP AGAIN: ERASES SAVE' : 'NEW CAREER', this.confirmNew ? C.orange : C.white);
     if (c) button(ctx, L.exp, 'EXPORT', C.blue);
     button(ctx, L.hist, 'PAST CAREERS', C.yellow);
+    const cs = loadCollege();
+    if (cs) button(ctx, L.col, `COLLEGE: ${cs.player.last}`.slice(0, 26), C.green);
     const note = this.exportNote;
     if (note && performance.now() < note.until) {
       drawText(ctx, note.text, v.w / 2, L.exp.y + 22, { align: 'center', color: note.color });
@@ -1532,6 +1572,10 @@ export class CareerScreens {
     const L = this.doneLayout(v);
     button(ctx, L.fresh, this.confirmNew ? 'SURE?' : 'NEW CAREER', this.confirmNew ? C.orange : C.white);
     button(ctx, L.menu, 'MENU', C.grey);
+    if (this.career?.s.recruit.signed) {
+      const mine = this.collegeIsMine();
+      button(ctx, L.college, mine ? 'CONTINUE COLLEGE' : this.confirmCollege ? 'TAP AGAIN: REPLACES COLLEGE SAVE' : `GO TO COLLEGE: ${college(this.career.s.recruit.signed)!.abbr}`, this.confirmCollege ? C.orange : C.green);
+    }
   }
 
   // ---------- recruiting ----------

@@ -1,5 +1,6 @@
 import * as quicksim from './career/quicksim';
 import * as recruiting from './career/recruiting';
+import * as collegeMod from './career/college';
 import { callPlay, onsideCall, predict, readReceiver, twoPointCall } from './cpu';
 import { Game, SIM_DEF } from './game';
 import { HD } from './hd';
@@ -16,6 +17,7 @@ const game = new Game();
 (window as unknown as { __plays: typeof PLAYS }).__plays = PLAYS;
 (window as unknown as { __cpu: unknown }).__cpu = { readReceiver, predict, twoPointCall, onsideCall, callPlay };
 (window as unknown as { __quicksim: unknown }).__quicksim = quicksim;
+(window as unknown as { __college: unknown }).__college = collegeMod;
 (window as unknown as { __recruiting: unknown }).__recruiting = recruiting;
 (window as unknown as { __simDef: unknown }).__simDef = SIM_DEF;
 const careerScreens = new CareerScreens(game);

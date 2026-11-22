@@ -768,6 +768,28 @@ const OUT = process.env.SHOT_DIR || '.';
   });
   check(pc.first === 'active' && pc.isA && pc.n1 === pc.n0 && pc.noUnfinished && pc.aGone && pc.shown === pc.n0 + 1,
     `PAST CAREERS: the active career first, finished ones kept, an abandoned one dropped (${pc.shown} shown)`);
+  // COLLEGE (phase 1): the graduated QB goes to the school he signed with; a full season with the 12-team playoff
+  const col = await G(() => {
+    const ui = window.__careerUI, M = window.__college, R = window.__recruiting, Q = window.__quicksim;
+    localStorage.removeItem('footballgame.college.v1');
+    const cc = ui.goToCollege(true), s = cc.s;
+    const cnt = {}, wk = new Set(); let clash = 0;
+    for (const g of s.games) for (const id of [g.home, g.away]) { cnt[id] = (cnt[id] || 0) + 1; const k = id + '@' + g.week; if (wk.has(k)) clash++; wk.add(k); }
+    const fbs = R.COLLEGES.filter((c) => c.division === 'FBS');
+    const out = { school: s.schoolId, signed: ui.career.s.recruit.signed, scr: ui.college.screen, fbs12: fbs.every((c) => cnt[c.id] === 12), clash, role: s.role };
+    let n = 0;
+    while (s.phase === 'season' && n++ < 40) { const p = cc.prepareGame(); if (!p) break; if (p.kind !== 'none') Q.simToEnd(p.match, p.units); cc.finishGame(p); }
+    Object.assign(out, { phase: s.phase, field: (s.field || []).length, r1: s.games.filter((g) => g.round === 'R1').length, title: s.games.filter((g) => g.round === 'F' && M.played(g)).length,
+      ccg: s.games.filter((g) => g.ccg).length, bowls: s.games.filter((g) => g.bowl && !g.round).length, seasons: s.seasons.length, saved: !!M.loadCollege() && M.loadCollege().seasons.length === 1 });
+    cc.nextSeason();
+    out.next = s.year === 1 && s.phase === 'season' && s.games.length > 800;
+    ui.screen = 'done'; window.__game.showCareer(ui);
+    return out;
+  });
+  check(col.school === col.signed && col.scr === 'hub' && col.fbs12 && col.clash === 0, `GO TO COLLEGE: ${col.school}, every FBS school plays 12 games, no clashes (${col.role})`);
+  check(col.phase === 'summary' && col.field === 12 && col.r1 === 4 && col.title === 1 && col.ccg === 10 && col.bowls >= 20 && col.seasons === 1 && col.saved,
+    `a college season: 10 title games, a 12-team playoff (4 first-round games, byes for the top 4), ${col.bowls} bowls, saved`);
+  check(col.next, 'the next college season starts');
   // a save from before recruiting (v1, mid senior year) is upgraded and caught up
   await G(() => {
     const s = JSON.parse(localStorage.getItem('footballgame.career.v1'));
